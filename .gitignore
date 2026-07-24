@@ -1,0 +1,44 @@
+# ===== 通用 =====
+.DS_Store
+Thumbs.db
+*.log
+
+# ===== IDE / 编辑器 =====
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ===== Node.js =====
+node_modules/
+dist/
+build/
+*.tgz
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# ===== 环境变量与密钥 =====
+.env
+.env.local
+*.pem
+*.key
+
+# ===== 运行期数据 =====
+data/
+chroma/
+*.db
+*.sqlite3
+*.db-journal
+
+# ===== 例外：保留依赖锁文件 =====
+!uv.lock
+!pnpm-lock.yaml
+!package-lock.json

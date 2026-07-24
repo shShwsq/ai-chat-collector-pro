@@ -1,0 +1,844 @@
+/**
+ * 图谱视图（Task 5）。
+ *
+ * 基于 d3-force 力导向布局 + 自定义 SVG 渲染：
+ * - 每个节点渲染为小卡片（180×72px）：常显「标题（一行截断）+ 一句话概括（两行截断）
+ *   + 类型标签（左下角 chip）」
+ * - 灰色节点（``is_gray=true``）用浅灰背景 + 虚线边框区分
+ * - 边用二次贝塞尔曲线连接两节点中心，hover 高亮
+ * - 节点可拖拽（拖拽时固定位置 fx/fy，松开后保持）
+ * - 画布支持鼠标滚轮缩放（以光标为中心）、空白处拖拽平移
+ * - 力导向自适应布局：charge 互斥、link 距离、center 居中、collide 防重叠
+ * - 通过 ``ref`` 暴露 ``relayout()`` 方法供 toolbar「重新布局」按钮调用
+ *
+ * 性能策略：
+ * - tick 高频回调中通过 ``nodeElsRef`` / ``edgeElsRef`` 直接更新 DOM 的 transform / d 属性，
+ *   不触发 React 重渲染；位置快照存于 ``positionsRef`` 供 React 重渲染时读取
+ * - 仅在 fullGraph / selectedNodeId / hoveredNodeId 等低频状态变化时触发 React 重渲染
+ * - ``alphaDecay`` 设为 0.045，使模拟在约 100 帧内收敛停止
+ *
+ * 交互桩（Task 7/8 实现）：``onNodeHover`` / ``onNodeClick`` / ``onNodeDoubleClick``
+ * 当前仅 console.log，便于后续接入悬停详情卡 / 单击选中 / 双击延伸。
+ *
+ * Task 7/9 已接入：
+ * - 悬停 400ms 显示 NodeDetailCard，移开 250ms 消失；单击节点固定（pinned）详情卡
+ * - 详情卡内「编辑」打开 NodeEditor，「删除」打开 ConfirmDialog 二次确认
+ * - 详情卡定位随节点坐标计算，靠右展示，溢出翻左并夹取到视口内
+ *
+ * Task 8 已接入：
+ * - 双击节点触发全部延伸（``store.extendNode(node.id, 'all')``）：
+ *   新建灰色节点 + extends 边，命中已存在节点不重复创建；延伸进行中
+ *   显示加载提示；成功后整图刷新，新建 / 已存在节点加入 ``flashNodeIds`` 闪烁。
+ * - ``flashNodeIds`` 命中的节点添加 ``is-flash`` 类触发 CSS 闪烁动画。
+ * - 单击方向的单点延伸由 NodeDetailCard 触发（``store.extendNode(node.id, 'single', directionName)``）。
+ */
+
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from 'react'
+import {
+  forceCenter,
+  forceCollide,
+  forceLink,
+  forceManyBody,
+  forceSimulation,
+  type Simulation,
+  type SimulationNodeDatum,
+} from 'd3-force'
+
+import { useAppStore } from '../../store/useAppStore'
+import type { Edge, Node } from '../../lib/types'
+import {
+  CARD_PAD_X,
+  clampScale,
+  edgePath,
+  estimateTextWidth,
+  NODE_HEIGHT,
+  NODE_WIDTH,
+  truncateText,
+  wrapText,
+} from './graphUtils'
+import { ConfirmDialog } from './ConfirmDialog'
+import { NodeDetailCard } from './NodeDetailCard'
+import { NodeEditor } from './NodeEditor'
+
+/** d3-force 节点数据（扩展 Node，附加坐标 / 速度 / 固定位置字段）。 */
+type SimNode = Node & SimulationNodeDatum
+
+/** d3-force 边数据；forceLink 初始化后 source/target 会被替换为节点对象引用。 */
+type SimEdge = {
+  id: string
+  relation: string
+  source: SimNode | string
+  target: SimNode | string
+}
+
+/** 暴露给父组件（toolbar「重新布局」按钮）的命令接口。 */
+export interface GraphViewHandle {
+  /** 重置力导向：清除所有固定位置、随机重排、重新加热模拟。 */
+  relayout: () => void
+  /** 重置缩放与平移到默认（1x，居中）。 */
+  resetView: () => void
+}
+
+export interface GraphViewProps {
+  /** 节点悬停回调桩（Task 7 接入详情卡）。 */
+  onNodeHover?: (node: Node | null) => void
+  /** 节点单击回调桩（Task 7 接入选中固定详情卡）。 */
+  onNodeClick?: (node: Node) => void
+  /** 节点双击回调桩（Task 8 接入全部延伸 / 详情面板）。 */
+  onNodeDoubleClick?: (node: Node) => void
+}
+
+/** 拖拽状态机：无 / 平移画布 / 拖拽节点。 */
+type DragState =
+  | { kind: 'none' }
+  | {
+      kind: 'pan'
+      startClientX: number
+      startClientY: number
+      startTranslateX: number
+      startTranslateY: number
+    }
+  | {
+      kind: 'node'
+      nodeId: string
+      startClientX: number
+      startClientY: number
+      startNodeX: number
+      startNodeY: number
+      moved: boolean
+    }
+
+// 卡片内字号
+const FONT_TITLE = 13
+const FONT_SUMMARY = 11
+const FONT_CHIP = 10
+
+// 力导向参数
+const LINK_DISTANCE = 170
+const CHARGE_STRENGTH = -420
+const COLLIDE_RADIUS = 92
+const ALPHA_DECAY = 0.045
+
+export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
+  function GraphView(props, ref) {
+    const { onNodeHover, onNodeClick, onNodeDoubleClick } = props
+
+    const fullGraph = useAppStore((s) => s.fullGraph)
+    const selectedNodeId = useAppStore((s) => s.selectedNodeId)
+    const setSelectedNode = useAppStore((s) => s.setSelectedNode)
+    const mode = useAppStore((s) => s.mode)
+    const deleteNode = useAppStore((s) => s.deleteNode)
+    // Task 8：节点延伸
+    const extendNodeAction = useAppStore((s) => s.extendNode)
+    const extending = useAppStore((s) => s.extending)
+    const flashNodeIds = useAppStore((s) => s.flashNodeIds)
+
+    const containerRef = useRef<HTMLDivElement>(null)
+    const svgRef = useRef<SVGSVGElement>(null)
+    const simRef = useRef<Simulation<SimNode, SimEdge> | null>(null)
+    /** 节点 DOM 元素 Map（id → <g>），tick 时直接更新 transform。 */
+    const nodeElsRef = useRef<Map<string, SVGGElement>>(new Map())
+    /** 边 DOM 元素 Map（id → <path>），tick 时直接更新 d。 */
+    const edgeElsRef = useRef<Map<string, SVGPathElement>>(new Map())
+    /** 节点最新坐标快照，React 重渲染时读取以保证 transform 一致。 */
+    const positionsRef = useRef<Map<string, { x: number; y: number }>>(new Map())
+    /** 当前拖拽状态。 */
+    const dragRef = useRef<DragState>({ kind: 'none' })
+    /** 最新画布尺寸（避免尺寸变化重建 simulation）。 */
+    const sizeRef = useRef<{ width: number; height: number }>({ width: 800, height: 600 })
+    /** 最新 transform（供 mousemove 闭包读取）。 */
+    const transformRef = useRef({ x: 0, y: 0, k: 1 })
+    /** Task 7：悬停/离开延时计时器 + 卡片悬停标记。 */
+    const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const leaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const isCardHoveredRef = useRef(false)
+
+    const [size, setSize] = useState({ width: 800, height: 600 })
+    const [transform, setTransform] = useState({ x: 0, y: 0, k: 1 })
+    const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
+    const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null)
+    // Task 7/9：悬停详情卡 / 编辑器 / 删除确认
+    const [hoveredNode, setHoveredNode] = useState<Node | null>(null)
+    const [detailPosition, setDetailPosition] = useState({
+      left: 0,
+      top: 0,
+      width: 340,
+      maxHeight: 500,
+    })
+    const [showEditor, setShowEditor] = useState(false)
+    const [editorNode, setEditorNode] = useState<Node | null>(null)
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+    const [deleteTarget, setDeleteTarget] = useState<Node | null>(null)
+    // forceRender：simulation 停止后若需强制重渲染（如 relayout 重排后）触发
+    const [, forceRender] = useReducer((x: number) => x + 1, 0)
+
+    // 详情卡显示节点：悬停优先，悬停离开后回退到选中（固定）节点
+    const selectedNodeObj = useMemo(
+      () => fullGraph?.nodes.find((n) => n.id === selectedNodeId) ?? null,
+      [fullGraph, selectedNodeId],
+    )
+    const displayedNode = hoveredNode ?? selectedNodeObj
+    const pinned = displayedNode !== null && displayedNode.id === selectedNodeId
+
+    // 同步 transform 到 ref，供事件闭包读取最新值
+    useEffect(() => {
+      transformRef.current = transform
+    }, [transform])
+
+    // ===== 容器尺寸观察 =====
+    useEffect(() => {
+      const el = containerRef.current
+      if (!el) return
+      const ro = new ResizeObserver((entries) => {
+        for (const e of entries) {
+          const { width, height } = e.contentRect
+          const next = {
+            width: Math.max(width, 100),
+            height: Math.max(height, 100),
+          }
+          sizeRef.current = next
+          setSize(next)
+        }
+      })
+      ro.observe(el)
+      return () => ro.disconnect()
+    }, [])
+
+    // ===== 重建 simulation（图谱数据变化时）=====
+    useEffect(() => {
+      if (!fullGraph) {
+        simRef.current?.stop()
+        simRef.current = null
+        nodeElsRef.current.clear()
+        edgeElsRef.current.clear()
+        positionsRef.current.clear()
+        return
+      }
+
+      const { width, height } = sizeRef.current
+      const nodes: SimNode[] = fullGraph.nodes.map((n) => {
+        const angle = Math.random() * Math.PI * 2
+        const r = 40 + Math.random() * 60
+        return {
+          ...n,
+          x: width / 2 + Math.cos(angle) * r,
+          y: height / 2 + Math.sin(angle) * r,
+          vx: 0,
+          vy: 0,
+          fx: null,
+          fy: null,
+        }
+      })
+      const edges: SimEdge[] = fullGraph.edges.map((e: Edge) => ({
+        id: e.id,
+        relation: e.relation,
+        source: e.src_id,
+        target: e.dst_id,
+      }))
+
+      const sim = forceSimulation<SimNode>(nodes)
+        .force(
+          'link',
+          forceLink<SimNode, SimEdge>(edges)
+            .id((d) => d.id)
+            .distance(LINK_DISTANCE)
+            .strength(0.25),
+        )
+        .force('charge', forceManyBody().strength(CHARGE_STRENGTH))
+        .force('center', forceCenter(width / 2, height / 2))
+        .force(
+          'collide',
+          forceCollide<SimNode>().radius(COLLIDE_RADIUS),
+        )
+        .alphaDecay(ALPHA_DECAY)
+        .on('tick', () => {
+          // 直接更新 DOM，避免高频 setState
+          for (const n of nodes) {
+            const el = nodeElsRef.current.get(n.id)
+            const x = n.x ?? 0
+            const y = n.y ?? 0
+            positionsRef.current.set(n.id, { x, y })
+            if (el) el.setAttribute('transform', `translate(${x},${y})`)
+          }
+          for (const e of edges) {
+            const s = typeof e.source === 'string' ? null : e.source
+            const t = typeof e.target === 'string' ? null : e.target
+            if (s && t) {
+              const el = edgeElsRef.current.get(e.id)
+              if (el) el.setAttribute('d', edgePath(s.x ?? 0, s.y ?? 0, t.x ?? 0, t.y ?? 0))
+            }
+          }
+        })
+
+      simRef.current = sim
+
+      return () => {
+        sim.stop()
+      }
+      // 仅在图谱切换时重建；尺寸变化通过 center force 更新
+    }, [fullGraph])
+
+    // ===== 尺寸变化时更新 center force =====
+    useEffect(() => {
+      const sim = simRef.current
+      if (!sim) return
+      sim
+        .force('center', forceCenter(size.width / 2, size.height / 2))
+        .alpha(0.3)
+        .restart()
+    }, [size.width, size.height])
+
+    // ===== 全局鼠标移动 / 松开（拖拽与平移）=====
+    useEffect(() => {
+      const onMove = (ev: MouseEvent) => {
+        const drag = dragRef.current
+        const svg = svgRef.current
+        if (!svg) return
+        if (drag.kind === 'pan') {
+          const dx = ev.clientX - drag.startClientX
+          const dy = ev.clientY - drag.startClientY
+          setTransform((prev) => ({
+            ...prev,
+            x: drag.startTranslateX + dx,
+            y: drag.startTranslateY + dy,
+          }))
+        } else if (drag.kind === 'node') {
+          const { k } = transformRef.current
+          // 屏幕位移转 svg 位移
+          const dxSvg = (ev.clientX - drag.startClientX) / k
+          const dySvg = (ev.clientY - drag.startClientY) / k
+          const nx = drag.startNodeX + dxSvg
+          const ny = drag.startNodeY + dySvg
+          const sim = simRef.current
+          if (!sim) return
+          const node = sim.nodes().find((n) => n.id === drag.nodeId)
+          if (!node) return
+          node.fx = nx
+          node.fy = ny
+          // 更新快照与 DOM
+          positionsRef.current.set(node.id, { x: nx, y: ny })
+          const el = nodeElsRef.current.get(node.id)
+          if (el) el.setAttribute('transform', `translate(${nx},${ny})`)
+          // 重启模拟以让相关边跟随；forceLink 在 tick 时自动读取最新坐标
+          sim.alphaTarget(0.3).restart()
+          if (!drag.moved && (Math.abs(ev.clientX - drag.startClientX) > 3 ||
+            Math.abs(ev.clientY - drag.startClientY) > 3)) {
+            dragRef.current = { ...drag, moved: true }
+          }
+        }
+      }
+      const onUp = () => {
+        const drag = dragRef.current
+        if (drag.kind === 'node') {
+          // 松开后保持固定位置（fx/fy 不清空）
+          const sim = simRef.current
+          if (sim) sim.alphaTarget(0)
+        }
+        dragRef.current = { kind: 'none' }
+        // 清除节点拖拽时设置的 cursor
+        if (svgRef.current) svgRef.current.style.cursor = ''
+      }
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
+      return () => {
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+      }
+    }, [])
+
+    // ===== 滚轮缩放（以光标为中心）=====
+    const onWheel = useCallback((ev: React.WheelEvent<SVGSVGElement>) => {
+      ev.preventDefault()
+      const svg = svgRef.current
+      if (!svg) return
+      const rect = svg.getBoundingClientRect()
+      const cx = ev.clientX - rect.left
+      const cy = ev.clientY - rect.top
+      const { x, y, k } = transformRef.current
+      // 缩放因子： deltaY > 0 向下滚 → 缩小
+      const factor = ev.deltaY > 0 ? 0.9 : 1.1
+      const nk = clampScale(k * factor)
+      if (nk === k) return
+      // 保持光标处 svg 坐标不变：t' = mouse - svgBefore * k'
+      const svgX = (cx - x) / k
+      const svgY = (cy - y) / k
+      const nx = cx - svgX * nk
+      const ny = cy - svgY * nk
+      setTransform({ x: nx, y: ny, k: nk })
+    }, [])
+
+    // ===== 画布平移：在背景层 mousedown =====
+    const onBackgroundMouseDown = useCallback(
+      (ev: React.MouseEvent<SVGRectElement>) => {
+        // 仅左键
+        if (ev.button !== 0) return
+        const { x, y } = transformRef.current
+        dragRef.current = {
+          kind: 'pan',
+          startClientX: ev.clientX,
+          startClientY: ev.clientY,
+          startTranslateX: x,
+          startTranslateY: y,
+        }
+        if (svgRef.current) svgRef.current.style.cursor = 'grabbing'
+      },
+      [],
+    )
+
+    // ===== 节点 mousedown：开始拖拽节点 =====
+    const onNodeMouseDown = useCallback(
+      (ev: React.MouseEvent<SVGGElement>, node: Node) => {
+        if (ev.button !== 0) return
+        ev.stopPropagation()
+        const svg = svgRef.current
+        if (!svg) return
+        const pos = positionsRef.current.get(node.id) ?? { x: 0, y: 0 }
+        dragRef.current = {
+          kind: 'node',
+          nodeId: node.id,
+          startClientX: ev.clientX,
+          startClientY: ev.clientY,
+          startNodeX: pos.x,
+          startNodeY: pos.y,
+          moved: false,
+        }
+        svg.style.cursor = 'grabbing'
+      },
+      [],
+    )
+
+    // ===== Task 7/9：悬停详情卡 / 编辑 / 删除 =====
+    const clearHoverTimer = useCallback(() => {
+      if (hoverTimerRef.current) {
+        clearTimeout(hoverTimerRef.current)
+        hoverTimerRef.current = null
+      }
+    }, [])
+    const clearLeaveTimer = useCallback(() => {
+      if (leaveTimerRef.current) {
+        clearTimeout(leaveTimerRef.current)
+        leaveTimerRef.current = null
+      }
+    }, [])
+
+    // 详情卡定位：基于节点在容器内的坐标，默认靠右展示，溢出时翻到左侧并夹取到视口内
+    const updateDetailPosition = useCallback(
+      (node: Node) => {
+        const container = containerRef.current
+        if (!container) return
+        const rect = container.getBoundingClientRect()
+        const cw = rect.width
+        const ch = rect.height
+        const pos = positionsRef.current.get(node.id)
+        if (!pos) return
+        const { x, y, k } = transformRef.current
+        const cx = x + pos.x * k
+        const cy = y + pos.y * k
+        const cardW = 340
+        const cardMaxH = 500
+        const gap = 12
+        const nodeHalfW = (NODE_WIDTH / 2) * k
+        let left = cx + nodeHalfW + gap
+        if (left + cardW > cw - 8) {
+          left = cx - nodeHalfW - gap - cardW
+        }
+        left = Math.max(8, Math.min(left, cw - cardW - 8))
+        const effMaxH = Math.min(cardMaxH, ch - 16)
+        let top = cy - 60
+        top = Math.max(8, Math.min(top, ch - effMaxH - 8))
+        setDetailPosition({ left, top, width: cardW, maxHeight: cardMaxH })
+      },
+      [],
+    )
+
+    // 悬停进入：300-500ms 后显示详情卡
+    const handleNodeMouseEnter = useCallback(
+      (node: Node) => {
+        clearLeaveTimer()
+        if (hoveredNode?.id === node.id) {
+          clearHoverTimer()
+          return
+        }
+        clearHoverTimer()
+        hoverTimerRef.current = setTimeout(() => {
+          hoverTimerRef.current = null
+          setHoveredNode(node)
+        }, 400)
+      },
+      [hoveredNode?.id, clearHoverTimer, clearLeaveTimer],
+    )
+
+    // 悬停离开：200-300ms 后清除悬停态（卡片悬停时保持）
+    const handleNodeMouseLeave = useCallback(() => {
+      clearHoverTimer()
+      if (isCardHoveredRef.current) return
+      leaveTimerRef.current = setTimeout(() => {
+        leaveTimerRef.current = null
+        if (isCardHoveredRef.current) return
+        setHoveredNode(null)
+      }, 250)
+    }, [clearHoverTimer, clearLeaveTimer])
+
+    const handleCardMouseEnter = useCallback(() => {
+      isCardHoveredRef.current = true
+      clearLeaveTimer()
+    }, [clearLeaveTimer])
+
+    const handleCardMouseLeave = useCallback(() => {
+      isCardHoveredRef.current = false
+      clearLeaveTimer()
+      leaveTimerRef.current = setTimeout(() => {
+        leaveTimerRef.current = null
+        if (isCardHoveredRef.current) return
+        setHoveredNode(null)
+      }, 250)
+    }, [clearLeaveTimer])
+
+    const handleCloseDetail = useCallback(() => {
+      clearHoverTimer()
+      clearLeaveTimer()
+      setHoveredNode(null)
+      setSelectedNode(null)
+    }, [clearHoverTimer, clearLeaveTimer, setSelectedNode])
+
+    const handleEdit = useCallback((node: Node) => {
+      setEditorNode(node)
+      setShowEditor(true)
+    }, [])
+
+    const handleDelete = useCallback((node: Node) => {
+      setDeleteTarget(node)
+      setShowDeleteConfirm(true)
+    }, [])
+
+    const handleConfirmDelete = useCallback(async () => {
+      const target = deleteTarget
+      if (!target) return
+      setShowDeleteConfirm(false)
+      setDeleteTarget(null)
+      const ok = await deleteNode(target.id)
+      if (ok) {
+        setHoveredNode(null)
+      }
+    }, [deleteTarget, deleteNode])
+
+    const handleCancelDelete = useCallback(() => {
+      setShowDeleteConfirm(false)
+      setDeleteTarget(null)
+    }, [])
+
+    // ===== 节点单击 / 双击 / 悬停 =====
+    const onNodeClickInner = useCallback(
+      (ev: React.MouseEvent<SVGGElement>, node: Node) => {
+        // 若刚刚是拖拽，不触发 click
+        if (dragRef.current.kind === 'node' && dragRef.current.moved) return
+        ev.stopPropagation()
+        setSelectedNode(node.id)
+        onNodeClick?.(node)
+        // eslint-disable-next-line no-console
+        console.log('[GraphView] node click', node.id, node.title)
+      },
+      [onNodeClick, setSelectedNode],
+    )
+
+    const onNodeDoubleClickInner = useCallback(
+      (ev: React.MouseEvent<SVGGElement>, node: Node) => {
+        ev.stopPropagation()
+        // Task 8：双击节点触发全部延伸。延伸进行中时忽略重复触发，
+        // 避免短时间产生多批 batch。结果由 store 处理（整图刷新 + 闪烁）。
+        if (extending) return
+        void extendNodeAction(node.id, 'all')
+        onNodeDoubleClick?.(node)
+        // eslint-disable-next-line no-console
+        console.log('[GraphView] node double click → extend all', node.id, node.title)
+      },
+      [onNodeDoubleClick, extendNodeAction, extending],
+    )
+
+    const onNodeHoverInner = useCallback(
+      (node: Node | null) => {
+        setHoveredNodeId(node?.id ?? null)
+        onNodeHover?.(node)
+        if (node) {
+          handleNodeMouseEnter(node)
+        } else {
+          handleNodeMouseLeave()
+        }
+      },
+      [onNodeHover, handleNodeMouseEnter, handleNodeMouseLeave],
+    )
+
+    // ===== Task 7：详情卡随显示节点变化更新定位 =====
+    useEffect(() => {
+      if (!displayedNode) return
+      updateDetailPosition(displayedNode)
+      // 仅在显示节点 id 变化时重定位（避免高频 tick 触发）
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [displayedNode?.id])
+
+    // ===== Task 7：组件卸载时清理悬停计时器 =====
+    useEffect(() => {
+      return () => {
+        if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current)
+        if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current)
+      }
+    }, [])
+
+    // ===== 暴露 relayout / resetView =====
+    useImperativeHandle(
+      ref,
+      () => ({
+        relayout: () => {
+          const sim = simRef.current
+          if (!sim) return
+          const { width, height } = sizeRef.current
+          // 清除所有固定位置 + 随机重排
+          for (const n of sim.nodes()) {
+            n.fx = null
+            n.fy = null
+            const angle = Math.random() * Math.PI * 2
+            const r = 40 + Math.random() * 80
+            n.x = width / 2 + Math.cos(angle) * r
+            n.y = height / 2 + Math.sin(angle) * r
+            n.vx = 0
+            n.vy = 0
+          }
+          sim
+            .force('center', forceCenter(width / 2, height / 2))
+            .alpha(1)
+            .restart()
+          forceRender()
+        },
+        resetView: () => {
+          setTransform({ x: 0, y: 0, k: 1 })
+        },
+      }),
+      [],
+    )
+
+    // ===== 点击空白取消选中 =====
+    const onSvgClick = useCallback(() => {
+      // 仅在背景层 click 时触发（节点 click 已 stopPropagation）
+      if (dragRef.current.kind === 'none') {
+        setSelectedNode(null)
+      }
+    }, [setSelectedNode])
+
+    const nodes = fullGraph?.nodes ?? []
+    const edges = fullGraph?.edges ?? []
+
+    // 节点标题文本宽度上限（卡片宽 - 左右内边距）
+    const titleMaxW = NODE_WIDTH - CARD_PAD_X * 2
+    const summaryMaxW = NODE_WIDTH - CARD_PAD_X * 2
+
+    return (
+      <div className="gv-container" ref={containerRef}>
+        <svg
+          ref={svgRef}
+          className="gv-svg"
+          width={size.width}
+          height={size.height}
+          onWheel={onWheel}
+          onClick={onSvgClick}
+        >
+          {/* 背景层：用于平移与点击空白取消选中 */}
+          <rect
+            x={0}
+            y={0}
+            width={size.width}
+            height={size.height}
+            fill="transparent"
+            onMouseDown={onBackgroundMouseDown}
+          />
+          {/* 缩放平移容器 */}
+          <g transform={`translate(${transform.x},${transform.y}) scale(${transform.k})`}>
+            {/* 边层（在节点下层，端点被卡片遮挡） */}
+            <g className="gv-edges">
+              {edges.map((e) => {
+                const isHovered = hoveredEdgeId === e.id
+                // 初始 d：从快照读，否则用两端节点中心
+                const sp = positionsRef.current.get(e.src_id)
+                const tp = positionsRef.current.get(e.dst_id)
+                const d =
+                  sp && tp
+                    ? edgePath(sp.x, sp.y, tp.x, tp.y)
+                    : `M0,0L0,0`
+                return (
+                  <path
+                    key={e.id}
+                    ref={(el) => {
+                      if (el) edgeElsRef.current.set(e.id, el)
+                      else edgeElsRef.current.delete(e.id)
+                    }}
+                    className={`gv-edge${isHovered ? ' is-hovered' : ''}`}
+                    d={d}
+                    onMouseEnter={() => setHoveredEdgeId(e.id)}
+                    onMouseLeave={() => setHoveredEdgeId(null)}
+                  />
+                )
+              })}
+            </g>
+            {/* 节点层 */}
+            <g className="gv-nodes">
+              {nodes.map((n) => {
+                const pos =
+                  positionsRef.current.get(n.id) ?? { x: size.width / 2, y: size.height / 2 }
+                const isSelected = selectedNodeId === n.id
+                const isHovered = hoveredNodeId === n.id
+                const isGray = n.is_gray
+                const isFlash = flashNodeIds.includes(n.id)
+                const title = truncateText(n.title || '（无标题）', titleMaxW, FONT_TITLE)
+                const summaryLines = wrapText(n.summary || '', summaryMaxW, FONT_SUMMARY, 2)
+                const chipText = n.type || '未分类'
+                const chipW = estimateTextWidth(chipText, FONT_CHIP) + 12
+                return (
+                  <g
+                    key={n.id}
+                    ref={(el) => {
+                      if (el) nodeElsRef.current.set(n.id, el)
+                      else nodeElsRef.current.delete(n.id)
+                    }}
+                    transform={`translate(${pos.x},${pos.y})`}
+                    className={[
+                      'gv-node',
+                      isGray ? 'is-gray' : '',
+                      isSelected ? 'is-selected' : '',
+                      isHovered ? 'is-hovered' : '',
+                      isFlash ? 'is-flash' : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                    onMouseDown={(ev) => onNodeMouseDown(ev, n)}
+                    onClick={(ev) => onNodeClickInner(ev, n)}
+                    onDoubleClick={(ev) => onNodeDoubleClickInner(ev, n)}
+                    onMouseEnter={() => onNodeHoverInner(n)}
+                    onMouseLeave={() => onNodeHoverInner(null)}
+                  >
+                    {/* 内层 g：负责 hover 微提升 scale，与外层 translate 解耦 */}
+                    <g className="gv-node__inner">
+                      {/* 卡片背景 */}
+                      <rect
+                        x={-NODE_WIDTH / 2}
+                        y={-NODE_HEIGHT / 2}
+                        width={NODE_WIDTH}
+                        height={NODE_HEIGHT}
+                        rx={10}
+                        ry={10}
+                        className="gv-node__bg"
+                      />
+                      {/* 标题（单行） */}
+                      <text
+                        x={-NODE_WIDTH / 2 + CARD_PAD_X}
+                        y={-NODE_HEIGHT / 2 + 18}
+                        className="gv-node__title"
+                      >
+                        {title}
+                      </text>
+                      {/* 概括（最多两行） */}
+                      {summaryLines.length > 0 && (
+                        <text
+                          x={-NODE_WIDTH / 2 + CARD_PAD_X}
+                          y={-NODE_HEIGHT / 2 + 34}
+                          className="gv-node__summary"
+                        >
+                          {summaryLines.map((line, i) => (
+                            <tspan
+                              key={i}
+                              x={-NODE_WIDTH / 2 + CARD_PAD_X}
+                              dy={i === 0 ? 0 : 14}
+                            >
+                              {line}
+                            </tspan>
+                          ))}
+                        </text>
+                      )}
+                      {/* 类型标签 chip（左下角） */}
+                      <g
+                        className="gv-node__chip"
+                        transform={`translate(${-NODE_WIDTH / 2 + CARD_PAD_X}, ${
+                          NODE_HEIGHT / 2 - 16
+                        })`}
+                      >
+                        <rect x={0} y={0} width={chipW} height={14} rx={7} ry={7} />
+                        <text x={6} y={10}>
+                          {chipText}
+                        </text>
+                      </g>
+                    </g>
+                  </g>
+                )
+              })}
+            </g>
+          </g>
+        </svg>
+
+        {/* 画布无节点的引导（有图谱但无节点） */}
+        {fullGraph && nodes.length === 0 && (
+          <div className="gv-empty-hint">
+            <div className="gv-empty-hint__title">该图谱还没有节点</div>
+            <div className="gv-empty-hint__desc">
+              通过 API 创建节点后，这里会以小卡片形式展示。后续 Task 7/8 接入悬停详情卡与
+              双击延伸生成。
+            </div>
+          </div>
+        )}
+
+        {/* 缩放指示 */}
+        <div className="gv-zoom-hint">{Math.round(transform.k * 100)}%</div>
+
+        {/* Task 8：延伸进行中加载提示 */}
+        {extending && (
+          <div className="gv-extending-overlay" role="status" aria-live="polite">
+            <div className="gv-extending-overlay__pill">
+              <span className="gv-extending-overlay__spinner" />
+              正在生成延伸节点…
+            </div>
+          </div>
+        )}
+
+        {/* Task 7：节点悬停详情卡（悬停优先，回退到选中固定节点） */}
+        {displayedNode && (
+          <NodeDetailCard
+            node={displayedNode}
+            graphType={mode}
+            pinned={pinned}
+            position={detailPosition}
+            onCardMouseEnter={handleCardMouseEnter}
+            onCardMouseLeave={handleCardMouseLeave}
+            onClose={handleCloseDetail}
+            onEdit={handleEdit}
+            onDelete={handleDelete}
+          />
+        )}
+
+        {/* Task 9：节点编辑器 */}
+        <NodeEditor
+          open={showEditor}
+          node={editorNode}
+          graphType={mode}
+          onClose={() => setShowEditor(false)}
+        />
+
+        {/* Task 9：删除确认弹窗 */}
+        <ConfirmDialog
+          open={showDeleteConfirm}
+          title="删除节点"
+          message={`确定删除节点「${deleteTarget?.title ?? ''}」吗？相关连接也会一并移除，此操作不可撤销。`}
+          confirmText="删除"
+          danger
+          onConfirm={handleConfirmDelete}
+          onCancel={handleCancelDelete}
+        />
+      </div>
+    )
+  },
+)

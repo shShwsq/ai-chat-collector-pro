@@ -1,0 +1,30 @@
+# Python 字节码与缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 虚拟环境
+.venv/
+
+# 环境变量
+.env
+.env.local
+
+# 运行期数据
+data/
+chroma/
+*.db
+*.sqlite3
+
+# 测试与静态分析缓存
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# 打包产物
+build/
+dist/
+*.egg-info/
+
+# uv lock 由 uv 生成并维护，需提交
+!uv.lock

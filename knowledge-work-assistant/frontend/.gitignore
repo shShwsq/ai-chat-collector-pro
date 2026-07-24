@@ -1,0 +1,19 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+dist-electron/
+out/
+electron/dist/
+
+# 本地环境
+.env
+.env.local
+.env.*.local
+
+# 缓存与日志
+.vite/
+*.log
+.DS_Store
+Thumbs.db
