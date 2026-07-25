@@ -1,0 +1,169 @@
+{
+  "_comment": "LLM / Embedding 厂商与模型清单。embedding 必须 1024 维（向量库固定维度）。",
+  "_thinkingModes": {
+    "hybrid": "混合思考模式，可通过 enable_thinking 切换开关（默认行为见 thinkingDefault）",
+    "only": "仅思考模式，模型始终思考，无法关闭",
+    "none": "不支持思考"
+  },
+  "llmProviders": [
+    {
+      "id": "dashscope",
+      "name": "阿里云百炼 DashScope",
+      "backend": "openai",
+      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "apiKeyLabel": "DashScope API Key",
+      "apiKeyUrl": "https://dashscope.console.aliyun.com/",
+      "supportsThinking": true,
+      "thinkingParam": "enable_thinking",
+      "models": [
+        { "id": "qwen3.7-max", "name": "Qwen3.7-Max", "thinking": "hybrid", "thinkingDefault": true },
+        { "id": "qwen3.7-plus", "name": "Qwen3.7-Plus", "thinking": "hybrid", "thinkingDefault": true },
+        { "id": "qwen3.6-flash", "name": "Qwen3.6-Flash", "thinking": "hybrid", "thinkingDefault": true },
+        { "id": "qwen3.6-pro", "name": "Qwen3.6-Pro", "thinking": "hybrid", "thinkingDefault": true },
+        { "id": "deepseek-v4-flash", "name": "DeepSeek-V4-Flash", "thinking": "hybrid", "thinkingDefault": true },
+        { "id": "deepseek-v4-pro", "name": "DeepSeek-V4-Pro", "thinking": "hybrid", "thinkingDefault": true },
+        { "id": "qwq-plus", "name": "QwQ-Plus（仅思考）", "thinking": "only", "thinkingDefault": true }
+      ]
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek 官方",
+      "backend": "openai",
+      "baseUrl": "https://api.deepseek.com",
+      "apiKeyLabel": "DeepSeek API Key",
+      "apiKeyUrl": "https://platform.deepseek.com/api_keys",
+      "supportsThinking": true,
+      "thinkingParam": "thinking",
+      "models": [
+        { "id": "deepseek-v4-flash", "name": "DeepSeek-V4-Flash", "thinking": "hybrid", "thinkingDefault": true },
+        { "id": "deepseek-v4-pro", "name": "DeepSeek-V4-Pro", "thinking": "hybrid", "thinkingDefault": true }
+      ]
+    },
+    {
+      "id": "zhipu",
+      "name": "智谱 AI (BigModel)",
+      "backend": "openai",
+      "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+      "apiKeyLabel": "智谱 API Key",
+      "apiKeyUrl": "https://open.bigmodel.cn/usercenter/apikeys",
+      "supportsThinking": true,
+      "thinkingParam": "thinking",
+      "models": [
+        { "id": "glm-5.2", "name": "GLM-5.2", "thinking": "hybrid", "thinkingDefault": true },
+        { "id": "glm-5.1", "name": "GLM-5.1", "thinking": "hybrid", "thinkingDefault": true }
+      ]
+    },
+    {
+      "id": "moonshot",
+      "name": "月之暗面 Kimi",
+      "backend": "openai",
+      "baseUrl": "https://api.moonshot.cn/v1",
+      "apiKeyLabel": "Kimi API Key",
+      "apiKeyUrl": "https://platform.moonshot.cn/console/api-keys",
+      "supportsThinking": true,
+      "thinkingParam": "thinking",
+      "thinkingEnabledType": "enabled",
+      "thinkingTemperature": 1.0,
+      "nonThinkingTemperature": 0.6,
+      "models": [
+        { "id": "kimi-k2.6", "name": "Kimi K2.6", "thinking": "hybrid", "thinkingDefault": true },
+        { "id": "kimi-k2.5", "name": "Kimi K2.5", "thinking": "hybrid", "thinkingDefault": true }
+      ]
+    },
+    {
+      "id": "doubao",
+      "name": "火山引擎豆包",
+      "backend": "openai",
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+      "apiKeyLabel": "Ark API Key",
+      "apiKeyUrl": "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey",
+      "supportsThinking": true,
+      "thinkingParam": "thinking",
+      "fallbackThinking": "hybrid",
+      "models": [
+        { "id": "doubao-seed-2-1-pro-260628", "name": "Doubao-Seed-2.1-Pro", "thinking": "hybrid", "thinkingDefault": true },
+        { "id": "doubao-seed-2-1-turbo-260628", "name": "Doubao-Seed-2.1-Turbo", "thinking": "hybrid", "thinkingDefault": true },
+        { "id": "doubao-seed-2-0-mini-260428", "name": "Doubao-Seed-2.0-Mini", "thinking": "hybrid", "thinkingDefault": true }
+      ]
+    },
+    {
+      "id": "minimax",
+      "name": "MiniMax",
+      "backend": "openai",
+      "baseUrl": "https://api.minimaxi.com",
+      "apiKeyLabel": "MiniMax API Key",
+      "apiKeyUrl": "https://platform.minimaxi.com/user-center/basic-information/interface-key",
+      "supportsThinking": true,
+      "thinkingParam": "thinking",
+      "thinkingEnabledType": "adaptive",
+      "reasoningSplit": true,
+      "models": [
+        { "id": "MiniMax-M3", "name": "MiniMax-M3", "thinking": "hybrid", "thinkingDefault": true },
+        { "id": "MiniMax-M2.7", "name": "MiniMax-M2.7", "thinking": "only", "thinkingDefault": true }
+      ]
+    }
+  ],
+  "embeddingProviders": [
+    {
+      "id": "dashscope",
+      "name": "阿里云百炼 DashScope",
+      "backend": "dashscope",
+      "baseUrl": "https://dashscope.aliyuncs.com/api/v1",
+      "apiKeyLabel": "DashScope API Key",
+      "apiKeyUrl": "https://dashscope.console.aliyun.com/",
+      "models": [
+        { "id": "text-embedding-v4", "name": "Text-Embedding-V4 (纯文本)", "dimension": 1024, "multimodal": false },
+        { "id": "tongyi-embedding-vision-plus-2026-03-06", "name": "Tongyi-Embedding-Vision-Plus (多模态)", "dimension": 1024, "multimodal": true }
+      ]
+    },
+    {
+      "id": "zhipu",
+      "name": "智谱 AI (BigModel)",
+      "backend": "openai",
+      "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+      "apiKeyLabel": "智谱 API Key",
+      "apiKeyUrl": "https://open.bigmodel.cn/usercenter/apikeys",
+      "models": [
+        { "id": "embedding-3", "name": "Embedding-3", "dimension": 1024, "multimodal": false, "dimensionsParam": true }
+      ]
+    },
+    {
+      "id": "baidu",
+      "name": "百度千帆",
+      "backend": "openai",
+      "baseUrl": "https://qianfan.baidubce.com/v2",
+      "apiKeyLabel": "千帆 API Key (Bearer)",
+      "apiKeyUrl": "https://console.bce.baidu.com/iam/#/iam/apikey/list",
+      "models": [
+        { "id": "bge-large-zh", "name": "BGE-Large-ZH", "dimension": 1024, "multimodal": false },
+        { "id": "bge-large-en", "name": "BGE-Large-EN", "dimension": 1024, "multimodal": false }
+      ]
+    },
+    {
+      "id": "volcengine",
+      "name": "火山引擎豆包",
+      "backend": "openai",
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+      "apiKeyLabel": "Ark API Key",
+      "apiKeyUrl": "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey",
+      "fallbackDimension": 1024,
+      "fallbackMultimodal": true,
+      "fallbackMultimodalEndpoint": true,
+      "fallbackDimensionsParam": true,
+      "models": [
+        { "id": "doubao-embedding-vision-251215", "name": "Doubao Embedding Vision 251215", "dimension": 1024, "multimodal": true, "multimodalEndpoint": true, "dimensionsParam": true }
+      ]
+    },
+    {
+      "id": "jina",
+      "name": "Jina AI",
+      "backend": "openai",
+      "baseUrl": "https://api.jina.ai/v1",
+      "apiKeyLabel": "Jina API Key",
+      "apiKeyUrl": "https://jina.ai/api-dashboard/",
+      "models": [
+        { "id": "jina-embeddings-v5-text-small", "name": "Jina Embeddings V5 Text Small", "dimension": 1024, "multimodal": false, "dimensionsParam": true }
+      ]
+    }
+  ]
+}
