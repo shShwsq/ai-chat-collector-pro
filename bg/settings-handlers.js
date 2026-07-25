@@ -17,6 +17,8 @@ async function handleGetSettings(category) {
         return await getPlatformSettings();
       case 'platformModes':
         return await getPlatformModes();
+      case 'localApp':
+        return await getLocalAppSettings();
       default:
         return { error: '未知设置类别' };
     }
@@ -103,6 +105,10 @@ async function handleSaveSettings(category, settings) {
         break;
       case 'platformModes':
         await savePlatformModes(settings);
+        break;
+      case 'localApp':
+        // 保存并应用到 LocalApp 模块（同步更新定时器）
+        await LocalApp_applySettings(settings);
         break;
     }
     return { success: true, ...extraResult };

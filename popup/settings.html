@@ -148,6 +148,64 @@
       </div>
     </section>
 
+    <!-- 本地软件对接 -->
+    <section class="setting-section">
+      <h2 class="section-title-with-action">本地软件对接 <button class="btn btn-sm" id="testLocalAppBtn">测试连通性</button></h2>
+      <p class="desc">将采集到的对话推送到本地运行的 knowledge-work-assistant 软件（FastAPI 后端默认监听 8788 端口）</p>
+
+      <div class="form-group">
+        <div class="checkbox-row">
+          <input type="checkbox" id="localAppEnabled" />
+          <label for="localAppEnabled">启用本地软件对接</label>
+        </div>
+        <small>启用后可在插件 popup 主页点击「发送到本地软件」按钮手动推送</small>
+      </div>
+
+      <div class="form-group">
+        <label>本地软件地址</label>
+        <input type="text" id="localAppBaseUrl" placeholder="http://localhost:8788" />
+        <small>本地软件后端地址。默认 http://localhost:8788，已通过 manifest 预置 host 权限</small>
+      </div>
+
+      <div class="form-group">
+        <div class="checkbox-row">
+          <input type="checkbox" id="localAppPushOnSave" />
+          <label for="localAppPushOnSave">保存对话后立即推送</label>
+        </div>
+        <small>插件采集到新对话后立即异步推送。本地后端未启动时静默失败，不影响插件其他功能</small>
+      </div>
+
+      <div class="form-group">
+        <div class="checkbox-row">
+          <input type="checkbox" id="localAppAutoPush" />
+          <label for="localAppAutoPush">启用定时自动推送</label>
+        </div>
+        <small>由 chrome.alarms 触发，最小间隔 1 分钟（Chrome MV3 service worker 限制，无法做到 10 秒级）</small>
+      </div>
+
+      <div class="form-group">
+        <label>推送间隔</label>
+        <select id="localAppInterval">
+          <option value="1" selected>1 分钟</option>
+          <option value="5">5 分钟</option>
+          <option value="10">10 分钟</option>
+          <option value="30">30 分钟</option>
+        </select>
+        <small>定时触发时只推送未推送或已变更的对话（增量优化）；后端 24h 幂等去重兜底，重复推送安全</small>
+      </div>
+
+      <div class="form-group">
+        <label>已推送统计</label>
+        <div id="localAppPushedCount" class="info-text">加载中...</div>
+        <button class="btn btn-mini" id="refreshLocalAppStatsBtn" style="margin-top:4px;">刷新</button>
+      </div>
+
+      <div class="form-group">
+        <button class="btn btn-danger" id="resetLocalAppPushedBtn">清空已推送记录</button>
+        <small>清空后所有对话会被视为未推送，下次推送将重新发送（后端 24h 幂等去重仍会兜底，不会产生重复记录）</small>
+      </div>
+    </section>
+
     <!-- 召回（Retrieval）设置 -->
     <section class="setting-section">
       <h2>召回设置</h2>

@@ -7,7 +7,8 @@
     "storage",
     "downloads",
     "activeTab",
-    "scripting"
+    "scripting",
+    "alarms"
   ],
   "host_permissions": [
     "https://chat.deepseek.com/*",
@@ -24,7 +25,9 @@
     "https://api.jina.ai/*",
     "https://kimi.com/*",
     "https://www.kimi.com/*",
-    "https://kimi.moonshot.cn/*"
+    "https://kimi.moonshot.cn/*",
+    "http://localhost:8788/*",
+    "http://127.0.0.1:8788/*"
   ],
   "optional_host_permissions": [
     "http://*/*",

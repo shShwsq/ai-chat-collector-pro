@@ -26,6 +26,7 @@
         <option value="">全部平台</option>
       </select>
       <button id="exportAllBtn" class="btn btn-primary" title="导出全部对话">导出全部</button>
+      <button id="pushLocalBtn" class="btn btn-push-local" title="将对话记录发送到本地软件">发送到本地软件</button>
       <button id="refreshBtn" class="btn" title="刷新列表">刷新</button>
       <button id="settingsBtn" class="btn" title="AI 问答设置">设置</button>
     </div>
@@ -33,6 +34,9 @@
     <div class="conversation-list" id="conversationList">
       <div class="empty-state">暂无对话记录</div>
     </div>
+
+    <!-- 推送结果临时提示条 -->
+    <div class="popup-banner" id="pushBanner"></div>
 
     <!-- 完整对话查看弹窗 -->
     <div class="viewer-overlay" id="viewerOverlay">

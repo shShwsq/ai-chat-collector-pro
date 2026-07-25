@@ -62,6 +62,16 @@ document.addEventListener('DOMContentLoaded', () => {
   const ollamaBaseUrl = document.getElementById('ollamaBaseUrl');
   const ollamaModel = document.getElementById('ollamaModel');
 
+  // ---- 本地软件对接 ----
+  const localAppEnabled = document.getElementById('localAppEnabled');
+  const localAppBaseUrl = document.getElementById('localAppBaseUrl');
+  const localAppPushOnSave = document.getElementById('localAppPushOnSave');
+  const localAppAutoPush = document.getElementById('localAppAutoPush');
+  const localAppInterval = document.getElementById('localAppInterval');
+  const testLocalAppBtn = document.getElementById('testLocalAppBtn');
+  const refreshLocalAppStatsBtn = document.getElementById('refreshLocalAppStatsBtn');
+  const resetLocalAppPushedBtn = document.getElementById('resetLocalAppPushedBtn');
+
   // ---- 厂商清单（从 models.json 加载） ----
   let modelsCatalog = null;
 
@@ -98,7 +108,12 @@ document.addEventListener('DOMContentLoaded', () => {
       openaiModel: openaiModel.value,
       openaiEnableThinking: openaiEnableThinking.checked,
       ollamaBaseUrl: ollamaBaseUrl.value,
-      ollamaModel: ollamaModel.value
+      ollamaModel: ollamaModel.value,
+      localAppEnabled: localAppEnabled.checked,
+      localAppBaseUrl: localAppBaseUrl.value,
+      localAppPushOnSave: localAppPushOnSave.checked,
+      localAppAutoPush: localAppAutoPush.checked,
+      localAppInterval: localAppInterval.value
     });
   }
   function isFormDirty() {
@@ -488,6 +503,9 @@ document.addEventListener('DOMContentLoaded', () => {
   testLlmBtn.addEventListener('click', testLLM);
   testVectorConnectionBtn.addEventListener('click', testVectorConnection);
   rebuildIndexBtn.addEventListener('click', rebuildIndex);
+  testLocalAppBtn.addEventListener('click', testLocalApp);
+  refreshLocalAppStatsBtn.addEventListener('click', loadLocalAppStats);
+  resetLocalAppPushedBtn.addEventListener('click', resetLocalAppPushed);
 
   // ---- 顶部导航条 ----
   const navStorageBtn = document.getElementById('navStorageBtn');
@@ -724,6 +742,19 @@ document.addEventListener('DOMContentLoaded', () => {
       ollamaLlmConfig.style.display = backend === 'ollama' ? 'block' : 'none';
     }
 
+    // 本地软件对接设置
+    const localAppResp = await sendMessage({ type: 'GET_SETTINGS', category: 'localApp' });
+    if (localAppResp && !localAppResp.error) {
+      localAppEnabled.checked = !!localAppResp.enabled;
+      localAppBaseUrl.value = localAppResp.baseUrl || 'http://localhost:8788';
+      localAppPushOnSave.checked = localAppResp.pushOnSave !== false; // 默认 true
+      localAppAutoPush.checked = !!localAppResp.autoPush;
+      localAppInterval.value = String(localAppResp.intervalMinutes || 1);
+    }
+
+    // 加载已推送统计
+    loadLocalAppStats();
+
     // 加载完成后记录表单快照，用于未保存提示
     formSnapshot = serializeForm();
   }
@@ -832,6 +863,20 @@ document.addEventListener('DOMContentLoaded', () => {
       type: 'SAVE_SETTINGS',
       category: 'llm',
       settings: { backend: llmType, config: llmConfig }
+    });
+
+    // 本地软件对接
+    const localAppIntervalVal = parseInt(localAppInterval.value, 10);
+    await sendMessage({
+      type: 'SAVE_SETTINGS',
+      category: 'localApp',
+      settings: {
+        enabled: localAppEnabled.checked,
+        baseUrl: localAppBaseUrl.value.trim() || 'http://localhost:8788',
+        pushOnSave: localAppPushOnSave.checked,
+        autoPush: localAppAutoPush.checked,
+        intervalMinutes: (isNaN(localAppIntervalVal) || localAppIntervalVal < 1) ? 1 : localAppIntervalVal
+      }
     });
 
     // 保存成功后更新快照，避免返回时误报未保存
@@ -1423,5 +1468,88 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     clearVectorStoreBtn.disabled = false;
     clearVectorStoreBtn.textContent = '清空当前向量库';
+  }
+
+  // ---- 本地软件对接 ----
+
+  // 测试本地软件连通性（使用当前填写的 baseUrl，未保存也可测）
+  async function testLocalApp() {
+    testLocalAppBtn.disabled = true;
+    const originalText = testLocalAppBtn.textContent;
+    testLocalAppBtn.textContent = '测试中...';
+    try {
+      // 先静默保存（不弹向量库切换询问）
+      const baseUrl = localAppBaseUrl.value.trim() || 'http://localhost:8788';
+      const intervalVal = parseInt(localAppInterval.value, 10) || 1;
+      await sendMessage({
+        type: 'SAVE_SETTINGS',
+        category: 'localApp',
+        settings: {
+          enabled: localAppEnabled.checked,
+          baseUrl,
+          pushOnSave: localAppPushOnSave.checked,
+          autoPush: localAppAutoPush.checked,
+          intervalMinutes: intervalVal
+        }
+      });
+      formSnapshot = serializeForm();
+
+      const resp = await sendMessage({ type: 'LOCAL_APP_TEST' });
+      if (resp && resp.success) {
+        const platforms = (resp.supported_platforms || []).join(', ');
+        showToast(`连通性测试成功！耗时 ${resp.latency}ms；版本 ${resp.version}；支持平台: ${platforms}；队列 ${resp.queue_size}`);
+      } else {
+        showToast(`连通性测试失败: ${resp?.error || '未知错误'}（请确认本地软件已启动）`, true);
+      }
+    } catch (e) {
+      showToast(`测试异常: ${e.message}`, true);
+    }
+    testLocalAppBtn.disabled = false;
+    testLocalAppBtn.textContent = originalText;
+  }
+
+  // 加载已推送统计
+  async function loadLocalAppStats() {
+    const countEl = document.getElementById('localAppPushedCount');
+    if (!countEl) return;
+    countEl.textContent = '加载中...';
+    try {
+      const resp = await sendMessage({ type: 'LOCAL_APP_STATUS' });
+      if (!resp) {
+        countEl.textContent = '获取失败';
+        return;
+      }
+      const parts = [];
+      parts.push(`已推送 ${resp.pushedCount || 0} 条`);
+      if (resp.enabled) {
+        const flags = [];
+        if (resp.autoPush) flags.push(`定时 ${resp.intervalMinutes}min`);
+        if (resp.pushOnSave) flags.push('保存即推');
+        if (flags.length > 0) parts.push(`（${flags.join(' / ')}）`);
+      } else {
+        parts.push('（未启用）');
+      }
+      countEl.textContent = parts.join(' ');
+    } catch (e) {
+      countEl.textContent = `加载失败: ${e.message}`;
+    }
+  }
+
+  // 清空已推送记录
+  async function resetLocalAppPushed() {
+    if (!confirm('确定清空已推送记录吗？\n\n清空后所有对话会被视为未推送，下次推送将重新发送。后端 24h 幂等去重仍会兜底，不会产生重复记录。')) return;
+    resetLocalAppPushedBtn.disabled = true;
+    try {
+      const resp = await sendMessage({ type: 'LOCAL_APP_RESET_PUSHED' });
+      if (resp && resp.success) {
+        showToast('已清空已推送记录');
+        loadLocalAppStats();
+      } else {
+        showToast(`清空失败: ${resp?.error || '未知错误'}`, true);
+      }
+    } catch (e) {
+      showToast(`操作异常: ${e.message}`, true);
+    }
+    resetLocalAppPushedBtn.disabled = false;
   }
 });

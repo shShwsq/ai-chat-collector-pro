@@ -8,7 +8,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     switch (message.type) {
     // ===== 对话 CRUD =====
     case 'SAVE_CONVERSATION':
-      dbSaveConversation(message.data).then(sendResponse);
+      dbSaveConversation(message.data).then(async (result) => {
+        sendResponse(result);
+        // 保存后即时推送（不阻塞响应；本地后端不可达时静默失败）
+        if (result && result.success && message.data) {
+          // convId 与 lib/db.js 中保持一致：`${platform}::${platformConversationId}`
+          const convId = message.data.convId
+            || `${message.data.platform}::${message.data.platformConversationId}`;
+          if (convId) {
+            try {
+              await LocalApp_pushByConvId(convId);
+            } catch (e) {
+              console.warn('[BG] LocalApp 保存后推送异常:', e);
+            }
+          }
+        }
+      });
       break;
 
     case 'GET_CONVERSATIONS':
@@ -121,6 +136,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'RESET_ALL_SETTINGS':
       handleResetAllSettings().then(sendResponse);
+      break;
+
+    // ===== 本地软件对接 =====
+    case 'LOCAL_APP_PUSH_ALL':
+      LocalApp_pushAll({ silent: false }).then(sendResponse);
+      break;
+
+    case 'LOCAL_APP_PUSH_ONE':
+      LocalApp_pushByConvId(message.convId).then(sendResponse);
+      break;
+
+    case 'LOCAL_APP_TEST':
+      LocalApp_testConnection().then(sendResponse);
+      break;
+
+    case 'LOCAL_APP_STATUS':
+      LocalApp_getStatus().then(sendResponse);
+      break;
+
+    case 'LOCAL_APP_RESET_PUSHED':
+      LocalApp_resetPushedMap().then(sendResponse);
       break;
 
     default:

@@ -19,6 +19,13 @@ async function initAll() {
   } catch (e) {
     console.error('[BG] AI 服务初始化失败:', e);
   }
+  // 本地软件对接模块（失败不阻断主流程）
+  try {
+    await LocalApp_init();
+    console.log('[BG] 本地软件对接初始化完成');
+  } catch (e) {
+    console.error('[BG] 本地软件对接初始化失败:', e);
+  }
 }
 
 // 确保初始化完成后再处理消息

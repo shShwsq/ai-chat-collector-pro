@@ -17,6 +17,7 @@ try {
   importScripts('bg/settings-handlers.js');
   importScripts('bg/vector-handlers.js');
   importScripts('bg/data-handlers.js');
+  importScripts('bg/local-app.js');
   importScripts('bg/router.js');
 } catch (e) {
   console.error('[BG] 加载依赖失败:', e);

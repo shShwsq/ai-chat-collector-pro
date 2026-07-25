@@ -13,6 +13,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const searchInput = document.getElementById('searchInput');
   const searchBtn = document.getElementById('searchBtn');
   const settingsBtn = document.getElementById('settingsBtn');
+  const pushLocalBtn = document.getElementById('pushLocalBtn');
+  const pushBanner = document.getElementById('pushBanner');
 
   // 当前搜索关键词
   let currentSearchQuery = '';
@@ -21,6 +23,8 @@ document.addEventListener('DOMContentLoaded', () => {
   loadStatus();
   // 加载对话列表
   loadConversations();
+  // 加载本地软件对接状态（用于在按钮上提示是否启用）
+  loadLocalAppStatus();
 
   // 事件绑定
   platformFilter.addEventListener('change', loadConversations);
@@ -33,6 +37,9 @@ document.addEventListener('DOMContentLoaded', () => {
   settingsBtn.addEventListener('click', () => {
     window.location.href = 'settings.html';
   });
+
+  // 发送到本地软件
+  pushLocalBtn.addEventListener('click', handlePushToLocal);
 
   // 搜索
   searchBtn.addEventListener('click', handleSearch);
@@ -330,5 +337,75 @@ document.addEventListener('DOMContentLoaded', () => {
       return `<div class="math-block">$$${escaped}$$</div>`;
     }
     return `<span class="math-inline">$${escaped}$</span>`;
+  }
+
+  // ===== 本地软件对接 =====
+
+  // 加载本地软件对接状态，未启用时按钮提示用户先去设置中开启
+  let _localAppBaseUrl = 'http://localhost:8788';
+
+  async function loadLocalAppStatus() {
+    const resp = await sendMessage({ type: 'LOCAL_APP_STATUS' });
+    if (!resp) return;
+    if (resp.baseUrl) _localAppBaseUrl = resp.baseUrl;
+    if (!resp.enabled) {
+      pushLocalBtn.title = '尚未启用本地软件对接，点击会先尝试推送，建议在「设置 → 本地软件对接」中启用';
+    } else {
+      const parts = [];
+      if (resp.autoPush) parts.push(`定时 ${resp.intervalMinutes}min`);
+      if (resp.pushOnSave) parts.push('保存即推');
+      pushLocalBtn.title = `已启用：${parts.join(' / ') || '手动推送'}；已推送 ${resp.pushedCount} 条`;
+    }
+  }
+
+  // 点击「发送到本地软件」按钮：推送所有未推送的对话
+  async function handlePushToLocal() {
+    const originalText = pushLocalBtn.textContent;
+    pushLocalBtn.disabled = true;
+    pushLocalBtn.textContent = '发送中...';
+    showPushBanner('info', '正在发送对话到本地软件...');
+
+    try {
+      const resp = await sendMessage({ type: 'LOCAL_APP_PUSH_ALL' });
+      if (!resp) {
+        showPushBanner('error', '推送失败：未收到响应');
+        return;
+      }
+      if (resp.reason === 'disabled') {
+        showPushBanner('error', '尚未启用本地软件对接。请到「设置 → 本地软件对接」中开启。');
+        return;
+      }
+      if (resp.failed > 0 && resp.pushed === 0) {
+        // 全部失败：通常是后端不可达
+        const firstErr = resp.failures && resp.failures[0];
+        const hint = firstErr ? firstErr.error : '未知错误';
+        showPushBanner('error',
+          `推送失败：${hint}。请确认本地软件（${_localAppBaseUrl}）已启动。`);
+        return;
+      }
+      // 部分成功或全部成功
+      const msg = `推送完成：共 ${resp.total} 条，成功 ${resp.pushed}，跳过 ${resp.skipped}，失败 ${resp.failed}`;
+      showPushBanner(resp.failed > 0 ? 'info' : 'success', msg);
+      // 刷新按钮 tooltip
+      loadLocalAppStatus();
+    } catch (e) {
+      showPushBanner('error', `推送异常：${e.message}`);
+    } finally {
+      pushLocalBtn.disabled = false;
+      pushLocalBtn.textContent = originalText;
+    }
+  }
+
+  // 临时提示条
+  let _bannerTimer = null;
+  function showPushBanner(level, message) {
+    pushBanner.textContent = message;
+    pushBanner.className = `popup-banner show ${level}`;
+    if (_bannerTimer) clearTimeout(_bannerTimer);
+    // info 显示时间短一些（用户可能在频繁操作），success/error 长一点
+    const ms = level === 'info' ? 3000 : 6000;
+    _bannerTimer = setTimeout(() => {
+      pushBanner.className = 'popup-banner';
+    }, ms);
   }
 });
