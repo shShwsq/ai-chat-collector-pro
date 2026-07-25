@@ -1,0 +1,189 @@
+{
+  "manifest_version": 3,
+  "name": "ai-chat-collector",
+  "version": "2.0.0",
+  "description": "采集与 AI 平台的对话记录，支持语义搜索和 AI 问答",
+  "permissions": [
+    "storage",
+    "downloads",
+    "activeTab",
+    "scripting",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://chat.deepseek.com/*",
+    "https://www.qianwen.com/*",
+    "https://dashscope.aliyuncs.com/*",
+    "https://aiagent.fudan.edu.cn/*",
+    "https://www.doubao.com/*",
+    "https://api.deepseek.com/*",
+    "https://open.bigmodel.cn/*",
+    "https://api.moonshot.cn/*",
+    "https://ark.cn-beijing.volces.com/*",
+    "https://api.minimaxi.com/*",
+    "https://qianfan.baidubce.com/*",
+    "https://api.jina.ai/*",
+    "https://kimi.com/*",
+    "https://www.kimi.com/*",
+    "https://kimi.moonshot.cn/*",
+    "http://localhost:8788/*",
+    "http://127.0.0.1:8788/*"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://chat.deepseek.com/*"],
+      "js": [
+        "content/network-interceptor.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://chat.deepseek.com/*"],
+      "js": [
+        "lib/marked.min.js",
+        "lib/katex.min.js",
+        "lib/turndown.min.js",
+        "lib/turndown-plugin-gfm.js",
+        "content/adapter-registry.js",
+        "content/ui/styles.js",
+        "content/ui/viewer.js",
+        "content/ui/floating-ball.js",
+        "content/ai-ball.js",
+        "content/exporter-base.js",
+        "content/network/common.js",
+        "content/network/deepseek.js",
+        "content/dom/katex-html-to-latex.js",
+        "content/dom/html-to-markdown.js",
+        "content/dom/deepseek.js",
+        "content/deepseek.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://www.qianwen.com/*"],
+      "js": [
+        "content/network-interceptor.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://www.qianwen.com/*"],
+      "js": [
+        "lib/marked.min.js",
+        "lib/katex.min.js",
+        "lib/turndown.min.js",
+        "lib/turndown-plugin-gfm.js",
+        "content/adapter-registry.js",
+        "content/ui/styles.js",
+        "content/ui/viewer.js",
+        "content/ui/floating-ball.js",
+        "content/ai-ball.js",
+        "content/exporter-base.js",
+        "content/network/common.js",
+        "content/network/qianwen.js",
+        "content/dom/katex-html-to-latex.js",
+        "content/dom/html-to-markdown.js",
+        "content/dom/qianwen.js",
+        "content/qianwen.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://aiagent.fudan.edu.cn/*"],
+      "js": [
+        "content/network-interceptor.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://aiagent.fudan.edu.cn/*"],
+      "js": [
+        "lib/marked.min.js",
+        "lib/katex.min.js",
+        "lib/turndown.min.js",
+        "lib/turndown-plugin-gfm.js",
+        "content/adapter-registry.js",
+        "content/ui/styles.js",
+        "content/ui/viewer.js",
+        "content/ui/floating-ball.js",
+        "content/ai-ball.js",
+        "content/exporter-base.js",
+        "content/network/common.js",
+        "content/network/fudan.js",
+        "content/dom/katex-html-to-latex.js",
+        "content/dom/html-to-markdown.js",
+        "content/dom/fudan.js",
+        "content/fudan.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://www.doubao.com/*"],
+      "js": [
+        "content/network-interceptor.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://www.doubao.com/*"],
+      "js": [
+        "lib/marked.min.js",
+        "lib/katex.min.js",
+        "lib/turndown.min.js",
+        "lib/turndown-plugin-gfm.js",
+        "content/adapter-registry.js",
+        "content/ui/styles.js",
+        "content/ui/viewer.js",
+        "content/ui/floating-ball.js",
+        "content/ai-ball.js",
+        "content/exporter-base.js",
+        "content/network/common.js",
+        "content/network/doubao.js",
+        "content/dom/katex-html-to-latex.js",
+        "content/dom/html-to-markdown.js",
+        "content/dom/doubao.js",
+        "content/doubao.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://kimi.com/*", "https://www.kimi.com/*", "https://kimi.moonshot.cn/*"],
+      "js": [
+        "lib/marked.min.js",
+        "lib/katex.min.js",
+        "lib/turndown.min.js",
+        "lib/turndown-plugin-gfm.js",
+        "content/adapter-registry.js",
+        "content/ui/styles.js",
+        "content/ui/viewer.js",
+        "content/ui/floating-ball.js",
+        "content/ai-ball.js",
+        "content/exporter-base.js",
+        "content/dom/katex-html-to-latex.js",
+        "content/dom/html-to-markdown.js",
+        "content/dom/kimi.js",
+        "content/kimi.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "ai-chat-collector"
+  },
+  "web_accessible_resources": [{
+    "resources": ["lib/katex.min.css"],
+    "matches": ["https://chat.deepseek.com/*", "https://www.qianwen.com/*", "https://aiagent.fudan.edu.cn/*", "https://www.doubao.com/*", "https://kimi.com/*", "https://www.kimi.com/*", "https://kimi.moonshot.cn/*"]
+  }]
+}

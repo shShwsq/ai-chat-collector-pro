@@ -1,0 +1,140 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# 显式授予 GITHUB_TOKEN 写权限，使其能创建 Release
+# 默认 token 只有读权限，会导致 403 "Resource not accessible by integration"
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Validate manifest.json
+        run: |
+          python3 -c "
+          import json
+          with open('manifest.json') as f:
+              m = json.load(f)
+          assert m.get('manifest_version') == 3, 'manifest_version must be 3'
+          assert m.get('name'), 'name is required'
+          assert m.get('version'), 'version is required'
+          print(f'Extension: {m[\"name\"]} v{m[\"version\"]}')
+          "
+
+      - name: Check JS syntax
+        run: |
+          npm install -g acorn
+          errors=0
+          # 检查所有自研 JS 文件
+          # 排除：
+          #   - node_modules/（第三方依赖）
+          #   - lib/*.min.js（第三方压缩库）
+          #   - tests/（测试代码用 ES module 语法，acorn --ecma2020 不支持 import/export）
+          # lib/ 下的 db.js/embedding.js/llm.js/vector-store.js 是运行时核心，必须检查
+          for f in $(find . -name '*.js' \
+                       -not -path './node_modules/*' \
+                       -not -path './tests/*' \
+                       -not -name '*.min.js'); do
+            if ! acorn --ecma2020 "$f" > /dev/null 2>&1; then
+              echo "Syntax error in $f"
+              errors=$((errors + 1))
+            fi
+          done
+          if [ $errors -gt 0 ]; then
+            echo "$errors file(s) with syntax errors"
+            exit 1
+          fi
+          echo "All JS files passed syntax check"
+
+      - name: Validate models.json
+        run: |
+          python3 -c "
+          import json
+          with open('models.json') as f:
+              m = json.load(f)
+          assert 'llmProviders' in m, 'models.json missing llmProviders section'
+          assert 'embeddingProviders' in m, 'models.json missing embeddingProviders section'
+          assert isinstance(m['llmProviders'], list) and len(m['llmProviders']) > 0, 'llmProviders empty'
+          assert isinstance(m['embeddingProviders'], list) and len(m['embeddingProviders']) > 0, 'embeddingProviders empty'
+          for v in m['llmProviders']:
+              assert v.get('id'), 'llm provider missing id'
+              assert v.get('models'), f'llm provider {v.get(\"id\")} missing models'
+          for v in m['embeddingProviders']:
+              assert v.get('id'), 'embedding provider missing id'
+              assert v.get('models'), f'embedding provider {v.get(\"id\")} missing models'
+          print(f'models.json: {len(m[\"llmProviders\"])} LLM providers, {len(m[\"embeddingProviders\"])} embedding providers')
+          "
+
+      - name: Check Python skill script syntax
+        run: |
+          # 校验 SKILL 配套 Python 脚本语法（随 release 分发给用户）
+          python3 -m py_compile docs/skills/scripts/query_knowledge.py && \
+            echo "query_knowledge.py syntax OK"
+
+      - name: Package extension
+        run: |
+          mkdir -p dist
+          # 注意：不排除 *.md
+          # docs/{chroma,milvus,pgvector,supabase,qdrant}-setup.md 是运行时帮助文档，
+          #   由 popup/settings.js 通过 chrome.runtime.getURL + fetch 加载，必须打包
+          # docs/skills/ 是供用户下载使用的 SKILL（检索脚本），整体打包
+          # docs/skills/.env 含 API Key，绝不能进 release（.gitignore 已忽略，但 zip 不读 .gitignore）
+          #
+          # 开发文件排除（不进 release）：
+          #   - node_modules/      测试依赖（vitest/jsdom 等）
+          #   - tests/             测试代码与 fixtures
+          #   - package.json       仅开发用（扩展运行时由 manifest.json 声明）
+          #   - package-lock.json  同上
+          #   - vitest.config.js   测试配置
+          zip -r dist/ai-chat-collector.zip . \
+            -x ".git/*" \
+            -x ".github/*" \
+            -x "references/*" \
+            -x "dist/*" \
+            -x "node_modules/*" \
+            -x "tests/*" \
+            -x ".gitignore" \
+            -x "package.json" \
+            -x "package-lock.json" \
+            -x "vitest.config.js" \
+            -x "docs/skills/.env" \
+            -x "*/__pycache__/*" \
+            -x "*/*/__pycache__/*" \
+            -x "*/*/*/__pycache__/*"
+
+      - name: Verify no secrets in package
+        run: |
+          # 安全验证：release zip 不得包含 .env 或 Python 缓存
+          if unzip -l dist/ai-chat-collector.zip | grep -E '(\.env$|__pycache__)'; then
+            echo "::error::Release zip contains sensitive files (.env / __pycache__)!"
+            unzip -l dist/ai-chat-collector.zip | grep -E '(\.env$|__pycache__)'
+            exit 1
+          fi
+          echo "Release zip verified clean (no .env / __pycache__)"
+
+      - name: Verify required runtime docs are present
+        run: |
+          # 验证运行时帮助文档已打包（popup/settings.js 会 fetch 这些文件）
+          missing=0
+          for f in docs/chroma-setup.md docs/milvus-setup.md docs/pgvector-setup.md \
+                   docs/supabase-setup.md docs/qdrant-setup.md; do
+            if ! unzip -l dist/ai-chat-collector.zip | grep -q "$f"; then
+              echo "::error::Missing runtime help doc: $f"
+              missing=$((missing + 1))
+            fi
+          done
+          if [ $missing -gt 0 ]; then exit 1; fi
+          echo "All runtime help docs present"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ai-chat-collector.zip
+          generate_release_notes: true
