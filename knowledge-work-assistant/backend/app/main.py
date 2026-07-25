@@ -32,6 +32,8 @@ from app.routers import work as work_router
 from app.routers import recommendations as recommendations_router
 # LLM 请求队列与配置管理（前端设置面板用）
 from app.routers import llm_admin as llm_admin_router
+# 流式触发路由（详情卡 / 问答 / 报告）
+from app.routers import stream as stream_router
 from app.services.graph_agent import init_graph_agent
 from app.services.model_config import _REGISTRY
 
@@ -97,6 +99,10 @@ app.include_router(plugin.router, prefix="/api", tags=["plugin"])
 # /api/llm/requests、/api/llm/requests/all、/api/llm/requests/{id}/cancel、
 # /api/llm/requests/cleanup、/api/llm/config (GET/PUT)
 app.include_router(llm_admin_router.router, prefix="/api", tags=["llm-admin"])
+# 流式触发路由：
+# /api/graphs/{id}/nodes/{nid}/detail-stream、/api/graphs/{id}/work/ask-stream、
+# /api/graphs/{id}/work/report-stream
+app.include_router(stream_router.router, prefix="/api", tags=["stream"])
 # WebSocket 挂载在根路径下：/ws（前端 lib/ws.ts 连接此处做收发测试）
 app.include_router(ws.router, tags=["ws"])
 

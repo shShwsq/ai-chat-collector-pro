@@ -1,16 +1,23 @@
 /**
  * 统一 WebSocket 客户端封装。
  *
- * 当前为联调骨架：连接根路径 ``/ws``（由 backend/app/routers/ws.py 提供），
- * 接收后端推送的 ``welcome`` / ``pong`` / ``echo`` 事件，并允许发送 ping
- * 与自定义测试消息。后续业务 WebSocket（如流式对话 /api/ws/chat/{session_id}）
- * 会在本模块或独立模块扩展。
- *
  * 与 backend/app/routers/ws.py 的协议对齐：
- * - 连接建立 → 后端推送 ``{ type: "welcome", message: "..." }``
+ * - 连接建立 → 后端推送 ``{ type: "welcome", message: "...", session_id: "..." }``
  * - 客户端发送 ``{ type: "ping" }`` → 后端回复 ``{ type: "pong" }``
  * - 客户端发送其他 JSON → 后端回复 ``{ type: "echo", data: <原消息> }``
  * - 客户端发送非 JSON 文本 → 后端回复 ``{ type: "echo", data: "<原文本>" }``
+ *
+ * **session_id 注册**：连接时可通过 ``connect(sessionId)`` 传入前端生成的
+ * 唯一会话 ID，后端会把此连接注册到该 session_id 下，使后台流式 LLM 任务
+ * （如节点详情卡 / 问答 / 报告生成）能通过 ``notify_session`` 精确推送
+ * token 到本连接。未传入时注册到 ``"default"`` 会话，仅接收全局广播
+ * （如插件对话已接收事件）。
+ *
+ * 流式事件（由后端 GraphAgent._stream_llm 推送）：
+ * - ``graph_agent_token``：每个 token（含 op / graph_id / node_id / content / seq）
+ * - ``graph_agent_done``：流式完成（含 op / graph_id / node_id / full_text）
+ * - ``graph_agent_cancelled``：被外部取消（含 full_text）
+ * - ``graph_agent_error``：失败（含 message）
  */
 
 import type { WsEvent, WsOutgoing } from './types'
@@ -41,11 +48,11 @@ function safeParse(raw: unknown): unknown | null {
 }
 
 /**
- * 测试用 WebSocket 客户端：连接根路径 ``/ws``。
+ * 全局 WebSocket 客户端：连接根路径 ``/ws``，支持按 session_id 注册。
  *
  * 用法：
  *   const socket = new TestSocket()
- *   await socket.connect()
+ *   await socket.connect(mySessionId)  // 传入 session_id 启用流式推送
  *   const off = socket.onEvent((event) => console.log(event))
  *   socket.send({ type: 'ping' })
  *   // ...
@@ -54,11 +61,25 @@ function safeParse(raw: unknown): unknown | null {
 export class TestSocket {
   private socket: WebSocket | null = null
   private readonly handlers = new Set<(event: WsEvent) => void>()
+  /** 当前连接注册到的 session_id（连接成功后由后端 welcome 事件回填）。 */
+  private currentSessionId: string | null = null
+  /** 连接时传入的 session_id（用于 URL 查询参数）。 */
+  private requestedSessionId: string | null = null
 
-  /** 建立连接，resolve 后即可发送消息。 */
-  connect(): Promise<void> {
+  /**
+   * 建立连接，resolve 后即可发送消息。
+   *
+   * @param sessionId 可选。前端生成的唯一会话 ID（如 UUID），用于接收
+   *   后端流式 LLM token 推送。未传入时后端注册到 "default" 会话，
+   *   仅接收全局广播（如插件对话已接收事件）。
+   */
+  connect(sessionId?: string): Promise<void> {
+    this.requestedSessionId = sessionId ?? null
     return new Promise<void>((resolve, reject) => {
-      const url = `${wsBase()}/ws`
+      // 拼接 session_id 查询参数（若提供）
+      const url = sessionId
+        ? `${wsBase()}/ws?session_id=${encodeURIComponent(sessionId)}`
+        : `${wsBase()}/ws`
       const socket = new WebSocket(url)
       this.socket = socket
 
@@ -78,12 +99,18 @@ export class TestSocket {
       socket.onmessage = (ev: MessageEvent) => {
         const data = safeParse(ev.data)
         if (data === null) return
+        // 捕获 welcome 事件中的 session_id（后端回填，便于调试）
+        const maybeWelcome = data as { type?: string; session_id?: string }
+        if (maybeWelcome.type === 'welcome' && maybeWelcome.session_id) {
+          this.currentSessionId = maybeWelcome.session_id
+        }
         for (const handler of this.handlers) {
           handler(data as WsEvent)
         }
       }
       socket.onclose = () => {
         this.socket = null
+        this.currentSessionId = null
       }
     })
   }
@@ -118,10 +145,36 @@ export class TestSocket {
     this.handlers.clear()
     this.socket?.close()
     this.socket = null
+    this.currentSessionId = null
+    this.requestedSessionId = null
   }
 
   /** 当前是否处于连接打开状态。 */
   get isOpen(): boolean {
     return this.socket?.readyState === WebSocket.OPEN
   }
+
+  /** 后端回填的 session_id（连接成功后有效，未传入时为 "default"）。 */
+  get sessionId(): string | null {
+    return this.currentSessionId
+  }
+
+  /** 连接时请求的 session_id（即传入 connect() 的值）。 */
+  get requestedSession(): string | null {
+    return this.requestedSessionId
+  }
+}
+
+/**
+ * 生成一个唯一的 session_id（用于 WebSocket 连接标识）。
+ *
+ * 优先使用 ``crypto.randomUUID()``（现代浏览器原生支持），
+ * 回退到时间戳 + 随机数拼接。
+ */
+export function generateSessionId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  // 回退方案：时间戳 + 随机数
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
