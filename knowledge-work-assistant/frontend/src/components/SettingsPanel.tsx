@@ -25,6 +25,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import { useAppStore } from '../store/useAppStore'
+import { PluginIntegrationSection } from './PluginIntegrationSection'
 import type { LlmRequestInfo, LlmRequestStatus } from '../lib/types'
 
 /** 请求队列自动轮询间隔（ms）。 */
@@ -85,6 +86,7 @@ export function SettingsPanel() {
   return (
     <div className="settings-panel">
       <ApiConfigSection />
+      <PluginIntegrationSection />
       <RequestQueueSection />
     </div>
   )

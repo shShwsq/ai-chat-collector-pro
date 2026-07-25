@@ -17,6 +17,7 @@ import { ReportPanel } from './components/graph/ReportPanel'
 import { QAPanel } from './components/graph/QAPanel'
 import { Toast } from './components/Toast'
 import { useAppStore } from './store/useAppStore'
+import { TestSocket } from './lib/ws'
 import type { HealthResponse } from './lib/types'
 
 /**
@@ -59,6 +60,8 @@ export default function App() {
   const activeNav = useAppStore((s) => s.activeNav)
 
   const graphViewRef = useRef<GraphViewHandle>(null)
+  // 持有 WebSocket 实例，避免重渲染时重建连接
+  const socketRef = useRef<TestSocket | null>(null)
 
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [healthError, setHealthError] = useState<string>('')
@@ -83,6 +86,35 @@ export default function App() {
     const timer = setInterval(() => void checkHealth(), 5000)
     return () => clearInterval(timer)
   }, [loadGraphs, checkHealth])
+
+  // WebSocket：连接 /ws，订阅「插件对话已接收」事件。
+  // 后端在 POST /api/plugin/conversations 推送成功后广播该事件，
+  // 收到后弹 Toast 并在图谱视图（study 模式）下刷新待抽取列表。
+  // 连接失败时静默降级，不影响主功能（设置面板仍可手动刷新）。
+  useEffect(() => {
+    const socket = new TestSocket()
+    socketRef.current = socket
+    let off: (() => void) | undefined
+    socket
+      .connect()
+      .then(() => {
+        off = socket.onEvent((event) => {
+          if (event.type === 'plugin.conversation_received') {
+            useAppStore
+              .getState()
+              .handlePluginConversationReceived(event.payload)
+          }
+        })
+      })
+      .catch(() => {
+        // 连接失败：静默处理（后端可能未启用 WS 或网络不可达）
+      })
+    return () => {
+      off?.()
+      socket.close()
+      socketRef.current = null
+    }
+  }, [])
 
   const isHealthy = health !== null && healthError === ''
   const modeLabel = mode === 'study' ? '学习' : '工作'

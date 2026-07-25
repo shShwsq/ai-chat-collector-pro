@@ -74,6 +74,7 @@ import type {
   NodeDetailResponse,
   NodeUpdate,
   Observation,
+  PluginRecentConversationItem,
   Quiz,
   QuizAnswerRequest,
   QuizGenerateRequest,
@@ -246,6 +247,16 @@ interface AppState {
   llmConfigLoading: boolean
   /** LLM 配置保存中标记。 */
   llmConfigSaving: boolean
+
+  // 设置面板：插件对接分区（懒加载，进入插件分区时拉取）
+  /** 最近推送的对话记录列表（按 created_at 倒序）。 */
+  pluginRecent: PluginRecentConversationItem[]
+  /** 最近推送列表加载中标记。 */
+  pluginRecentLoading: boolean
+  /** 最近推送列表最近一次加载错误（空字符串表示无错误）。 */
+  pluginRecentError: string
+  /** 插件对接接口契约 JSON，null = 未加载。 */
+  pluginContract: Record<string, unknown> | null
 
   // 通用 Toast
   toast: ToastMessage | null
@@ -422,6 +433,23 @@ interface AppState {
   loadLlmConfig: () => Promise<void>
   /** 更新 LLM 配置（仅传需更新字段）；成功后刷新 llmConfig。返回是否成功。 */
   updateLlmConfig: (config: LlmConfigUpdate) => Promise<boolean>
+
+  // 设置面板：插件对接分区
+  /** 拉取最近推送的对话记录（默认 20 条），写入 pluginRecent。 */
+  loadPluginRecent: (limit?: number) => Promise<void>
+  /** 拉取插件对接接口契约 JSON，写入 pluginContract 并返回。 */
+  loadPluginContract: () => Promise<Record<string, unknown> | null>
+  /**
+   * 处理 WebSocket 推送的「插件对话已接收」事件：
+   * 1. 弹 Toast 提示收到新对话；
+   * 2. 若当前处于图谱视图且为学习模式，刷新待抽取列表（PendingNodes）。
+   */
+  handlePluginConversationReceived: (payload: {
+    observation_id: string
+    platform: string
+    title: string
+    timestamp: string | null
+  }) => void
 }
 
 /** 统一提取错误消息。 */
@@ -520,6 +548,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   llmConfig: null,
   llmConfigLoading: false,
   llmConfigSaving: false,
+
+  // 设置面板：插件对接分区（懒加载，进入分区时拉取）
+  pluginRecent: [],
+  pluginRecentLoading: false,
+  pluginRecentError: '',
+  pluginContract: null,
 
   // Toast
   toast: null,
@@ -1613,6 +1647,49 @@ export const useAppStore = create<AppState>((set, get) => ({
       const msg = errMsg(e)
       get().pushToast(`保存配置失败：${msg}`, 'error')
       return false
+    }
+  },
+
+  // ===== 设置面板：插件对接分区 =====
+  loadPluginRecent: async (limit) => {
+    set({ pluginRecentLoading: true, pluginRecentError: '' })
+    try {
+      const resp = await api.getPluginRecent(limit ?? 20)
+      set({
+        pluginRecent: resp.items ?? [],
+        pluginRecentLoading: false,
+      })
+    } catch (e) {
+      const msg = errMsg(e)
+      set({
+        pluginRecentLoading: false,
+        pluginRecentError: msg,
+      })
+      // 不弹 toast，避免轮询刷屏；错误信息在面板内展示
+    }
+  },
+
+  loadPluginContract: async () => {
+    try {
+      const contract = await api.getPluginContract()
+      set({ pluginContract: contract })
+      return contract
+    } catch (e) {
+      const msg = errMsg(e)
+      get().pushToast(`加载插件契约失败：${msg}`, 'error')
+      return null
+    }
+  },
+
+  handlePluginConversationReceived: (payload) => {
+    // 1. 弹 Toast 提示收到新对话
+    get().pushToast(
+      `收到新对话：${payload.title || payload.platform}`,
+      'info',
+    )
+    // 2. 若处于图谱视图且为学习模式，刷新待抽取列表（PendingNodes）
+    if (get().activeNav === 'graph' && get().mode === 'study') {
+      void get().loadPendingObservations()
     }
   },
 }))

@@ -1,0 +1,159 @@
+:root {
+  --kwa-bg: #f5f5f7;
+  --kwa-surface: #ffffff;
+  --kwa-border: #e5e5e7;
+  --kwa-text: #1d1d1f;
+  --kwa-text-muted: #6e6e73;
+  --kwa-accent: #1a7f6e;
+  --kwa-accent-hover: #146557;
+  --kwa-accent-disabled: #9bb8b1;
+  --kwa-radius: 8px;
+  --kwa-radius-sm: 4px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  width: 320px;
+  padding: 16px;
+  background: var(--kwa-bg);
+  color: var(--kwa-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--kwa-text);
+}
+
+.app-sub {
+  margin: 2px 0 0 0;
+  color: var(--kwa-text-muted);
+  font-size: 12px;
+}
+
+.card {
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--kwa-surface);
+  border: 1px solid var(--kwa-border);
+  border-radius: var(--kwa-radius);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.label {
+  color: var(--kwa-text-muted);
+  flex-shrink: 0;
+}
+
+.url {
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--kwa-text);
+  word-break: break-all;
+  text-align: right;
+}
+
+.btn-primary {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: var(--kwa-accent);
+  color: #ffffff;
+  border: none;
+  border-radius: var(--kwa-radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--kwa-accent-hover);
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn-primary:disabled {
+  background: var(--kwa-accent-disabled);
+  cursor: not-allowed;
+}
+
+.result {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--kwa-border);
+  border-radius: var(--kwa-radius-sm);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  min-height: 20px;
+}
+
+.result-idle {
+  color: var(--kwa-text-muted);
+  background: #f5f5f7;
+}
+
+.result-pending {
+  color: #8a6d00;
+  background: #fff8e1;
+  border-color: #f0d97a;
+}
+
+.result-success {
+  color: #0f5132;
+  background: #d1f2e0;
+  border-color: #7ed3a3;
+}
+
+.result-error {
+  color: #842029;
+  background: #fde7ea;
+  border-color: #f1aeb6;
+}
+
+.section-title {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--kwa-text-muted);
+}
+
+.preview {
+  margin: 0;
+  padding: 10px 12px;
+  background: #f5f5f7;
+  border: 1px solid var(--kwa-border);
+  border-radius: var(--kwa-radius-sm);
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow-y: auto;
+  color: var(--kwa-text);
+}

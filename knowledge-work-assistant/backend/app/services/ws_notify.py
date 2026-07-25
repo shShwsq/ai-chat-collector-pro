@@ -91,6 +91,39 @@ async def notify_session(session_id: str, event: dict[str, Any]) -> int:
     return count
 
 
+async def broadcast(event: dict[str, Any]) -> int:
+    """向所有已注册会话的所有 WebSocket 连接推送事件。
+
+    用于全局事件广播（如插件推送对话到达），不区分会话。推送失败的连接
+    被静默忽略（不抛异常，不阻断其他连接）。
+
+    Args:
+        event: 待推送的 JSON 事件 dict（如
+            ``{"type": "plugin.conversation_received", "payload": {...}}``）。
+
+    Returns:
+        成功推送的连接数（0 表示无活跃连接）。
+    """
+    async with _lock:
+        all_sockets: list[WebSocket] = []
+        for conns in _connections.values():
+            all_sockets.extend(conns)
+
+    if not all_sockets:
+        return 0
+
+    count = 0
+    for ws in all_sockets:
+        try:
+            await ws.send_json(event)
+            count += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "WS 广播失败 event_type=%s: %s", event.get("type"), exc
+            )
+    return count
+
+
 def has_session_connection(session_id: str) -> bool:
     """查询指定会话是否有活跃 WebSocket 连接（同步，便于快速判断）。"""
     return bool(_connections.get(session_id))

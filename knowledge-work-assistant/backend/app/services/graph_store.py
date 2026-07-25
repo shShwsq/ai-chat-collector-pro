@@ -33,7 +33,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import and_, delete, func, or_, select, text
@@ -805,6 +805,78 @@ class GraphStore:
             stmt = stmt.limit(limit).offset(offset)
             result = await db.execute(stmt)
             return [_observation_to_dict(r) for r in result.scalars().all()]
+
+    async def list_observations_by_source(
+        self,
+        source: str,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """列出指定来源的观察记录，按 ``created_at`` 倒序。
+
+        相比 :meth:`list_observations`，本方法专用于按 ``source`` 单一维度
+        过滤（如 ``source='plugin'``），签名更简洁，供「最近插件推送记录」
+        等场景使用。
+
+        Args:
+            source: 来源标记（plugin / import / manual）。
+            limit: 分页大小（默认 20，上限 500）。
+            offset: 偏移量。
+
+        Returns:
+            观察 dict 列表，按 ``created_at`` 倒序（最新在前）。
+        """
+        limit = max(1, min(500, int(limit)))
+        offset = max(0, int(offset))
+        async with AsyncSessionLocal() as db:
+            stmt = (
+                select(ObservationRow)
+                .where(ObservationRow.source == source)
+                .order_by(ObservationRow.created_at.desc())
+                .limit(limit)
+                .offset(offset)
+            )
+            result = await db.execute(stmt)
+            return [_observation_to_dict(r) for r in result.scalars().all()]
+
+    async def find_observation_by_dedup_key(
+        self,
+        dedup_key: str,
+        *,
+        within_hours: int = 24,
+    ) -> dict[str, Any] | None:
+        """查找最近 ``within_hours`` 小时内同 ``dedup_key`` 的观察记录。
+
+        ``dedup_key`` 存储在 ``observations.metadata_json`` 的 ``_dedup_key``
+        字段中。使用 SQLite 的 ``json_extract`` 函数查询（``metadata_json``
+        列为 TEXT）。
+
+        Args:
+            dedup_key: 幂等去重键（如 ``"chatgpt:conv-abc123"``）。
+            within_hours: 时间窗口（小时），仅匹配该窗口内的记录，默认 24。
+
+        Returns:
+            命中的观察 dict；未命中返回 None。
+        """
+        within_hours = max(1, int(within_hours))
+        cutoff = _now() - timedelta(hours=within_hours)
+        async with AsyncSessionLocal() as db:
+            stmt = (
+                select(ObservationRow)
+                .where(
+                    text(
+                        "json_extract(metadata_json, '$._dedup_key') = :dk"
+                    )
+                )
+                .where(ObservationRow.created_at >= cutoff)
+                .order_by(ObservationRow.created_at.desc())
+                .limit(1)
+            )
+            row = (await db.execute(stmt, {"dk": dedup_key})).scalar_one_or_none()
+            if row is None:
+                return None
+            return _observation_to_dict(row)
 
     async def mark_observation_processed(
         self,

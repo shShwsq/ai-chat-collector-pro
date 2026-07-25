@@ -1,0 +1,51 @@
+<!-- ============================================================================
+     settings.patch.html — 知识工作助手（KWA）二次开发 patch
+     本片段插入到 popup/settings.html 的「数据管理」section 之前
+     （即 <section class="setting-section danger-zone"> 之前）。
+
+     由 settings.patch.js 在 DOMContentLoaded 时动态注入到 DOM。
+     也可手动把本片段直接粘贴到 settings.html 对应位置。
+
+     配套脚本：settings.patch.js
+     配套 SDK：kwa-push.js（在 settings.html 末尾 <script src="../kwa-push.js"> 引入）
+     ============================================================================ -->
+
+<section class="setting-section" id="kwaPushSection">
+  <h2>知识工作助手推送</h2>
+  <p class="desc">把采集到的对话自动推送到本机知识工作助手后端</p>
+
+  <div class="form-group">
+    <div class="checkbox-row">
+      <input type="checkbox" id="kwaPushEnabled" checked />
+      <label for="kwaPushEnabled">启用自动推送</label>
+    </div>
+    <small>关闭后，对话采集完成时不再自动推送到知识工作助手后端</small>
+  </div>
+
+  <div class="form-group">
+    <label>推送目标 URL</label>
+    <input
+      type="text"
+      id="kwaPushUrl"
+      placeholder="http://127.0.0.1:8788/api/plugin/conversations"
+      value="http://127.0.0.1:8788/api/plugin/conversations"
+    />
+    <small>知识工作助手后端的对话接收端点；默认本机 8788 端口</small>
+  </div>
+
+  <div class="form-group">
+    <button class="btn" id="kwaPushTestBtn">测试推送</button>
+    <small>说明：测试推送会发送一条空对话到后端验证连通性</small>
+  </div>
+
+  <div class="form-group">
+    <label>测试结果</label>
+    <div
+      id="kwaPushStatus"
+      class="info-text"
+      style="min-height: 20px; word-break: break-word;"
+    >
+      未测试
+    </div>
+  </div>
+</section>

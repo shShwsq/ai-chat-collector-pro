@@ -45,6 +45,8 @@ import type {
   Observation,
   PluginConversationRequest,
   PluginConversationResponse,
+  PluginHealthResponse,
+  PluginRecentConversationsResponse,
   Quiz,
   QuizAnswerRequest,
   QuizGenerateRequest,
@@ -271,6 +273,13 @@ export const api = {
   /** 获取插件对接接口契约说明。 */
   getPluginContract: () =>
     request<Record<string, unknown>>('/plugin/contract'),
+  /** 插件对接健康检查：返回版本、支持平台、当前队列长度。 */
+  getPluginHealth: () => request<PluginHealthResponse>('/plugin/health'),
+  /** 拉取最近推送的对话记录（默认 20 条，按创建时间倒序）。 */
+  getPluginRecent: (limit: number = 20) =>
+    request<PluginRecentConversationsResponse>(
+      withQuery('/plugin/conversations/recent', { limit: String(limit) }),
+    ),
 
   // ===== Study 对话抽取（Task 11）=====
   /** 列出观察记录，可按处理状态过滤（默认前端调用时传 processed=false）。 */

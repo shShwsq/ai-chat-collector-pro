@@ -248,5 +248,55 @@ class PluginConversationResponse(BaseModel):
 
     received: bool = Field(..., description="是否已接收，固定为 True")
     observation_id: str = Field(
-        ..., description="持久化后的观察记录 ID（32 位十六进制）"
+        ..., description="持久化后的观察记录 ID（32 位十六进制）；命中去重时为既有记录 ID"
     )
+    deduplicated: bool = Field(
+        False,
+        description="是否命中幂等去重（最近 24h 内同 dedup_key 已存在）",
+    )
+
+
+class PluginHealthResponse(BaseModel):
+    """插件对接联调自检端点响应（``GET /api/plugin/health``）。
+
+    供插件方在对接前快速验证后端可达、版本与支持的平台范围，并观察后端
+    当前 LLM 请求队列规模（用于判断后端是否繁忙）。
+    """
+
+    ok: bool = Field(..., description="后端是否就绪，固定为 True")
+    version: str = Field(..., description="插件对接 API 版本，如 '1.0'")
+    supported_platforms: list[str] = Field(
+        ..., description="支持的平台标识列表（已排序）"
+    )
+    queue_size: int = Field(
+        ..., description="当前 LLM 请求活跃数量（queued/running 计数）"
+    )
+
+
+class PluginRecentConversationItem(BaseModel):
+    """单条最近插件推送记录的元数据（不含对话原文）。
+
+    对应 ``observations`` 表中 ``source='plugin'`` 的一条记录，用于前端
+    「插件对接」分区展示最近推送历史。
+    """
+
+    observation_id: str = Field(..., description="观察记录 ID")
+    platform: str = Field(..., description="来源平台标识")
+    title: str = Field("", description="对话标题（取自 metadata.title）")
+    timestamp: datetime | None = Field(
+        None, description="对话发生时间（occurred_at）"
+    )
+    dedup_key: str | None = Field(
+        None, description="幂等去重键（metadata._dedup_key）"
+    )
+    created_at: datetime = Field(..., description="记录入库时间")
+    processed: bool = Field(False, description="是否已被 Agent 抽取处理")
+
+
+class PluginRecentConversationsResponse(BaseModel):
+    """最近插件推送记录列表响应（``GET /api/plugin/conversations/recent``）。"""
+
+    items: list[PluginRecentConversationItem] = Field(
+        default_factory=list, description="最近推送记录列表（按 created_at 倒序）"
+    )
+    total: int = Field(..., description="返回条目数（等于 items 长度）")

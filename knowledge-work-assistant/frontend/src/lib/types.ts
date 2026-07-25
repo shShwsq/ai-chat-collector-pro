@@ -38,6 +38,7 @@ export type WsEvent =
   | { type: 'pong' }
   | { type: 'echo'; data: unknown }
   | { type: 'error'; message: string }
+  | PluginConversationReceivedEvent
 
 /** 客户端可发送的测试消息。 */
 export type WsOutgoing =
@@ -690,4 +691,49 @@ export interface RecommendationsResponse {
   items: RecommendationItem[]
   /** 总数（与 items.length 通常一致）。 */
   total: number
+}
+
+// ============================================================================
+// 浏览器插件对接扩展（Task 10 扩展：健康检查 / 最近推送 / WebSocket 事件）
+// ============================================================================
+
+/** 插件对接健康检查响应。 */
+export interface PluginHealthResponse {
+  ok: boolean
+  version: string
+  supported_platforms: string[]
+  queue_size: number
+}
+
+/** 最近推送的对话记录项（插件视角的精简视图）。 */
+export interface PluginRecentConversationItem {
+  observation_id: string
+  platform: string
+  title: string
+  timestamp: string | null
+  dedup_key: string | null
+  created_at: string
+  processed: boolean
+}
+
+/** 最近推送对话列表响应。 */
+export interface PluginRecentConversationsResponse {
+  items: PluginRecentConversationItem[]
+  total: number
+}
+
+/**
+ * WebSocket 推送的「插件对话已接收」事件。
+ *
+ * 后端在 `POST /api/plugin/conversations` 推送成功后通过 /ws 广播该事件，
+ * 前端收到后弹 Toast 并刷新待抽取列表。
+ */
+export interface PluginConversationReceivedEvent {
+  type: 'plugin.conversation_received'
+  payload: {
+    observation_id: string
+    platform: string
+    title: string
+    timestamp: string | null
+  }
 }
