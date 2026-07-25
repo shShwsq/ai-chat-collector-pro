@@ -66,6 +66,11 @@ import type {
   ExtendResponse,
   FullGraph,
   Graph,
+  GraphAgentCancelledEvent,
+  GraphAgentDoneEvent,
+  GraphAgentErrorEvent,
+  GraphAgentOp,
+  GraphAgentTokenEvent,
   LlmConfig,
   LlmConfigUpdate,
   LlmRequestInfo,
@@ -257,6 +262,27 @@ interface AppState {
   pluginRecentError: string
   /** 插件对接接口契约 JSON，null = 未加载。 */
   pluginContract: Record<string, unknown> | null
+
+  // ===== 流式输出状态 =====
+  /** WebSocket 连接的 session_id（App.tsx 启动时生成并设置）。 */
+  streamingSessionId: string | null
+
+  /** QA 问答流式文本（逐 token 累积，流式完成后清空）。 */
+  qaStreamingText: string
+  /** QA 问答流式是否进行中。 */
+  qaStreamingActive: boolean
+
+  /** 工作报告流式 Markdown 文本（逐 token 累积）。 */
+  reportStreamingText: string
+  /** 工作报告流式是否进行中。 */
+  reportStreamingActive: boolean
+
+  /** 节点详情卡流式 Markdown 文本（逐 token 累积）。 */
+  nodeDetailStreamingText: string
+  /** 节点详情卡流式是否进行中。 */
+  nodeDetailStreamingActive: boolean
+  /** 当前正在流式生成详情卡的节点 ID（null = 无）。 */
+  nodeDetailStreamingNodeId: string | null
 
   // 通用 Toast
   toast: ToastMessage | null
@@ -450,6 +476,52 @@ interface AppState {
     title: string
     timestamp: string | null
   }) => void
+
+  // ===== 流式输出动作 =====
+  /** 设置 WebSocket session_id（App.tsx 启动时调用）。 */
+  setStreamingSessionId: (id: string | null) => void
+  /**
+   * 处理流式 token 事件：按 op 类型追加到对应流式文本状态。
+   * - answer_question：追加到 qaStreamingText 并同步更新最后一条 assistant 消息。
+   * - generate_report：追加到 reportStreamingText 并同步更新 reportResult.markdown。
+   * - generate_node_detail：追加到 nodeDetailStreamingText。
+   */
+  handleGraphAgentToken: (event: GraphAgentTokenEvent) => void
+  /**
+   * 处理流式完成事件：按 op 类型终结流式状态。
+   * - answer_question：qaStreamingActive=false，用 full_text 兜底最后一条消息。
+   * - generate_report：reportStreamingActive=false，写入最终 reportResult。
+   * - generate_node_detail：nodeDetailStreamingActive=false，保留 full_text 供详情卡展示。
+   */
+  handleGraphAgentDone: (event: GraphAgentDoneEvent) => void
+  /** 处理流式被取消事件：终结流式状态，保留已生成部分文本。 */
+  handleGraphAgentCancelled: (event: GraphAgentCancelledEvent) => void
+  /** 处理流式失败事件：终结流式状态，弹 Toast 提示错误。 */
+  handleGraphAgentError: (event: GraphAgentErrorEvent) => void
+  /**
+   * 流式提问：追加 user 消息 + 空 assistant 占位消息，触发后端 ask-stream。
+   * 需 streamingSessionId 与 currentGraphId，缺失时回退到非流式 askWorkQuestion。
+   * 返回是否成功触发。
+   */
+  askWorkQuestionStream: (question: string) => Promise<boolean>
+  /**
+   * 流式生成报告：清空旧报告，触发后端 report-stream。
+   * 需 streamingSessionId 与 currentGraphId，缺失时回退到非流式 generateReport。
+   * 返回是否成功触发。
+   */
+  generateReportStream: () => Promise<boolean>
+  /**
+   * 流式生成节点详情卡：触发后端 detail-stream。
+   * 需 streamingSessionId 与 currentGraphId，缺失时回退到非流式 generateNodeDetail。
+   * 返回是否成功触发。
+   */
+  generateNodeDetailStream: (nodeId: string) => Promise<boolean>
+  /** 清空 QA 流式状态（流式完成或取消后调用）。 */
+  clearQaStreaming: () => void
+  /** 清空报告流式状态。 */
+  clearReportStreaming: () => void
+  /** 清空节点详情流式状态。 */
+  clearNodeDetailStreaming: () => void
 }
 
 /** 统一提取错误消息。 */
@@ -555,6 +627,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   pluginRecentError: '',
   pluginContract: null,
 
+  // ===== 流式输出状态 =====
+  streamingSessionId: null,
+  qaStreamingText: '',
+  qaStreamingActive: false,
+  reportStreamingText: '',
+  reportStreamingActive: false,
+  nodeDetailStreamingText: '',
+  nodeDetailStreamingActive: false,
+  nodeDetailStreamingNodeId: null,
+
   // Toast
   toast: null,
 
@@ -608,6 +690,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       recommendations: [],
       recommendationsLoading: false,
       recommendationsError: '',
+      // 流式状态：切模式时清空，避免跨模式残留
+      qaStreamingText: '',
+      qaStreamingActive: false,
+      reportStreamingText: '',
+      reportStreamingActive: false,
+      nodeDetailStreamingText: '',
+      nodeDetailStreamingActive: false,
+      nodeDetailStreamingNodeId: null,
       toast: null,
     })
     void get().loadGraphs()
@@ -670,6 +760,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       reportExporting: false,
       qaMessages: [],
       qaAsking: false,
+      // 流式状态：切换图谱时清空，避免跨图谱残留
+      qaStreamingText: '',
+      qaStreamingActive: false,
+      reportStreamingText: '',
+      reportStreamingActive: false,
+      nodeDetailStreamingText: '',
+      nodeDetailStreamingActive: false,
+      nodeDetailStreamingNodeId: null,
     })
     if (id) {
       void get().loadFullGraph(id)
@@ -1692,4 +1790,334 @@ export const useAppStore = create<AppState>((set, get) => ({
       void get().loadPendingObservations()
     }
   },
+
+  // ===== 流式输出动作 =====
+
+  setStreamingSessionId: (id) => set({ streamingSessionId: id }),
+
+  handleGraphAgentToken: (event) => {
+    const { op, content } = event
+    if (!content) return
+
+    if (op === 'answer_question') {
+      // 追加到 QA 流式文本
+      const nextText = get().qaStreamingText + content
+      set({ qaStreamingText: nextText })
+      // 同步更新最后一条 assistant 消息的内容（实时打字机效果）
+      const messages = get().qaMessages
+      if (messages.length > 0) {
+        const last = messages[messages.length - 1]
+        if (last.role === 'assistant') {
+          const updated = { ...last, content: nextText }
+          set({
+            qaMessages: [
+              ...messages.slice(0, -1),
+              updated,
+            ],
+          })
+        }
+      }
+    } else if (op === 'generate_report') {
+      // 追加到报告流式文本
+      const nextText = get().reportStreamingText + content
+      set({ reportStreamingText: nextText })
+      // 同步更新 reportResult.markdown（实时预览）
+      const cur = get().reportResult
+      if (cur) {
+        set({
+          reportResult: { ...cur, markdown: nextText },
+        })
+      } else {
+        // 流式过程中 reportResult 尚未创建，构造一个流式占位
+        set({
+          reportResult: {
+            markdown: nextText,
+            sections: { progress: [], plan: [], risks: [], commitments: [] },
+            period: get().reportPeriod,
+            degraded: false,
+            degrade_reason: '',
+          },
+        })
+      }
+    } else if (op === 'generate_node_detail') {
+      // 仅更新与当前流式节点匹配的事件
+      const streamingNodeId = get().nodeDetailStreamingNodeId
+      if (event.node_id && streamingNodeId && event.node_id !== streamingNodeId) {
+        return
+      }
+      const nextText = get().nodeDetailStreamingText + content
+      set({ nodeDetailStreamingText: nextText })
+    }
+  },
+
+  handleGraphAgentDone: (event) => {
+    const { op, full_text } = event
+
+    if (op === 'answer_question') {
+      // 终结 QA 流式
+      set({ qaStreamingActive: false, qaAsking: false })
+      // 用 full_text 兜底最后一条 assistant 消息（防止 token 丢失）
+      const messages = get().qaMessages
+      if (messages.length > 0) {
+        const last = messages[messages.length - 1]
+        if (last.role === 'assistant' && full_text) {
+          const updated = { ...last, content: full_text }
+          set({
+            qaMessages: [...messages.slice(0, -1), updated],
+          })
+        }
+      }
+      // 清空流式文本（已写入消息）
+      set({ qaStreamingText: '' })
+    } else if (op === 'generate_report') {
+      // 终结报告流式
+      set({ reportStreamingActive: false, reportGenerating: false })
+      // 写入最终报告
+      set({
+        reportResult: {
+          markdown: full_text,
+          sections: { progress: [], plan: [], risks: [], commitments: [] },
+          period: get().reportPeriod,
+          degraded: false,
+          degrade_reason: '',
+        },
+        reportStreamingText: '',
+      })
+      get().pushToast('工作报告已生成', 'success')
+    } else if (op === 'generate_node_detail') {
+      // 终结节点详情流式
+      set({
+        nodeDetailStreamingActive: false,
+        nodeDetailStreamingText: full_text,
+      })
+      get().pushToast('节点详情已生成', 'success')
+    }
+  },
+
+  handleGraphAgentCancelled: (event) => {
+    const { op, full_text } = event
+    if (op === 'answer_question') {
+      set({ qaStreamingActive: false, qaAsking: false, qaStreamingText: '' })
+      // 把已生成部分写入最后一条 assistant 消息
+      const messages = get().qaMessages
+      if (messages.length > 0 && full_text) {
+        const last = messages[messages.length - 1]
+        if (last.role === 'assistant') {
+          const updated = {
+            ...last,
+            content: full_text + '\n\n（已取消）',
+            degraded: true,
+            degradeReason: '用户取消生成',
+          }
+          set({
+            qaMessages: [...messages.slice(0, -1), updated],
+          })
+        }
+      }
+      get().pushToast('已取消回答生成', 'info')
+    } else if (op === 'generate_report') {
+      set({
+        reportStreamingActive: false,
+        reportGenerating: false,
+        reportStreamingText: '',
+      })
+      get().pushToast('已取消报告生成', 'info')
+    } else if (op === 'generate_node_detail') {
+      set({
+        nodeDetailStreamingActive: false,
+        nodeDetailStreamingText: full_text,
+      })
+      get().pushToast('已取消详情生成', 'info')
+    }
+  },
+
+  handleGraphAgentError: (event) => {
+    const { op, message } = event
+    if (op === 'answer_question') {
+      set({
+        qaStreamingActive: false,
+        qaAsking: false,
+        qaStreamingText: '',
+      })
+      // 在最后一条 assistant 消息上标记降级
+      const messages = get().qaMessages
+      if (messages.length > 0) {
+        const last = messages[messages.length - 1]
+        if (last.role === 'assistant') {
+          const updated = {
+            ...last,
+            content: last.content || `（回答失败：${message}）`,
+            degraded: true,
+            degradeReason: message,
+          }
+          set({
+            qaMessages: [...messages.slice(0, -1), updated],
+          })
+        }
+      }
+      get().pushToast(`回答失败：${message}`, 'error')
+    } else if (op === 'generate_report') {
+      set({
+        reportStreamingActive: false,
+        reportGenerating: false,
+        reportStreamingText: '',
+      })
+      get().pushToast(`报告生成失败：${message}`, 'error')
+    } else if (op === 'generate_node_detail') {
+      set({
+        nodeDetailStreamingActive: false,
+        nodeDetailStreamingText: '',
+        nodeDetailStreamingNodeId: null,
+      })
+      get().pushToast(`详情生成失败：${message}`, 'error')
+    }
+  },
+
+  askWorkQuestionStream: async (question) => {
+    const graphId = get().currentGraphId
+    const sessionId = get().streamingSessionId
+    if (!graphId) {
+      get().pushToast('请先选中一个图谱', 'warning')
+      return false
+    }
+    if (!question.trim()) {
+      get().pushToast('请输入问题', 'warning')
+      return false
+    }
+    // 无 session_id：回退到非流式
+    if (!sessionId) {
+      return get().askWorkQuestion(question)
+    }
+    // 立即追加 user 消息 + 空 assistant 占位消息
+    const userMsg: QaMessage = {
+      role: 'user',
+      content: question,
+      ts: Date.now(),
+    }
+    const assistantPlaceholder: QaMessage = {
+      role: 'assistant',
+      content: '',
+      ts: Date.now(),
+    }
+    set({
+      qaMessages: [...get().qaMessages, userMsg, assistantPlaceholder],
+      qaAsking: true,
+      qaStreamingActive: true,
+      qaStreamingText: '',
+      error: '',
+    })
+    try {
+      await api.streamAskQuestion(graphId, question, sessionId)
+      // 流式 token 将通过 WS 事件 handleGraphAgentToken 实时更新
+      return true
+    } catch (e) {
+      // 触发失败：标记占位消息为错误
+      const msg = errMsg(e)
+      const messages = get().qaMessages
+      if (messages.length > 0) {
+        const last = messages[messages.length - 1]
+        if (last.role === 'assistant') {
+          const updated: QaMessage = {
+            ...last,
+            content: `（回答失败：${msg}）`,
+            degraded: true,
+            degradeReason: msg,
+          }
+          set({
+            qaMessages: [...messages.slice(0, -1), updated],
+          })
+        }
+      }
+      set({
+        qaAsking: false,
+        qaStreamingActive: false,
+        qaStreamingText: '',
+        error: msg,
+      })
+      get().pushToast(`提问失败：${msg}`, 'error')
+      return false
+    }
+  },
+
+  generateReportStream: async () => {
+    const graphId = get().currentGraphId
+    const sessionId = get().streamingSessionId
+    if (!graphId) {
+      get().pushToast('请先选中一个图谱', 'warning')
+      return false
+    }
+    if (!sessionId) {
+      return get().generateReport()
+    }
+    const period = get().reportPeriod
+    set({
+      reportGenerating: true,
+      reportStreamingActive: true,
+      reportStreamingText: '',
+      // 清空旧报告，流式过程中逐步填充
+      reportResult: null,
+      error: '',
+    })
+    try {
+      await api.streamGenerateReport(graphId, period, sessionId)
+      return true
+    } catch (e) {
+      const msg = errMsg(e)
+      set({
+        reportGenerating: false,
+        reportStreamingActive: false,
+        reportStreamingText: '',
+        error: msg,
+      })
+      get().pushToast(`报告生成失败：${msg}`, 'error')
+      return false
+    }
+  },
+
+  generateNodeDetailStream: async (nodeId) => {
+    const graphId = get().currentGraphId
+    const sessionId = get().streamingSessionId
+    if (!graphId) {
+      get().pushToast('请先选中一个图谱', 'warning')
+      return false
+    }
+    if (!sessionId) {
+      // 回退到非流式
+      const resp = await get().generateNodeDetail(nodeId)
+      return resp !== null
+    }
+    set({
+      nodeDetailStreamingActive: true,
+      nodeDetailStreamingText: '',
+      nodeDetailStreamingNodeId: nodeId,
+      error: '',
+    })
+    try {
+      await api.streamNodeDetail(graphId, nodeId, sessionId)
+      return true
+    } catch (e) {
+      const msg = errMsg(e)
+      set({
+        nodeDetailStreamingActive: false,
+        nodeDetailStreamingText: '',
+        nodeDetailStreamingNodeId: null,
+        error: msg,
+      })
+      get().pushToast(`详情生成失败：${msg}`, 'error')
+      return false
+    }
+  },
+
+  clearQaStreaming: () =>
+    set({ qaStreamingText: '', qaStreamingActive: false }),
+
+  clearReportStreaming: () =>
+    set({ reportStreamingText: '', reportStreamingActive: false }),
+
+  clearNodeDetailStreaming: () =>
+    set({
+      nodeDetailStreamingText: '',
+      nodeDetailStreamingActive: false,
+      nodeDetailStreamingNodeId: null,
+    }),
 }))
