@@ -54,6 +54,7 @@ import type {
   RecommendationsResponse,
   ReportRequest,
   ReportResponse,
+  StreamStartedResponse,
   TrendAddResponse,
   TrendsResponse,
   UserFillAppend,
@@ -536,6 +537,54 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(body),
     }),
+
+  // ===== 流式触发（与 backend/app/routers/stream.py 对齐）=====
+  /**
+   * 触发节点详情卡流式生成。
+   * 后台异步调用 GraphAgent.generate_node_detail_stream，逐 token 通过
+   * WebSocket 推送至 session_id 对应的前端连接。
+   * 前端监听 graph_agent_token / graph_agent_done / graph_agent_error 事件。
+   */
+  streamNodeDetail: (graphId: string, nodeId: string, sessionId: string) =>
+    request<StreamStartedResponse>(
+      `/graphs/${graphId}/nodes/${nodeId}/detail-stream`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ session_id: sessionId }),
+      },
+    ),
+  /**
+   * 触发 Work 问答流式生成。
+   * 后台异步调用 GraphAgent.answer_question_stream，逐 token 推送。
+   */
+  streamAskQuestion: (
+    graphId: string,
+    question: string,
+    sessionId: string,
+  ) =>
+    request<StreamStartedResponse>(
+      `/graphs/${graphId}/work/ask-stream`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ question, session_id: sessionId }),
+      },
+    ),
+  /**
+   * 触发工作报告流式生成。
+   * 后台异步调用 GraphAgent.generate_report_stream，逐 token 推送。
+   */
+  streamGenerateReport: (
+    graphId: string,
+    period: ReportRequest['period'],
+    sessionId: string,
+  ) =>
+    request<StreamStartedResponse>(
+      `/graphs/${graphId}/work/report-stream`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ period, session_id: sessionId }),
+      },
+    ),
 }
 
 export type ApiClient = typeof api

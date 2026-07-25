@@ -29,16 +29,73 @@ export interface ErrorResponse {
  * 后端 WebSocket 推送的事件类型。
  *
  * 协议：
- * - 连接建立 → 推送 ``{ type: "welcome", message: "..." }``
+ * - 连接建立 → 推送 ``{ type: "welcome", message: "...", session_id: "..." }``
  * - 收到 ``{ type: "ping" }`` → 回复 ``{ type: "pong" }``
  * - 收到其他 JSON → 回复 ``{ type: "echo", data: <原消息> }``
+ * - 流式 LLM 任务推送 ``graph_agent_token`` / ``graph_agent_done`` /
+ *   ``graph_agent_cancelled`` / ``graph_agent_error`` 事件
  */
 export type WsEvent =
-  | { type: 'welcome'; message: string }
+  | { type: 'welcome'; message: string; session_id?: string }
   | { type: 'pong' }
   | { type: 'echo'; data: unknown }
   | { type: 'error'; message: string }
   | PluginConversationReceivedEvent
+  | GraphAgentTokenEvent
+  | GraphAgentDoneEvent
+  | GraphAgentCancelledEvent
+  | GraphAgentErrorEvent
+
+/** 流式 LLM 操作类型。 */
+export type GraphAgentOp =
+  | 'generate_node_detail'
+  | 'answer_question'
+  | 'generate_report'
+
+/** 流式 token 事件（每个 token 推送一次）。 */
+export interface GraphAgentTokenEvent {
+  type: 'graph_agent_token'
+  /** 流式操作类型。 */
+  op: GraphAgentOp
+  /** 关联图谱 ID。 */
+  graph_id: string
+  /** token 文本片段。 */
+  content: string
+  /** 序号（从 0 递增）。 */
+  seq: number
+  /** 关联节点 ID（仅 generate_node_detail op）。 */
+  node_id?: string
+}
+
+/** 流式完成事件。 */
+export interface GraphAgentDoneEvent {
+  type: 'graph_agent_done'
+  op: GraphAgentOp
+  graph_id: string
+  /** 完整文本（所有 token 拼接）。 */
+  full_text: string
+  node_id?: string
+}
+
+/** 流式被外部取消事件。 */
+export interface GraphAgentCancelledEvent {
+  type: 'graph_agent_cancelled'
+  op: GraphAgentOp
+  graph_id: string
+  /** 已生成的部分文本（截止取消时）。 */
+  full_text: string
+  node_id?: string
+}
+
+/** 流式失败事件。 */
+export interface GraphAgentErrorEvent {
+  type: 'graph_agent_error'
+  op: GraphAgentOp
+  graph_id: string
+  /** 错误消息。 */
+  message: string
+  node_id?: string
+}
 
 /** 客户端可发送的测试消息。 */
 export type WsOutgoing =
@@ -736,4 +793,35 @@ export interface PluginConversationReceivedEvent {
     title: string
     timestamp: string | null
   }
+}
+
+// ============================================================================
+// 流式触发（与 backend/app/routers/stream.py 对齐）
+// ============================================================================
+
+/** 流式任务启动响应。 */
+export interface StreamStartedResponse {
+  /** 是否已成功启动后台流式任务。 */
+  started: boolean
+  /** LLM 请求 id（可用于取消；LLM 不可用时为 null）。 */
+  request_id: string | null
+  /** 流式操作类型。 */
+  op: 'generate_node_detail' | 'answer_question' | 'generate_report'
+}
+
+/** 节点详情流式请求体。 */
+export interface DetailStreamRequest {
+  session_id: string
+}
+
+/** Work 问答流式请求体。 */
+export interface AskStreamRequest {
+  question: string
+  session_id: string
+}
+
+/** 工作报告流式请求体。 */
+export interface ReportStreamRequest {
+  period: ReportPeriod
+  session_id: string
 }
