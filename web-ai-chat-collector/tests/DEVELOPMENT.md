@@ -2,6 +2,18 @@
 
 > 一句话定位：本目录是项目的"DOM 改了立刻发现"防线 + 核心纯函数单测，用 vitest + jsdom 跑；测试加载机制特殊——源码是 IIFE + 全局变量风格（不是 ES module），通过 `tests/helpers/load-source.js` 的 `runInWindow()` 用 indirect eval 在 jsdom 全局执行，并把 `const`/`let` 转 `var` 让顶层声明挂到 window。
 
+## 与 knowledge-work-assistant 的关系（插件 + 软件一体化）
+
+本目录是 collector 的"测试防线"，与软件侧 [knowledge-work-assistant](../../knowledge-work-assistant/DEVELOPMENT.md) 的关系如下：
+
+- **两套独立测试体系**：本目录用 vitest + jsdom 测 collector（JavaScript），KWA 后端目前**无统一测试**（Python pytest 未配置）；两侧测试互不依赖、互不调用。
+- **DOM 适配器测试是跨子工程契约的守卫**：`tests/dom/adapters.test.js` 验证 5 平台 DOM 适配器的 `extractMessages()` 输出格式（`<think>`/`<search_result>`/回答三段式）；该格式是 KWA 后端 [services/graph_agent.py](../../knowledge-work-assistant/backend/app/services/graph_agent.py) 解析的来源（二次开发推送后）。改 `buildAssistantContent` 或 DOM 适配器输出格式时，本测试会立即失败，提示同步 KWA 后端解析逻辑。
+- **`_buildThinkingExtras` 测试覆盖厂商差异**：`tests/unit/llm.test.js` 覆盖 6 厂商 × 3 思考模式 × 2 开关 = 36 种组合；KWA 后端 [services/llm_client.py](../../knowledge-work-assistant/backend/app/services/llm_client.py) 的思考参数处理是另一套独立实现（Python），不共享本测试。同步新增 LLM 厂商时，本测试需加 case，KWA 后端需独立验证。
+- **远程向量库纯函数测试**：`tests/unit/vector-store.test.js` 测 URL 处理、ID 转换、distance→score 转换等纯函数；这些函数与 KWA 后端 SKILL 脚本 [docs/skills/query_knowledge.py](../docs/skills/scripts/query_knowledge.py) 的检索逻辑**不共享**（Python 脚本直接调向量库 HTTP API，不经过 collector 的 `VectorStore`）。
+- **测试加载机制不适用于 KWA**：本目录的 `runInWindow()` indirect eval 加载机制仅适用于 collector 的 IIFE 风格源码；KWA 前端用 ES module + TypeScript + Vite，测试机制完全不同（如有前端测试会用 vitest + @testing-library/react）。
+
+跨子工程任务（同步新增 LLM 厂商测试、调整对话格式契约等）请参考工作区根 [DEVELOPMENT.md](../../DEVELOPMENT.md) 的"常见跨子工程任务"章节。
+
 ## 模块职责
 
 `tests/` 共 7 个文件，分三类：

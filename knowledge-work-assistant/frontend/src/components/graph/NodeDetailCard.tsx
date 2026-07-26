@@ -33,6 +33,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useAppStore } from '../../store/useAppStore'
+import { renderMarkdown } from '../../lib/markdown'
 import type {
   ExtensionDirection,
   Mode,
@@ -351,6 +352,20 @@ export function NodeDetailCard({
     }
     return out
   }, [template, latestNode])
+
+  // Markdown → HTML 预渲染：LLM 输出可能包含 ## 标题、- 列表、```代码块``` 等
+  // Markdown 语法，直接当纯文本显示会导致代码块换行丢失、标题不显眼。
+  // 这里用共享 renderMarkdown 把 summary / importantPoints / keyMaterials 转成 HTML，
+  // 配合 CSS（.ndc-md .md-code-block 等）让代码块独立分隔、字体用 Comic Sans MS。
+  const summaryHtml = useMemo(() => renderMarkdown(summaryText), [summaryText])
+  const importantPointsHtml = useMemo(
+    () => importantPoints.map((p) => renderMarkdown(p)),
+    [importantPoints],
+  )
+  const keyMaterialsHtml = useMemo(
+    () => keyMaterials.map((m) => ({ label: m.label, html: renderMarkdown(m.value) })),
+    [keyMaterials],
+  )
 
   // 已有留白条目（按类型分组）
   const fillEntries = useMemo(() => {
@@ -716,11 +731,14 @@ export function NodeDetailCard({
             {/* ② 知识点概括 */}
             <section className="ndc-section">
               <h4 className="ndc-section__title">概括</h4>
-              <p className="ndc-section__text">
-                {summaryText || (
-                  <span className="ndc-empty-text">暂无概括</span>
-                )}
-              </p>
+              {summaryText ? (
+                <div
+                  className="ndc-section__text ndc-md"
+                  dangerouslySetInnerHTML={{ __html: summaryHtml }}
+                />
+              ) : (
+                <p className="ndc-empty-text">暂无概括</p>
+              )}
             </section>
 
             {/* ③ 重要点 / 关键材料 */}
@@ -728,21 +746,26 @@ export function NodeDetailCard({
               <h4 className="ndc-section__title">重要点 / 关键材料</h4>
               {importantPoints.length > 0 ? (
                 <ul className="ndc-list">
-                  {importantPoints.map((p, i) => (
-                    <li key={i} className="ndc-list__item">
-                      {p}
-                    </li>
+                  {importantPointsHtml.map((html, i) => (
+                    <li
+                      key={i}
+                      className="ndc-list__item ndc-md"
+                      dangerouslySetInnerHTML={{ __html: html }}
+                    />
                   ))}
                 </ul>
               ) : (
                 <p className="ndc-empty-text">暂无重要点</p>
               )}
-              {keyMaterials.length > 0 && (
+              {keyMaterialsHtml.length > 0 && (
                 <dl className="ndc-kv">
-                  {keyMaterials.map((m) => (
+                  {keyMaterialsHtml.map((m) => (
                     <div className="ndc-kv__row" key={m.label}>
                       <dt className="ndc-kv__label">{m.label}</dt>
-                      <dd className="ndc-kv__value">{m.value}</dd>
+                      <dd
+                        className="ndc-kv__value ndc-md"
+                        dangerouslySetInnerHTML={{ __html: m.html }}
+                      />
                     </div>
                   ))}
                 </dl>

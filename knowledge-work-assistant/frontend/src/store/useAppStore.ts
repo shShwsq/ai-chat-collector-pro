@@ -110,6 +110,41 @@ export interface ToastMessage {
 export type ActiveNav = 'chat' | 'graph' | 'settings'
 
 // ============================================================================
+// 模式快照：切换 study/work 时保存当前模式的关键状态，切回时直接恢复
+// ============================================================================
+
+/** 模式快照：保存切换模式前的关键状态，切回时恢复，避免重新加载。 */
+export interface ModeSnapshot {
+  currentGraphId: string | null
+  fullGraph: FullGraph | null
+  graphs: Graph[]
+  selectedNodeId: string | null
+  extensionBatchId: string | null
+  extensionBatchNodeId: string | null
+  flashNodeIds: string[]
+  pendingObservations: Observation[]
+  candidateNodes: CandidateNode[]
+  candidateObservationId: string | null
+  pendingPanelOpen: boolean
+  quizPanelOpen: boolean
+  quizStage: 'config' | 'answering' | 'result'
+  quizType: QuizType
+  quizNodeIds: string[] | null
+  currentQuiz: Quiz | null
+  quizHistory: Quiz[]
+  quizGradeResult: QuizGradeResult | null
+  workActivePanel: WorkPanel
+  candidateWorkObjects: CandidateWorkObject[]
+  trends: Trend[]
+  trendAddingIndex: number | null
+  reportPeriod: ReportPeriod
+  reportResult: ReportResponse | null
+  qaMessages: QaMessage[]
+  recommendations: RecommendationItem[]
+  recommendationsMode: 'study' | 'work'
+}
+
+// ============================================================================
 // Task 13 / 14 / 15 / 16：Work 模式业务
 // ============================================================================
 
@@ -287,8 +322,13 @@ interface AppState {
   // 通用 Toast
   toast: ToastMessage | null
 
+  // 模式快照：切换模式时保存当前模式的关键状态，切回时直接恢复，
+  // 避免重新加载图谱列表 / 重新选中图谱 / fullGraph 重新拉取。
+  // 配合 App.tsx 的横向滑动过渡，实现"切换模式时状态保留 + 视觉滑动"。
+  modeSnapshots: Partial<Record<Mode, ModeSnapshot>>
+
   // ===== 动作 =====
-  /** 切换模式：清空当前选中并加载新模式图谱列表。 */
+  /** 切换模式：保存当前模式快照，恢复目标模式快照（若有），加载新模式图谱列表。 */
   setMode: (mode: Mode) => void
   /** 切换内容区视图类型。 */
   setView: (view: ViewType) => void
@@ -640,67 +680,172 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Toast
   toast: null,
 
+  // 模式快照初始为空，首次切换时填充
+  modeSnapshots: {},
+
   setMode: (mode) => {
     if (mode === get().mode) return
-    // 切换模式：清空当前模式相关状态，再加载新模式图谱列表
-    set({
-      mode,
-      currentGraphId: null,
-      fullGraph: null,
-      graphs: [],
-      selectedNodeId: null,
-      error: '',
-      // Task 8/11：清空延伸批次、候选节点、待抽取列表、闪烁、toast
-      extensionBatchId: null,
-      extensionBatchNodeId: null,
-      extending: false,
-      flashNodeIds: [],
-      pendingObservations: [],
-      candidateNodes: [],
-      candidateObservationId: null,
-      extracting: false,
-      batchCreating: false,
-      pendingPanelOpen: false,
-      // Task 12：清空测验面板状态
-      quizPanelOpen: false,
-      quizStage: 'config',
-      quizType: 'single_choice',
-      quizNodeIds: null,
-      currentQuiz: null,
-      quizHistory: [],
-      quizGradeResult: null,
-      generatingQuiz: false,
-      answeringQuiz: false,
-      loadingQuizHistory: false,
-      // Task 13/14/15/16：清空 Work 模式业务状态
-      workActivePanel: 'none',
-      candidateWorkObjects: [],
-      workExtracting: false,
-      workConfirming: false,
-      trends: [],
-      trendsLoading: false,
-      trendAddingIndex: null,
-      reportPeriod: 'weekly',
-      reportResult: null,
-      reportGenerating: false,
-      reportExporting: false,
-      qaMessages: [],
-      qaAsking: false,
-      // 推荐 / touch / remind / star：切模式会换图谱，清空旧推荐
-      recommendations: [],
-      recommendationsLoading: false,
-      recommendationsError: '',
-      // 流式状态：切模式时清空，避免跨模式残留
-      qaStreamingText: '',
-      qaStreamingActive: false,
-      reportStreamingText: '',
-      reportStreamingActive: false,
-      nodeDetailStreamingText: '',
-      nodeDetailStreamingActive: false,
-      nodeDetailStreamingNodeId: null,
-      toast: null,
-    })
-    void get().loadGraphs()
+    // 切换模式：保存当前模式快照，恢复目标模式快照（若有），加载新模式图谱列表。
+    // 配合 App.tsx 横向滑动过渡，实现"切换模式时状态保留 + 视觉滑动"。
+    const prevMode = get().mode
+    const cur = get()
+    // 保存当前模式的关键状态到快照
+    const snapshot: ModeSnapshot = {
+      currentGraphId: cur.currentGraphId,
+      fullGraph: cur.fullGraph,
+      graphs: cur.graphs,
+      selectedNodeId: cur.selectedNodeId,
+      extensionBatchId: cur.extensionBatchId,
+      extensionBatchNodeId: cur.extensionBatchNodeId,
+      flashNodeIds: cur.flashNodeIds,
+      pendingObservations: cur.pendingObservations,
+      candidateNodes: cur.candidateNodes,
+      candidateObservationId: cur.candidateObservationId,
+      pendingPanelOpen: cur.pendingPanelOpen,
+      quizPanelOpen: cur.quizPanelOpen,
+      quizStage: cur.quizStage,
+      quizType: cur.quizType,
+      quizNodeIds: cur.quizNodeIds,
+      currentQuiz: cur.currentQuiz,
+      quizHistory: cur.quizHistory,
+      quizGradeResult: cur.quizGradeResult,
+      workActivePanel: cur.workActivePanel,
+      candidateWorkObjects: cur.candidateWorkObjects,
+      trends: cur.trends,
+      trendAddingIndex: cur.trendAddingIndex,
+      reportPeriod: cur.reportPeriod,
+      reportResult: cur.reportResult,
+      qaMessages: cur.qaMessages,
+      recommendations: cur.recommendations,
+      recommendationsMode: cur.recommendationsMode,
+    }
+    const newSnapshots = {
+      ...cur.modeSnapshots,
+      [prevMode]: snapshot,
+    }
+    // 从目标模式快照恢复（若有）
+    const target = cur.modeSnapshots[mode]
+    if (target) {
+      // 有快照：直接恢复，不重新加载图谱列表
+      set({
+        mode,
+        modeSnapshots: newSnapshots,
+        currentGraphId: target.currentGraphId,
+        fullGraph: target.fullGraph,
+        graphs: target.graphs,
+        selectedNodeId: target.selectedNodeId,
+        loading: false,
+        error: '',
+        extensionBatchId: target.extensionBatchId,
+        extensionBatchNodeId: target.extensionBatchNodeId,
+        extending: false,
+        flashNodeIds: target.flashNodeIds,
+        pendingObservations: target.pendingObservations,
+        candidateNodes: target.candidateNodes,
+        candidateObservationId: target.candidateObservationId,
+        extracting: false,
+        batchCreating: false,
+        pendingPanelOpen: target.pendingPanelOpen,
+        quizPanelOpen: target.quizPanelOpen,
+        quizStage: target.quizStage,
+        quizType: target.quizType,
+        quizNodeIds: target.quizNodeIds,
+        currentQuiz: target.currentQuiz,
+        quizHistory: target.quizHistory,
+        quizGradeResult: target.quizGradeResult,
+        generatingQuiz: false,
+        answeringQuiz: false,
+        loadingQuizHistory: false,
+        workActivePanel: target.workActivePanel,
+        candidateWorkObjects: target.candidateWorkObjects,
+        workExtracting: false,
+        workConfirming: false,
+        trends: target.trends,
+        trendsLoading: false,
+        trendAddingIndex: target.trendAddingIndex,
+        reportPeriod: target.reportPeriod,
+        reportResult: target.reportResult,
+        reportGenerating: false,
+        reportExporting: false,
+        qaMessages: target.qaMessages,
+        qaAsking: false,
+        recommendations: target.recommendations,
+        recommendationsLoading: false,
+        recommendationsError: '',
+        recommendationsMode: target.recommendationsMode,
+        // 流式状态：切模式时清空，避免跨模式残留
+        qaStreamingText: '',
+        qaStreamingActive: false,
+        reportStreamingText: '',
+        reportStreamingActive: false,
+        nodeDetailStreamingText: '',
+        nodeDetailStreamingActive: false,
+        nodeDetailStreamingNodeId: null,
+        toast: null,
+      })
+      // 测验面板打开时自动加载该图谱历史
+      if (target.quizPanelOpen && target.currentGraphId) {
+        void get().loadQuizHistory()
+      }
+    } else {
+      // 无快照：清空状态并加载新模式图谱列表
+      set({
+        mode,
+        modeSnapshots: newSnapshots,
+        currentGraphId: null,
+        fullGraph: null,
+        graphs: [],
+        selectedNodeId: null,
+        loading: true,
+        error: '',
+        extensionBatchId: null,
+        extensionBatchNodeId: null,
+        extending: false,
+        flashNodeIds: [],
+        pendingObservations: [],
+        candidateNodes: [],
+        candidateObservationId: null,
+        extracting: false,
+        batchCreating: false,
+        pendingPanelOpen: false,
+        quizPanelOpen: false,
+        quizStage: 'config',
+        quizType: 'single_choice',
+        quizNodeIds: null,
+        currentQuiz: null,
+        quizHistory: [],
+        quizGradeResult: null,
+        generatingQuiz: false,
+        answeringQuiz: false,
+        loadingQuizHistory: false,
+        workActivePanel: 'none',
+        candidateWorkObjects: [],
+        workExtracting: false,
+        workConfirming: false,
+        trends: [],
+        trendsLoading: false,
+        trendAddingIndex: null,
+        reportPeriod: 'weekly',
+        reportResult: null,
+        reportGenerating: false,
+        reportExporting: false,
+        qaMessages: [],
+        qaAsking: false,
+        recommendations: [],
+        recommendationsLoading: false,
+        recommendationsError: '',
+        recommendationsMode: mode,
+        qaStreamingText: '',
+        qaStreamingActive: false,
+        reportStreamingText: '',
+        reportStreamingActive: false,
+        nodeDetailStreamingText: '',
+        nodeDetailStreamingActive: false,
+        nodeDetailStreamingNodeId: null,
+        toast: null,
+      })
+      void get().loadGraphs()
+    }
   },
 
   setView: (view) => set({ view }),
@@ -729,10 +874,14 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   selectGraph: (id) => {
     if (id === get().currentGraphId) return
-    // 切换图谱时清空选中节点与延伸批次，避免跨图谱残留
+    // 切换图谱时清空选中节点与延伸批次，避免跨图谱残留。
+    // 不清空 fullGraph：保留旧图谱视图直到新图谱加载完成，
+    // 避免 loading 文本白屏与 GraphView 卸载/重建造成的视觉闪动。
+    // loading=true 时 App.tsx 的 `loading && !fullGraph` 仍为 false（旧图谱还在），
+    // 不会显示 loading 占位；新图谱到达后由 loadFullGraph 替换 fullGraph。
     set({
       currentGraphId: id,
-      fullGraph: null,
+      loading: true,
       selectedNodeId: null,
       error: '',
       extensionBatchId: null,

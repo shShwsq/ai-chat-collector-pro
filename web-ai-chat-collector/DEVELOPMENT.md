@@ -2,6 +2,19 @@
 
 > 一句话定位：这是一个 MV3 浏览器扩展，把用户在 5 个 AI 平台（DeepSeek/千问/复旦 AI Agent/豆包/Kimi）上的对话采集下来、向量化、再做 RAG 问答；本文件是项目根目录的全局导航，五个子目录（`bg/`、`lib/`、`content/`、`popup/`、`tests/`）各有自己的 `DEVELOPMENT.md`。
 
+## 与 knowledge-work-assistant 的关系（插件 + 软件一体化）
+
+本扩展是「复赛工作区」的**插件侧**，与**软件侧** [knowledge-work-assistant](../knowledge-work-assistant/DEVELOPMENT.md) 构成一个完整项目，共同形成"采集 → 沉淀 → 抽取 → 图谱化"的数据闭环：
+
+- **默认行为**：本扩展独立运行，采集的对话存入 IndexedDB + 可选远程向量库，**不主动推送**到任何外部后端。
+- **二次开发后**：应用 [knowledge-work-assistant/plugin-sdk/secondary-dev/](../knowledge-work-assistant/plugin-sdk/secondary-dev/PATCH-GUIDE.md) 的 patch 到本扩展副本后，每次采集对话会**额外**通过 [kwa-push.js](../knowledge-work-assistant/plugin-sdk/kwa-push.js) 推送到 KWA 后端 `POST http://127.0.0.1:8788/api/plugin/conversations`，落库为 `Observation` 待 Agent 抽取知识点。
+- **共享约定**：
+  - 平台标识一致：本扩展采集时的 `platform` 字段（`deepseek/qianwen/fudan/doubao/kimi`）与 KWA 后端 `routers/plugin.py` 的白名单（`chatgpt/claude/gemini/deepseek/qwen/doubao/kimi/fudan/custom`）取交集；推送时建议带 `metadata.conversation_id`，KWA 后端会基于 `{platform}:{conversation_id}` 做 24h 幂等去重。
+  - 对话格式：本扩展导出与推送均使用 `## 用户` / `## 助手` 分段的 Markdown，KWA 后端 `graph_agent` 据此解析角色与内容。
+  - LLM 厂商清单：本扩展用 `models.json`（运行时 fetch），KWA 后端用 `backend/app/services/model_config.py`（启动时加载 `model_config.json`），**两份清单独立维护**，同步新增厂商时需两侧各改一处。
+
+跨子工程任务（同步新增 LLM Provider、启用推送能力、并行开发联调等）请参考工作区根 [DEVELOPMENT.md](../DEVELOPMENT.md) 的"常见跨子工程任务"章节。
+
 ## 模块职责
 
 根目录只承担"装配与声明"职责，本身不含业务逻辑：
@@ -185,6 +198,14 @@
 
 - `docs/skills/` 提供 Python 脚本 `query_knowledge.py`，外部 agent（TRAE/OpenClaw/Cursor）通过它语义搜索远程向量库。
 - 新 agent 接入只需写自己的 SKILL.md，复用同一 Python 脚本。
+- **与 KWA 联动**：knowledge-work-assistant 后端可通过该 SKILL 脚本检索本扩展沉淀的远程向量库（参考 [knowledge-work-assistant/DEVELOPMENT.md](../knowledge-work-assistant/DEVELOPMENT.md) 的"跨子工程协作"）。本扩展本身的 RAG 浮球（`content/ui/floating-ball.js`）不走该 SKILL，直接调本地 `lib/vector-store.js`。
+
+### 推送能力扩展（与 KWA 联动）
+
+- 默认扩展不主动推送采集结果到任何后端；要启用推送到 KWA，需应用 [knowledge-work-assistant/plugin-sdk/secondary-dev/](../knowledge-work-assistant/plugin-sdk/secondary-dev/PATCH-GUIDE.md) 的 patch（4 个文件 + settings 页 patch），启用 `kwa-push-handler.js` 监听采集事件。
+- 推送 SDK [kwa-push.js](../knowledge-work-assistant/plugin-sdk/kwa-push.js) 提供 UMD / CommonJS / ESM 三种引入方式，含超时控制、指数退避重试、`AbortSignal` 取消、24h 幂等去重（需 `metadata.conversation_id` 配合）。
+- 推送目标 URL 默认 `http://127.0.0.1:8788/api/plugin/conversations`，可在 patched 后的设置页「知识工作助手推送」分区配置；URL 变更后自动保存到 `chrome.storage.local`。
+- **鉴权风险**：KWA 后端当前不鉴权，仅适用于 loopback；部署到公网 / 局域网需自行加反代鉴权，详见 [plugin-sdk/README.md](../knowledge-work-assistant/plugin-sdk/README.md) 的"风险提示"。
 
 ## 注意事项（坑）
 

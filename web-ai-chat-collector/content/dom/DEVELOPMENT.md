@@ -2,6 +2,18 @@
 
 > DOM 提取模式适配器集合：当平台网络协议不可拦截（Kimi WebSocket）或用户在设置中选择了 DOM 模式时，由这些适配器从渲染后的页面 DOM 中提取对话消息，并通过 `HtmlToMarkdown` 将 HTML 转为 Markdown 文本。
 
+## 与 knowledge-work-assistant 的关系（插件 + 软件一体化）
+
+本目录的 DOM 适配器是"采集链路的最后一公里"，与软件侧 [knowledge-work-assistant](../../../knowledge-work-assistant/DEVELOPMENT.md) 的对接关系如下：
+
+- **平台 ID 对齐**：本目录 5 个适配器（`kimi.js`/`deepseek.js`/`doubao.js`/`qianwen.js`/`fudan.js`）注册到 `window.DOM_ADAPTERS[platformName]` 的 `name` 字段，与 KWA 后端 [routers/plugin.py](../../../knowledge-work-assistant/backend/app/routers/plugin.py) 的 `SUPPORTED_PLATFORMS` 白名单取交集。
+- **对话格式契约**：适配器 `extractMessages()` 返回的 `messages` 数组中，助手消息按 `<think>...</think>\n\n<search_result>...</search_result>\n\n回答` 三段式拼接；这与 `network/common.js` 的 `buildAssistantContent` 一致，也是 KWA 后端 `graph_agent` 解析思考/搜索/回答三段式的来源格式。改格式需同步 [content/network/common.js](../network/common.js) 与 KWA 后端 [services/graph_agent.py](../../../knowledge-work-assistant/backend/app/services/graph_agent.py)。
+- **流式输出检测**：`isStreaming()` 返回 true 时 `exporter-base.js` 跳过采集，避免推送半截消息到 KWA 后端造成 `Observation` 内容不完整。
+- **采集事件 → 推送**：DOM 模式采集成功后由 `exporter-base.js` 派发事件，应用 [plugin-sdk/secondary-dev/kwa-push-handler.js](../../../knowledge-work-assistant/plugin-sdk/secondary-dev/kwa-push-handler.js) patch 后自动推送到 KWA 后端。
+- **Kimi 特例**：Kimi 仅支持 DOM 模式（WebSocket + protobuf 不可拦截），但 KWA 后端 `SUPPORTED_PLATFORMS` 仍包含 `kimi`，DOM 采集后可正常推送。
+
+跨子工程任务（新增平台、调整对话格式等）请参考工作区根 [DEVELOPMENT.md](../../../DEVELOPMENT.md) 的"常见跨子工程任务"章节。
+
 ## 模块职责
 
 - **HTML → Markdown 转换层**：基于 turndown.js v7.2.4 + turndown-plugin-gfm v1.0.2，封装为 `window.HtmlToMarkdown.convert(el)`，统一处理五个平台的渲染容器（`.markdown` / `.md-box-root` / `.qk-markdown` / `.ds-markdown` / `.md-editor-preview`）。

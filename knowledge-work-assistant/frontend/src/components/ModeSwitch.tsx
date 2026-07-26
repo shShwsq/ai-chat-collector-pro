@@ -9,7 +9,21 @@
  *   ``.app-shell[data-mode]`` 上的 CSS 变量 ``--accent`` 联动
  *
  * 切换由 ``useAppStore.setMode`` 触发，store 内部会清空当前选中并加载新模式图谱。
+ *
+ * 模式切换的横向"推出"过渡用 View Transitions API 实现：
+ * - ``document.startViewTransition`` 捕获新旧 DOM 快照（旧模式内容 + 新模式内容），
+ *   分别对 ``::view-transition-old`` / ``::view-transition-new`` 应用滑出/滑入动画，
+ *   实现"旧内容向一侧推出 + 新内容从另一侧推入"的轮播效果。
+ * - 方向通过 ``document.documentElement.dataset.modeTransition`` 标记：
+ *   · study→work（to-work）：旧 study 向左滑出，新 work 从右滑入
+ *   · work→study（to-study）：旧 work 向右滑出，新 study 从左滑入
+ * - 时长 280ms，与 ``.mode-switch__indicator`` 的 transform 过渡一致。
+ * - 不支持 View Transitions API 的浏览器降级为直接切换（无动画）。
+ * - 用 ``flushSync`` 强制 React 同步提交 DOM，确保 startViewTransition
+ *   回调中能捕获到新模式渲染后的状态。
  */
+
+import { flushSync } from 'react-dom'
 
 import { useAppStore } from '../store/useAppStore'
 import type { Mode } from '../lib/types'
@@ -19,9 +33,35 @@ const MODES: { value: Mode; label: string; desc: string }[] = [
   { value: 'work', label: '工作', desc: 'Work' },
 ]
 
+/** startViewTransition 的最小类型声明（兼容旧浏览器）。 */
+type ViewTransitionDoc = Document & {
+  startViewTransition?: (cb: () => void) => { finished: Promise<void> }
+}
+
 export function ModeSwitch() {
   const mode = useAppStore((s) => s.mode)
   const setMode = useAppStore((s) => s.setMode)
+
+  const handleModeChange = (newMode: Mode) => {
+    if (newMode === mode) return
+    const doc = document as ViewTransitionDoc
+    if (typeof doc.startViewTransition === 'function') {
+      // 标记方向，供 ::view-transition-old/new 选择对应动画
+      document.documentElement.dataset.modeTransition =
+        newMode === 'work' ? 'to-work' : 'to-study'
+      const transition = doc.startViewTransition.call(doc, () => {
+        // flushSync 强制 React 同步提交，确保快照捕获到新模式 DOM
+        flushSync(() => {
+          setMode(newMode)
+        })
+      })
+      transition.finished.finally(() => {
+        delete document.documentElement.dataset.modeTransition
+      })
+    } else {
+      setMode(newMode)
+    }
+  }
 
   return (
     <div
@@ -40,7 +80,7 @@ export function ModeSwitch() {
             role="tab"
             aria-selected={active}
             className={`mode-switch__btn${active ? ' is-active' : ''}`}
-            onClick={() => setMode(m.value)}
+            onClick={() => handleModeChange(m.value)}
           >
             <span className="mode-switch__btn-label">{m.label}</span>
             <span className="mode-switch__btn-desc">{m.desc}</span>

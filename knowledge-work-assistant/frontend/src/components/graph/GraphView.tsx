@@ -54,7 +54,7 @@ import {
 } from 'd3-force'
 
 import { useAppStore } from '../../store/useAppStore'
-import type { Edge, Node } from '../../lib/types'
+import type { Edge, FullGraph, Node } from '../../lib/types'
 import {
   CARD_PAD_X,
   clampScale,
@@ -137,10 +137,71 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
     const setSelectedNode = useAppStore((s) => s.setSelectedNode)
     const mode = useAppStore((s) => s.mode)
     const deleteNode = useAppStore((s) => s.deleteNode)
+    // 当前图谱 ID：用于在切换时触发固定时长的过渡动画，
+    // 避免 loading 状态持续时间过短导致 CSS transition 看不出效果。
+    const currentGraphId = useAppStore((s) => s.currentGraphId)
+    // 加载态：用于切换图谱时的淡入淡出过渡
+    const loading = useAppStore((s) => s.loading)
     // Task 8：节点延伸
     const extendNodeAction = useAppStore((s) => s.extendNode)
     const extending = useAppStore((s) => s.extending)
     const flashNodeIds = useAppStore((s) => s.flashNodeIds)
+
+    // 切换图谱过渡：currentGraphId 变化时标记 transitioning=true 并保留旧 displayGraph，
+    // 让旧图谱先高斯模糊一段时间；fullGraph 变化（新图谱到达）后延迟更新 displayGraph
+    // 并清除 transitioning，实现"先模糊 → 切过去 → 不模糊"的视觉顺序。
+    const [displayGraph, setDisplayGraph] = useState<FullGraph | null>(fullGraph)
+    const [transitioning, setTransitioning] = useState(false)
+    const prevGraphIdRef = useRef<string | null>(currentGraphId)
+    // 等待新图谱到达标记：currentGraphId 变化时置 true，fullGraph 真正变化时消费
+    const waitingNewGraphRef = useRef(false)
+    // 记录上一次同步到 displayGraph 的 fullGraph 引用，用于判断 fullGraph 是否真正变化
+    const lastSyncedGraphRef = useRef<FullGraph | null>(fullGraph)
+
+    // currentGraphId 变化（用户点击切换）：立即触发 blur，保留旧 displayGraph
+    useEffect(() => {
+      const prevId = prevGraphIdRef.current
+      if (prevId !== currentGraphId) {
+        if (prevId !== null && currentGraphId !== null) {
+          // 切换图谱：挂上 blur，标记等待新图谱到达
+          setTransitioning(true)
+          waitingNewGraphRef.current = true
+        }
+        prevGraphIdRef.current = currentGraphId
+      }
+    }, [currentGraphId])
+
+    // fullGraph 变化（新图谱数据到达）：延迟更新 displayGraph，让旧图谱 blur 一段时间
+    useEffect(() => {
+      if (fullGraph === null) {
+        // 切回空状态（如切换模式）：立即清空
+        setDisplayGraph(null)
+        setTransitioning(false)
+        waitingNewGraphRef.current = false
+        lastSyncedGraphRef.current = null
+        return
+      }
+      // fullGraph 引用未变化（仅 transitioning 变化触发的重执行）：跳过
+      if (fullGraph === lastSyncedGraphRef.current) {
+        return
+      }
+      // 正在等待新图谱到达（切换图谱过渡）：延迟 160ms 让旧图谱 blur 完整展示
+      if (waitingNewGraphRef.current) {
+        waitingNewGraphRef.current = false
+        const timer = setTimeout(() => {
+          setDisplayGraph(fullGraph)
+          lastSyncedGraphRef.current = fullGraph
+          // displayGraph 切换后，再延迟一帧清除 transitioning，让新图谱从 blur 淡入还原
+          requestAnimationFrame(() => {
+            setTransitioning(false)
+          })
+        }, 160)
+        return () => clearTimeout(timer)
+      }
+      // 非过渡场景（如节点更新、延伸刷新、首次加载）：直接同步
+      setDisplayGraph(fullGraph)
+      lastSyncedGraphRef.current = fullGraph
+    }, [fullGraph])
 
     const containerRef = useRef<HTMLDivElement>(null)
     const svgRef = useRef<SVGSVGElement>(null)
@@ -182,9 +243,11 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
     const [, forceRender] = useReducer((x: number) => x + 1, 0)
 
     // 详情卡显示节点：悬停优先，悬停离开后回退到选中（固定）节点
+    // 基于 displayGraph（延迟同步的视图状态）而非 store 的 fullGraph，
+    // 确保切换图谱过渡期间详情卡跟随旧图谱视图。
     const selectedNodeObj = useMemo(
-      () => fullGraph?.nodes.find((n) => n.id === selectedNodeId) ?? null,
-      [fullGraph, selectedNodeId],
+      () => displayGraph?.nodes.find((n) => n.id === selectedNodeId) ?? null,
+      [displayGraph, selectedNodeId],
     )
     const displayedNode = hoveredNode ?? selectedNodeObj
     const pinned = displayedNode !== null && displayedNode.id === selectedNodeId
@@ -214,8 +277,10 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
     }, [])
 
     // ===== 重建 simulation（图谱数据变化时）=====
+    // 依赖 displayGraph：切换图谱过渡期间 displayGraph 保持为旧值，
+    // 旧 simulation 不会被销毁，直到 displayGraph 切换到新图谱才重建。
     useEffect(() => {
-      if (!fullGraph) {
+      if (!displayGraph) {
         simRef.current?.stop()
         simRef.current = null
         nodeElsRef.current.clear()
@@ -225,9 +290,13 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
       }
 
       const { width, height } = sizeRef.current
-      const nodes: SimNode[] = fullGraph.nodes.map((n) => {
-        const angle = Math.random() * Math.PI * 2
-        const r = 40 + Math.random() * 60
+      // 节点初始位置：按 index 在中心周围均匀环形分布（替代 Math.random），
+      // 让新图谱到达时仿真启动视觉更稳定，避免"爆炸式"随机散开。
+      const N = displayGraph.nodes.length
+      const baseR = N > 0 ? Math.min(width, height) * 0.18 : 0
+      const nodes: SimNode[] = displayGraph.nodes.map((n, i) => {
+        const angle = N > 0 ? (i / N) * Math.PI * 2 : 0
+        const r = baseR + (i % 3) * 12 // 微小分层避免完全重合
         return {
           ...n,
           x: width / 2 + Math.cos(angle) * r,
@@ -238,7 +307,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
           fy: null,
         }
       })
-      const edges: SimEdge[] = fullGraph.edges.map((e: Edge) => ({
+      const edges: SimEdge[] = displayGraph.edges.map((e: Edge) => ({
         id: e.id,
         relation: e.relation,
         source: e.src_id,
@@ -285,7 +354,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
         sim.stop()
       }
       // 仅在图谱切换时重建；尺寸变化通过 center force 更新
-    }, [fullGraph])
+    }, [displayGraph])
 
     // ===== 尺寸变化时更新 center force =====
     useEffect(() => {
@@ -633,15 +702,23 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
       }
     }, [setSelectedNode])
 
-    const nodes = fullGraph?.nodes ?? []
-    const edges = fullGraph?.edges ?? []
+    // 渲染基于 displayGraph：切换过渡期间显示旧图谱视图
+    const nodes = displayGraph?.nodes ?? []
+    const edges = displayGraph?.edges ?? []
 
     // 节点标题文本宽度上限（卡片宽 - 左右内边距）
     const titleMaxW = NODE_WIDTH - CARD_PAD_X * 2
     const summaryMaxW = NODE_WIDTH - CARD_PAD_X * 2
 
     return (
-      <div className="gv-container" ref={containerRef}>
+      <div
+        className={
+          transitioning ? 'gv-container gv-transitioning' : 'gv-container'
+        }
+        ref={containerRef}
+        data-loading={loading || undefined}
+        data-empty={!displayGraph || undefined}
+      >
         <svg
           ref={svgRef}
           className="gv-svg"
@@ -781,14 +858,33 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
           </g>
         </svg>
 
-        {/* 画布无节点的引导（有图谱但无节点） */}
-        {fullGraph && nodes.length === 0 && (
+        {/* 画布无节点的引导（有图谱但无节点）。
+            切换图谱时由 CSS `.gv-container.gv-transitioning .gv-empty-hint` 淡出，
+            避免提示卡片闪烁。基于 displayGraph 判断，跟随视图状态。 */}
+        {displayGraph && nodes.length === 0 && (
           <div className="gv-empty-hint">
             <div className="gv-empty-hint__title">该图谱还没有节点</div>
             <div className="gv-empty-hint__desc">
               通过 API 创建节点后，这里会以小卡片形式展示。后续 Task 7/8 接入悬停详情卡与
               双击延伸生成。
             </div>
+          </div>
+        )}
+
+        {/* 加载过渡浮层：
+            - 首次加载（loading 且无 displayGraph）：中央指示器
+            - 切换图谱（transitioning 且有 displayGraph）：顶部进度条 + 旧视图高斯模糊 */}
+        {loading && !displayGraph && (
+          <div className="gv-loading-overlay" role="status" aria-live="polite">
+            <div className="gv-loading-overlay__pill">
+              <span className="gv-loading-overlay__spinner" />
+              正在加载图谱数据…
+            </div>
+          </div>
+        )}
+        {transitioning && displayGraph && (
+          <div className="gv-loading-bar" role="status" aria-live="polite">
+            <span className="gv-loading-bar__fill" />
           </div>
         )}
 
