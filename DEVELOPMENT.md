@@ -6,13 +6,10 @@
 
 ```
 复赛/
-├── web-ai-chat-collector/     # 浏览器扩展（MV3）：采集多平台 AI 对话 → RAG 知识库（已入仓库）
-├── knowledge-work-assistant/  # 成品软件：双模式知识工作助手（已入仓库）
-├── 步影/                       # 桌面常驻 AI 助手：Electron + FastAPI 多模态 Agent（本地参考素材，不进仓库）
+├── web-ai-chat-collector/     # 浏览器扩展（MV3）：采集多平台 AI 对话 → RAG 知识库
+├── 步影/                       # 桌面常驻 AI 助手：Electron + FastAPI 多模态 Agent
 └── .trae/                      # TRAE 规格文档（spec.md / tasks.md / checklist.md），勿动
 ```
-
-> **注意**：`步影/` 是参考素材目录，仅本地保留，**不要加入 git 仓库**（已写入 `.gitignore`）。后续任何新增素材目录如需本地保留，也应在 `.gitignore` 中排除并在此文档注明。
 
 两个项目之间**没有代码依赖**，但在产品理念上互为表里：
 
