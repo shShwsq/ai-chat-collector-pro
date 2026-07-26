@@ -174,6 +174,12 @@ export function NodeDetailCard({
   const latestNode =
     useAppStore((s) => s.fullGraph?.nodes.find((n) => n.id === node.id)) ?? node
   const generateNodeDetail = useAppStore((s) => s.generateNodeDetail)
+  const generateNodeDetailStream = useAppStore((s) => s.generateNodeDetailStream)
+  const clearNodeDetailStreaming = useAppStore((s) => s.clearNodeDetailStreaming)
+  // 流式状态：仅当当前节点正处于流式生成时展示流式预览
+  const nodeDetailStreamingActive = useAppStore((s) => s.nodeDetailStreamingActive)
+  const nodeDetailStreamingText = useAppStore((s) => s.nodeDetailStreamingText)
+  const nodeDetailStreamingNodeId = useAppStore((s) => s.nodeDetailStreamingNodeId)
   const updateNode = useAppStore((s) => s.updateNode)
   const appendUserFill = useAppStore((s) => s.appendUserFill)
   // Task 8：单点延伸与留白延伸
@@ -207,6 +213,11 @@ export function NodeDetailCard({
 
   const cached = hasCachedDetail(latestNode)
 
+  // 当前节点是否处于流式生成中（仅匹配 node_id 时才生效）
+  const isStreamingThisNode =
+    nodeDetailStreamingNodeId === latestNode.id &&
+    (nodeDetailStreamingActive || nodeDetailStreamingText.length > 0)
+
   // 详情获取：有缓存直接用缓存，无缓存不自动调 LLM（需用户点击"生成详情"按钮）
   // 这样避免悬停/单击多个节点时触发大量 LLM 请求
   useEffect(() => {
@@ -222,6 +233,17 @@ export function NodeDetailCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [latestNode.id, cached])
 
+  // 节点切换或组件卸载时清空流式状态，避免跨节点残留流式文本
+  useEffect(() => {
+    return () => {
+      // 仅当离开的节点正是当前流式节点时才清空，避免误清空其他节点的流式
+      if (nodeDetailStreamingNodeId === latestNode.id) {
+        clearNodeDetailStreaming()
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestNode.id])
+
   // 固定态触发 touch：仅在 pinned=true（单击选中固定显示）时调用 touchNode，
   // 同一节点同一固定态只 touch 一次（用 ref 去重），避免悬停态频繁调用与重复 touch。
   // 取消固定时重置 ref，使下次重新固定该节点会再次 touch。
@@ -236,19 +258,46 @@ export function NodeDetailCard({
     }
   }, [pinned, latestNode.id, touchNode])
 
-  /** 用户显式点击"生成详情"按钮时调用 LLM 生成节点详情。 */
+  /**
+   * 用户显式点击"生成详情"按钮时触发流式生成。
+   *
+   * 流式输出（WebSocket 推送）：
+   * - 调用 ``store.generateNodeDetailStream(nodeId)`` 触发后端 detail-stream；
+   * - 后端逐 token 推送 ``graph_agent_token`` 事件，store 实时累积到
+   *   ``nodeDetailStreamingText``，本组件订阅展示打字机效果；
+   * - 完成后 ``nodeDetailStreamingActive=false`` 但 ``nodeDetailStreamingText``
+   *   保留最终 Markdown 供展示。
+   * - 无 sessionId 时 store 内部自动回退到非流式 generateNodeDetail。
+   */
   const handleGenerateDetail = async () => {
-    if (loading) return
+    if (loading || isStreamingThisNode) return
     setLoading(true)
     setError('')
-    const resp = await generateNodeDetail(latestNode.id)
-    if (resp) {
-      setDetail(resp.detail)
-    } else {
-      setError('详情生成失败，请检查后端与 LLM 配置')
+    // 流式触发：store 内部会判断 sessionId，缺失时回退到非流式
+    const ok = await generateNodeDetailStream(latestNode.id)
+    if (!ok) {
+      // 流式触发失败（如 session_id 缺失且回退也失败）：尝试纯非流式兜底
+      const resp = await generateNodeDetail(latestNode.id)
+      if (resp) {
+        setDetail(resp.detail)
+      } else {
+        setError('详情生成失败，请检查后端与 LLM 配置')
+      }
     }
-    setLoading(false)
+    // 流式成功：等待 WS 事件推送 token，loading 在流式结束（active=false）后清除
+    // 非流式回退成功：直接清除 loading
+    if (!useAppStore.getState().nodeDetailStreamingActive) {
+      setLoading(false)
+    }
   }
+
+  // 流式结束后清除 loading（监听 nodeDetailStreamingActive 由 true→false）
+  useEffect(() => {
+    if (!nodeDetailStreamingActive && loading && isStreamingThisNode) {
+      setLoading(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodeDetailStreamingActive, isStreamingThisNode])
 
   const template = useMemo(
     () => getTemplate(graphType, latestNode.type),
@@ -602,7 +651,7 @@ export function NodeDetailCard({
       </div>
 
       <div className="ndc-body">
-        {loading && (
+        {loading && !isStreamingThisNode && (
           <div className="ndc-loading">正在生成详情…</div>
         )}
 
@@ -610,19 +659,48 @@ export function NodeDetailCard({
           <div className="ndc-error">{error}</div>
         )}
 
-        {/* 无缓存且未在生成：显示"生成详情"按钮，由用户主动触发 LLM 调用 */}
-        {!loading && !error && !cached && !detail && (
+        {/* 流式生成预览块：流式进行中或流式完成但未写入缓存时展示。
+            流式过程中逐 token 累积 nodeDetailStreamingText，末尾闪烁光标；
+            流式完成后保留最终 Markdown 文本展示，用户可继续操作或切换节点。 */}
+        {isStreamingThisNode && !error && (
+          <div className="ndc-stream-preview">
+            <div className="ndc-stream-preview__head">
+              <span className="ndc-stream-preview__title">
+                AI 详情流式生成
+              </span>
+              {nodeDetailStreamingActive && (
+                <span className="ndc-stream-preview__badge" aria-live="polite">
+                  生成中…
+                </span>
+              )}
+            </div>
+            <pre className="ndc-stream-preview__text">
+              {nodeDetailStreamingText || '（等待首个 token…）'}
+              {nodeDetailStreamingActive && (
+                <span className="ndc-stream-cursor" aria-hidden="true">▋</span>
+              )}
+            </pre>
+            {nodeDetailStreamingActive && (
+              <p className="ndc-mini-hint">
+                内容逐 token 推送，完成后可继续编辑或延伸。
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* 无缓存且未在流式生成：显示"生成详情"按钮，由用户主动触发流式 LLM 调用 */}
+        {!loading && !error && !cached && !detail && !isStreamingThisNode && (
           <div className="ndc-gen-prompt">
             <p className="ndc-gen-prompt__text">
-              该节点尚未生成 AI 详情。点击下方按钮生成知识点概括、重要点与延伸方向推荐。
+              该节点尚未生成 AI 详情。点击下方按钮流式生成知识点概括、重要点与延伸方向推荐。
             </p>
             <button
               type="button"
               className="ndc-gen-btn"
               onClick={() => void handleGenerateDetail()}
-              disabled={loading}
+              disabled={loading || isStreamingThisNode}
             >
-              生成详情
+              生成详情（流式）
             </button>
           </div>
         )}

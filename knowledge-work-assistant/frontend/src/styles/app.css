@@ -1185,6 +1185,60 @@
   border: 1px dashed var(--border);
 }
 
+/* 流式生成预览块（NodeDetailCard 流式输出 Markdown 时的实时展示区） */
+.ndc-stream-preview {
+  padding: 10px 12px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 8px;
+}
+
+.ndc-stream-preview__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--border);
+}
+
+.ndc-stream-preview__title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.ndc-stream-preview__badge {
+  display: inline-block;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft, rgba(37, 99, 235, 0.1));
+  border-radius: 10px;
+  animation: streaming-cursor-blink 1.2s ease-in-out infinite;
+}
+
+.ndc-stream-preview__text {
+  margin: 0;
+  padding: 8px 10px;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-primary);
+  background: var(--surface);
+  border-radius: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.ndc-stream-cursor {
+  color: var(--accent);
+}
+
 /* 无缓存时的"生成详情"提示区 */
 .ndc-gen-prompt {
   padding: 16px 12px;
@@ -4163,6 +4217,46 @@
   }
 }
 
+/* 流式输出：闪烁光标（QA / Chat / Report 共用动画） */
+.qa-streaming-cursor,
+.chat-streaming-cursor,
+.report-streaming-cursor,
+.ndc-stream-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  color: var(--accent);
+  animation: streaming-cursor-blink 0.9s steps(2, start) infinite;
+  font-weight: 600;
+  line-height: 1;
+}
+
+@keyframes streaming-cursor-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+/* 报告流式生成中徽标 */
+.report-streaming-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft, rgba(37, 99, 235, 0.1));
+  border-radius: 10px;
+  vertical-align: middle;
+  animation: streaming-cursor-blink 1.2s ease-in-out infinite;
+}
+
 .qa-answer-text {
   margin: 0;
   white-space: pre-wrap;
@@ -5656,15 +5750,17 @@
   flex-direction: column;
   padding: 16px 20px 24px;
   gap: 16px;
-  overflow-y: auto;
+  /* 整体不滚动：让输入框固定在视口垂直中央，瀑布流在下方自有滚动 */
+  overflow: hidden;
   background: var(--bg);
 }
 
-/* 输入框容器：居中、限宽 */
+/* 输入框容器：水平 + 垂直居中（margin: auto 在 flex column 中将元素推到中央） */
 .chat-home__input-wrap {
   width: 100%;
   max-width: 600px;
-  margin: 8px auto 4px;
+  /* 上方 auto 推到垂直中央，下方留 16px 与瀑布流分隔 */
+  margin: auto auto 16px;
 }
 
 .chat-home__input {
@@ -5714,10 +5810,14 @@
   margin-top: 12px;
 }
 
-/* 瀑布流容器：CSS columns，桌面 2 列，宽屏 3 列 */
+/* 瀑布流容器：CSS columns，桌面 2 列，宽屏 3 列。
+ * 限高 40vh + 内部滚动：让输入框保持垂直居中，卡片在下方占用下半屏一部分，
+ * 多余卡片在瀑布流内部滚动，不挤占输入框位置。 */
 .chat-home__waterfall {
-  flex: 1;
+  flex: 0 1 auto;
   min-height: 0;
+  max-height: 40vh;
+  overflow-y: auto;
   columns: 2;
   column-gap: 16px;
   /* 顶部对齐，避免列高不一致时空隙突兀 */
@@ -5738,9 +5838,10 @@
   }
 }
 
-/* 空状态 / 加载态 / 错误态：跨列居中提示 */
+/* 空状态 / 加载态 / 错误态：跨列居中提示。
+ * 在限高瀑布流中减小 padding，避免占用过多空间。 */
 .chat-home__empty {
-  padding: 36px 16px;
+  padding: 20px 16px;
   text-align: center;
   font-size: 13px;
   line-height: 1.7;

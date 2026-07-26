@@ -17,7 +17,7 @@ import { ReportPanel } from './components/graph/ReportPanel'
 import { QAPanel } from './components/graph/QAPanel'
 import { Toast } from './components/Toast'
 import { useAppStore } from './store/useAppStore'
-import { TestSocket } from './lib/ws'
+import { generateSessionId, TestSocket } from './lib/ws'
 import type { HealthResponse } from './lib/types'
 
 /**
@@ -87,32 +87,68 @@ export default function App() {
     return () => clearInterval(timer)
   }, [loadGraphs, checkHealth])
 
-  // WebSocket：连接 /ws，订阅「插件对话已接收」事件。
-  // 后端在 POST /api/plugin/conversations 推送成功后广播该事件，
+  // WebSocket：连接 /ws?session_id=<uuid>，订阅「插件对话已接收」与流式事件。
+  //
+  // 流式输出（WebSocket 推送）：
+  // - session_id 在前端启动时生成并设置到 store.streamingSessionId，
+  //   后端会把此连接注册到该 session_id 下，使流式 LLM 任务能精确推送
+  //   token / done / cancelled / error 事件到本连接。
+  // - 各组件（QAPanel / ReportPanel / NodeDetailCard）触发 ask-stream /
+  //   report-stream / detail-stream 时携带 sessionId，后端按 op 类型推送：
+  //     · graph_agent_token：逐 token 累积，store 实时更新对应流式文本
+  //       （qaStreamingText / reportStreamingText / nodeDetailStreamingText），
+  //       组件订阅实现打字机效果。
+  //     · graph_agent_done：流式完成，写入最终结果（消息 / 报告 / 详情）。
+  //     · graph_agent_cancelled：用户取消，保留已生成部分并弹 Toast。
+  //     · graph_agent_error：失败，标记降级并弹错误 Toast。
+  //
+  // 插件对话已接收：后端在 POST /api/plugin/conversations 推送成功后广播，
   // 收到后弹 Toast 并在图谱视图（study 模式）下刷新待抽取列表。
-  // 连接失败时静默降级，不影响主功能（设置面板仍可手动刷新）。
+  //
+  // 连接失败时静默降级，流式动作会自动回退到非流式接口（store 内已处理）。
   useEffect(() => {
+    const sessionId = generateSessionId()
+    useAppStore.getState().setStreamingSessionId(sessionId)
+
     const socket = new TestSocket()
     socketRef.current = socket
     let off: (() => void) | undefined
     socket
-      .connect()
+      .connect(sessionId)
       .then(() => {
         off = socket.onEvent((event) => {
-          if (event.type === 'plugin.conversation_received') {
-            useAppStore
-              .getState()
-              .handlePluginConversationReceived(event.payload)
+          const store = useAppStore.getState()
+          switch (event.type) {
+            case 'plugin.conversation_received':
+              store.handlePluginConversationReceived(event.payload)
+              break
+            case 'graph_agent_token':
+              store.handleGraphAgentToken(event)
+              break
+            case 'graph_agent_done':
+              store.handleGraphAgentDone(event)
+              break
+            case 'graph_agent_cancelled':
+              store.handleGraphAgentCancelled(event)
+              break
+            case 'graph_agent_error':
+              store.handleGraphAgentError(event)
+              break
+            default:
+              // welcome / pong / echo 等不处理
+              break
           }
         })
       })
       .catch(() => {
         // 连接失败：静默处理（后端可能未启用 WS 或网络不可达）
+        // 流式动作会自动回退到非流式接口（store 内已判断 sessionId）
       })
     return () => {
       off?.()
       socket.close()
       socketRef.current = null
+      useAppStore.getState().setStreamingSessionId(null)
     }
   }, [])
 

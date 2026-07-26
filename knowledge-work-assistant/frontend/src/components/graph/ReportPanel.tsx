@@ -1,29 +1,36 @@
 /**
- * Work 工作报告生成面板（Task 15）。
+ * Work 工作报告生成面板（Task 15，流式输出版）。
  *
  * 从内容区右侧滑入的浮层，承载报告生成 / 预览 / 导出 / 打印流程：
  *
- *   ① **配置与生成**：选择报告周期（weekly 周报 / monthly 月报），
- *      点「生成报告」调 ``store.generateReport`` → Agent 基于当前 work 图谱
- *      生成结构化 Markdown 报告（进展 / 下周计划 / 风险 / 承诺跟进）。
+ *   ① **流式生成**：选择报告周期（weekly 周报 / monthly 月报），
+ *      点「生成报告」调 ``store.generateReportStream``：
+ *      - 触发后端 report-stream，通过 WebSocket 按 token 推送 Markdown 片段；
+ *      - store.handleGraphAgentToken 实时追加到 reportStreamingText 并同步更新
+ *        reportResult.markdown，本组件订阅 reportResult 即可获得流式预览效果；
+ *      - 无 sessionId 时 store 内部自动回退到非流式 generateReport。
  *
- *   ② **HTML 预览**：把 Markdown 渲染为 HTML 展示在面板内，支持
- *      标题 / 列表 / 段落 / 加粗等基础语法；降级报告显示橙色提示条。
+ *   ② **HTML 实时预览**：把 Markdown 渲染为 HTML 展示在面板内，支持
+ *      标题 / 列表 / 段落 / 加粗等基础语法；流式过程中持续重渲染最新 Markdown；
+ *      降级报告显示橙色提示条。
  *
  *   ③ **导出 .docx**：点「导出 Word」调 ``store.exportReportDocx``，
  *      后端用 python-docx 生成 .docx 文件流并触发浏览器下载。
+ *      流式过程中禁用导出按钮，避免拿到不完整报告。
  *
  *   ④ **打印为 PDF**：点「打印 / PDF」打开新窗口写入报告 HTML，
  *      调用浏览器原生打印对话框（用户可选「另存为 PDF」）。
  *
  * 数据流：
- * - 报告结果缓存在 ``store.reportResult``，切换周期后需重新生成。
+ * - 报告结果缓存在 ``store.reportResult``，流式过程中实时更新 markdown 字段；
+ *   切换周期后需重新生成。
  * - 导出依赖已生成的 Markdown（后端 export-docx 接口内部会重新生成，
  *   与前端 reportResult 保持一致即可）。
  *
  * 交互：
  * - 面板由 ``store.workActivePanel === 'report'`` 控制显隐。
  * - 生成 / 导出进行中显示加载态并禁用按钮。
+ * - 流式过程中报告预览区显示「生成中…」徽标与末尾闪烁光标。
  * - 降级（``degraded``）时显示提示，报告仍可预览与导出（含结构化骨架）。
  */
 
@@ -127,15 +134,22 @@ export function ReportPanel() {
   const reportResult = useAppStore((s) => s.reportResult)
   const reportGenerating = useAppStore((s) => s.reportGenerating)
   const reportExporting = useAppStore((s) => s.reportExporting)
+  const reportStreamingActive = useAppStore((s) => s.reportStreamingActive)
+  const reportStreamingText = useAppStore((s) => s.reportStreamingText)
   const setReportPeriod = useAppStore((s) => s.setReportPeriod)
-  const generateReport = useAppStore((s) => s.generateReport)
+  const generateReportStream = useAppStore((s) => s.generateReportStream)
   const exportReportDocx = useAppStore((s) => s.exportReportDocx)
   const currentGraphId = useAppStore((s) => s.currentGraphId)
 
-  // 渲染 Markdown 为 HTML（仅在报告结果变化时重算）
+  // 渲染 Markdown 为 HTML：流式过程中 reportStreamingText 与 reportResult.markdown 同步，
+  // 订阅 reportStreamingText 让流式 token 累积时也能触发重渲染（即使 reportResult 引用未变）。
   const reportHtml = useMemo(
-    () => (reportResult ? renderMarkdown(reportResult.markdown) : ''),
-    [reportResult],
+    () =>
+      reportResult
+        ? renderMarkdown(reportResult.markdown) +
+          (reportStreamingActive ? '<span class="report-streaming-cursor">▋</span>' : '')
+        : '',
+    [reportResult, reportStreamingActive, reportStreamingText],
   )
 
   if (!open) return null
@@ -144,7 +158,8 @@ export function ReportPanel() {
 
   const handleGenerate = async () => {
     if (reportGenerating) return
-    await generateReport()
+    // 流式生成：无 sessionId 时 store 内部自动回退到非流式
+    await generateReportStream()
   }
 
   const handleExport = async () => {
@@ -154,6 +169,8 @@ export function ReportPanel() {
 
   const handlePrint = () => {
     if (!reportResult) return
+    // 流式过程中禁止打印（避免拿到不完整报告）
+    if (reportStreamingActive) return
     // 打开新窗口写入报告 HTML，调用浏览器打印
     const win = window.open('', '_blank', 'width=820,height=900')
     if (!win) {
@@ -180,7 +197,7 @@ export function ReportPanel() {
 </style>
 </head>
 <body>
-${reportHtml}
+${renderMarkdown(reportResult.markdown)}
 </body>
 </html>`)
     win.document.close()
@@ -223,8 +240,8 @@ ${reportHtml}
             </button>
           </div>
           <p className="work-panel__subtitle">
-            基于当前 work 图谱生成结构化报告（进展 / 计划 / 风险 / 承诺跟进），
-            可预览、导出 Word 或打印为 PDF。
+            基于当前 work 图谱流式生成结构化报告（进展 / 计划 / 风险 / 承诺跟进），
+            可实时预览、导出 Word 或打印为 PDF。
           </p>
         </header>
 
@@ -264,8 +281,8 @@ ${reportHtml}
                   !currentGraphId
                     ? '请先选中一个 work 图谱'
                     : reportGenerating
-                      ? '正在生成…'
-                      : '生成工作报告'
+                      ? '正在流式生成…'
+                      : '生成工作报告（流式输出）'
                 }
               >
                 {reportGenerating ? '生成中…' : '生成报告'}
@@ -273,12 +290,17 @@ ${reportHtml}
             </div>
           </section>
 
-          {/* 报告预览 */}
+          {/* 报告预览（流式过程中实时展示 Markdown 渲染结果） */}
           {reportResult && (
             <section className="work-section report-preview-section">
               <div className="work-section__head">
                 <h3 className="work-section__title">
                   报告预览 · {PERIOD_LABELS[reportResult.period as ReportPeriod] ?? reportResult.period}
+                  {reportStreamingActive && (
+                    <span className="report-streaming-badge" aria-live="polite">
+                      生成中…
+                    </span>
+                  )}
                 </h3>
                 <div className="report-export-actions">
                   <button
@@ -286,7 +308,11 @@ ${reportHtml}
                     className="work-actions__btn work-actions__btn--ghost report-export-btn"
                     onClick={handleExport}
                     disabled={reportExporting || reportGenerating}
-                    title="导出为 .docx 文件"
+                    title={
+                      reportStreamingActive
+                        ? '流式生成中，完成后可导出'
+                        : '导出为 .docx 文件'
+                    }
                   >
                     {reportExporting ? '导出中…' : '⬇ 导出 Word'}
                   </button>
@@ -294,15 +320,19 @@ ${reportHtml}
                     type="button"
                     className="work-actions__btn work-actions__btn--ghost report-export-btn"
                     onClick={handlePrint}
-                    disabled={reportGenerating}
-                    title="打印或另存为 PDF"
+                    disabled={reportGenerating || reportStreamingActive}
+                    title={
+                      reportStreamingActive
+                        ? '流式生成中，完成后可打印'
+                        : '打印或另存为 PDF'
+                    }
                   >
                     ⎙ 打印 / PDF
                   </button>
                 </div>
               </div>
 
-              {reportResult.degraded && (
+              {reportResult.degraded && !reportStreamingActive && (
                 <div className="report-degraded-tip" role="status">
                   <strong>降级提示：</strong>
                   {reportResult.degrade_reason ||
@@ -310,11 +340,12 @@ ${reportHtml}
                 </div>
               )}
 
-              {/* 结构化分段速览（折叠式，便于快速跳转） */}
-              {(reportResult.sections.progress.length > 0 ||
-                reportResult.sections.plan.length > 0 ||
-                reportResult.sections.risks.length > 0 ||
-                reportResult.sections.commitments.length > 0) && (
+              {/* 结构化分段速览（流式完成后再展示，避免渲染不完整骨架） */}
+              {!reportStreamingActive &&
+                (reportResult.sections.progress.length > 0 ||
+                  reportResult.sections.plan.length > 0 ||
+                  reportResult.sections.risks.length > 0 ||
+                  reportResult.sections.commitments.length > 0) && (
                 <div className="report-sections-grid">
                   <ReportSectionBlock
                     title="进展"
@@ -335,7 +366,7 @@ ${reportHtml}
                 </div>
               )}
 
-              {/* Markdown 渲染为 HTML */}
+              {/* Markdown 渲染为 HTML（流式过程中末尾带闪烁光标） */}
               <div
                 className="report-preview"
                 dangerouslySetInnerHTML={{ __html: reportHtml }}
@@ -347,9 +378,9 @@ ${reportHtml}
           {!reportResult && (
             <div className="work-empty">
               {reportGenerating
-                ? '正在生成工作报告…'
+                ? '正在流式生成工作报告…'
                 : currentGraphId
-                  ? '暂无报告。选择周期后点「生成报告」基于当前图谱生成。'
+                  ? '暂无报告。选择周期后点「生成报告」基于当前图谱流式生成。'
                   : (<><Icon name="warning" size={16} /> 请先在左侧选中一个 work 图谱</>)}
             </div>
           )}
@@ -359,7 +390,9 @@ ${reportHtml}
         <footer className="work-panel__footer">
           <span className="work-panel__footer-text">
             {currentGraphId
-              ? '报告基于图谱中的工作对象（线索/承诺/风险等）综合生成'
+              ? reportStreamingActive
+                ? '流式生成中，报告内容逐 token 推送到预览区…'
+                : '报告基于图谱中的工作对象（线索/承诺/风险等）综合生成'
               : (<><Icon name="warning" size={14} /> 未选中图谱，请先在左侧选择一个 work 图谱</>)}
           </span>
         </footer>

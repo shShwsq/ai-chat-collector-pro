@@ -1,22 +1,25 @@
 /**
- * 对话面板（左侧导航「对话」激活时显示）。
+ * 对话面板（左侧导航「对话」激活时显示，流式输出版）。
  *
  * 按当前模式分支：
  * - **Work 模式**：
  *   - 无消息时渲染 ``<ChatHome mode="work" onAsk={handleAsk} />`` 首页瀑布流；
  *   - 有消息时切换到对话视图（消息列表 + 底部输入框），header 提供「返回首页」
  *     按钮，点击 ``clearQaMessages()`` 清空消息回到首页瀑布流。
- *   - ``handleAsk`` 调用 ``store.askWorkQuestion(q)``，消息写入 qaMessages 后
- *     长度变化自动触发重渲染切到对话视图。
+ *   - ``handleAsk`` 调用 ``store.askWorkQuestionStream(q)``：立即把 user 消息
+ *     + 空 assistant 占位消息追加到 qaMessages，后端通过 WebSocket 流式推送
+ *     token，store.handleGraphAgentToken 实时更新占位消息 content，本组件
+ *     订阅 qaMessages / qaStreamingText 即可获得打字机效果。
+ *     无 sessionId 时 store 内部自动回退到非流式 askWorkQuestion。
  * - **Study 模式**：渲染 ``<ChatHome mode="study" />``，输入框用作标题过滤
  *   （ChatHome 内部实现，无需传 onAsk）。
  *
  * 设计要点：
- * - 复用 store 中已有的 qaMessages / askWorkQuestion / clearQaMessages，
+ * - 复用 store 中已有的 qaMessages / askWorkQuestionStream / clearQaMessages，
  *   不引入新状态；右侧 QAPanel 浮层与本面板共享同一份对话历史，
  *   任意一处的输入与回答都会同步显示。
- * - 消息列表自动滚动到底部（新消息出现时）。
- * - 提问进行中显示加载态并禁用输入框与按钮。
+ * - 消息列表自动滚动到底部（新消息 / token 累积时）。
+ * - 提问进行中（qaAsking=true）禁用输入框与按钮；流式占位消息显示三点动画。
  */
 
 import { useEffect, useRef, useState } from 'react'
@@ -52,11 +55,13 @@ export function ChatPanel() {
   return <WorkChatInner />
 }
 
-/** Work 模式对话内嵌实现：复用 store 的 qaMessages / askWorkQuestion。 */
+/** Work 模式对话内嵌实现：复用 store 的 qaMessages / askWorkQuestionStream。 */
 function WorkChatInner() {
   const qaMessages = useAppStore((s) => s.qaMessages)
   const qaAsking = useAppStore((s) => s.qaAsking)
-  const askWorkQuestion = useAppStore((s) => s.askWorkQuestion)
+  const qaStreamingActive = useAppStore((s) => s.qaStreamingActive)
+  const qaStreamingText = useAppStore((s) => s.qaStreamingText)
+  const askWorkQuestionStream = useAppStore((s) => s.askWorkQuestionStream)
   const clearQaMessages = useAppStore((s) => s.clearQaMessages)
   const currentGraphId = useAppStore((s) => s.currentGraphId)
 
@@ -64,17 +69,18 @@ function WorkChatInner() {
   // 消息列表底部锚点，用于自动滚动
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
-  // 新消息出现时自动滚动到底部
+  // 新消息或流式 token 累积时自动滚动到底部
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [qaMessages, qaAsking])
+  }, [qaMessages, qaAsking, qaStreamingActive, qaStreamingText])
 
   // 首页瀑布流输入框回车提交：ChatHome 内部回车后回调
-  // askWorkQuestion 会把消息写入 qaMessages，长度变化触发重渲染切到对话视图
+  // askWorkQuestionStream 会立即追加 user + assistant 占位消息，
+  // qaMessages 长度变化触发重渲染切到对话视图
   const handleAsk = (q: string) => {
     if (qaAsking) return
     if (!q.trim()) return
-    void askWorkQuestion(q)
+    void askWorkQuestionStream(q)
   }
 
   // 对话视图底部输入框提交
@@ -83,7 +89,7 @@ function WorkChatInner() {
     const q = input.trim()
     if (!q) return
     setInput('')
-    await askWorkQuestion(q)
+    await askWorkQuestionStream(q)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -129,7 +135,7 @@ function WorkChatInner() {
           </div>
         </div>
         <p className="chat-panel__subtitle">
-          基于当前 work 图谱上下文回答你的问题，标注信息来源与置信度。
+          基于当前 work 图谱上下文流式回答你的问题，标注信息来源与置信度。
         </p>
       </header>
 
@@ -137,21 +143,17 @@ function WorkChatInner() {
       <div className="chat-panel__messages">
         <ul className="chat-panel__message-list">
           {qaMessages.map((m, i) => (
-            <ChatMessageItem key={i} message={m} />
+            <ChatMessageItem
+              key={i}
+              message={m}
+              // 标记最后一条 assistant 消息是否处于流式占位态
+              streaming={
+                qaStreamingActive &&
+                i === qaMessages.length - 1 &&
+                m.role === 'assistant'
+              }
+            />
           ))}
-          {/* 提问中加载态 */}
-          {qaAsking && (
-            <li className="chat-msg chat-msg--assistant">
-              <div className="chat-msg__bubble chat-msg__bubble--assistant chat-msg__bubble--loading">
-                <span className="chat-typing">
-                  <span className="chat-typing__dot" />
-                  <span className="chat-typing__dot" />
-                  <span className="chat-typing__dot" />
-                </span>
-                Agent 正在思考…
-              </div>
-            </li>
-          )}
         </ul>
         <div ref={messagesEndRef} />
       </div>
@@ -195,7 +197,13 @@ function WorkChatInner() {
 // 单条消息子组件
 // ============================================================================
 
-function ChatMessageItem({ message }: { message: QaMessage }) {
+interface ChatMessageItemProps {
+  message: QaMessage
+  /** 是否为流式进行中的最后一条 assistant 占位消息（content 为空时显示打字机）。 */
+  streaming?: boolean
+}
+
+function ChatMessageItem({ message, streaming }: ChatMessageItemProps) {
   const isUser = message.role === 'user'
   if (isUser) {
     return (
@@ -210,11 +218,32 @@ function ChatMessageItem({ message }: { message: QaMessage }) {
   // assistant 消息
   const confidence = message.confidence ?? 0
   const meta = confidenceMeta(confidence)
+  // 流式占位态：content 为空且处于流式中，显示三点打字动画
+  const isStreamingPlaceholder = streaming && !message.content
+
   return (
     <li className="chat-msg chat-msg--assistant">
-      <div className="chat-msg__bubble chat-msg__bubble--assistant">
-        {/* 回答正文 */}
-        <p className="chat-msg__text">{message.content}</p>
+      <div
+        className={`chat-msg__bubble chat-msg__bubble--assistant${
+          isStreamingPlaceholder ? ' chat-msg__bubble--loading' : ''
+        }`}
+      >
+        {/* 回答正文（流式 token 实时累积） */}
+        {isStreamingPlaceholder ? (
+          <span className="chat-typing" aria-label="Agent 正在生成回答">
+            <span className="chat-typing__dot" />
+            <span className="chat-typing__dot" />
+            <span className="chat-typing__dot" />
+          </span>
+        ) : (
+          <p className="chat-msg__text">
+            {message.content}
+            {/* 流式进行中且已有内容：末尾闪烁光标 */}
+            {streaming && message.content && (
+              <span className="chat-streaming-cursor" aria-hidden="true">▋</span>
+            )}
+          </p>
+        )}
 
         {/* 降级提示 */}
         {message.degraded && (
@@ -224,8 +253,8 @@ function ChatMessageItem({ message }: { message: QaMessage }) {
           </div>
         )}
 
-        {/* 置信度 + 来源 */}
-        {(message.sources?.length || !message.degraded) && (
+        {/* 置信度 + 来源（流式完成后再展示，避免占位阶段闪烁） */}
+        {!streaming && (message.sources?.length || !message.degraded) && (
           <div className="chat-msg__meta">
             {!message.degraded && (
               <span

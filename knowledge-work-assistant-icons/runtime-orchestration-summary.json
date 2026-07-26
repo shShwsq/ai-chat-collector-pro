@@ -1,0 +1,40 @@
+{
+  "project": {
+    "resolvedLane": "graphic_bitmap_first",
+    "selectedIntentWorkflowRead": true,
+    "contextRequirementsLoaded": [
+      {
+        "path": "shared-runtime/runtime-boundaries/lane-runtime-contracts.md",
+        "readStatus": "loaded",
+        "bodyRead": true
+      },
+      {
+        "path": "shared-runtime/design-artifact-formats/graphic-asset-design-file-format.md",
+        "readStatus": "loaded",
+        "bodyRead": true
+      },
+      {
+        "path": "shared-runtime/deterministic-tooling/validate-graphic-asset-design.mjs",
+        "readStatus": "loaded",
+        "bodyRead": true
+      },
+      {
+        "path": "delivery-quality/delivery-evidence-contract.md",
+        "readStatus": "loaded",
+        "bodyRead": true
+      }
+    ],
+    "contextReadScope": "lane graphic_bitmap_first: intent workflow + context requirements + dispatch contract + planning + text gate + summary fields + start workflow",
+    "validationRunDiscipline": "Run validate-graphic-asset-design.mjs after asset generation and .design write",
+    "lowValueCallWatchdog": {
+      "noProgressNextAction": "proceed to asset generation"
+    },
+    "graphicStrategyGate": "bitmap-first",
+    "textCriticality": "low",
+    "copyDensity": "none",
+    "coreInfoTypes": [],
+    "bitmapFirstAllowed": true,
+    "layoutStaticRequired": false,
+    "graphicStrategyRoutingReason": "User requested icon set and appearance preview image; no exact editable text required"
+  }
+}

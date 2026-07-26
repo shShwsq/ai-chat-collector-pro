@@ -1,29 +1,34 @@
 /**
- * Work 用户提问面板（Task 16）。
+ * Work 用户提问面板（Task 16，流式输出版）。
  *
  * 从内容区右侧滑入的浮层，承载对话式提问与上下文回答：
  *
- *   ① **对话式提问**：用户在底部输入框输入问题，点「提问」或回车
- *      调 ``store.askWorkQuestion(question)`` → Agent 基于当前 work 图谱
- *      上下文回答，返回 ``{answer, sources, confidence, degraded}``。
+ *   ① **流式对话提问**：用户在底部输入框输入问题，点「提问」或回车
+ *      调 ``store.askWorkQuestionStream(question)``：
+ *      - 立即把 user 消息 + 空 assistant 占位消息追加到 qaMessages；
+ *      - 触发后端 ask-stream，通过 WebSocket 按 token 推送回答；
+ *      - store.handleGraphAgentToken 实时更新最后一条 assistant 消息内容，
+ *        本组件订阅 qaMessages 即可获得打字机效果。
+ *      - 无 sessionId 时自动回退到非流式 askWorkQuestion。
  *
  *   ② **回答展示**：每条回答以气泡形式展示，附带：
- *      - 置信度徽标（高/中/低，色阶区分）
- *      - 来源引用列表（标注答案基于哪些图谱节点）
- *      - 降级提示（AI 服务不可用时显示橙色提示条）
+ *      - 置信度徽标（高/中/低，色阶区分，流式完成后再填充）
+ *      - 来源引用列表（标注答案基于哪些图谱节点，流式完成后再填充）
+ *      - 降级提示（AI 服务不可用或流式失败时显示橙色提示条）
+ *      - 流式占位指示：assistant 消息 content 为空时显示三点打字动画
  *
  *   ③ **会话历史**：qaMessages 按时间正序累积，支持多轮对话上下文
  *      （当前实现每次提问独立调用后端，历史仅前端展示）。
  *
  * 数据流：
- * - 用户提问后立即把 user 消息追加到 qaMessages，避免等待感；
- *   Agent 返回后追加 assistant 消息。
- * - 失败时追加一条带 degraded 标记的占位 assistant 消息，便于用户感知。
+ * - 用户提问后立即把 user + 空 assistant 占位消息追加到 qaMessages；
+ *   WebSocket 推送 token 时实时更新占位消息 content。
+ * - 流式失败时把占位消息 content 改为错误文本并标记 degraded。
  *
  * 交互：
  * - 面板由 ``store.workActivePanel === 'qa'`` 控制显隐。
- * - 提问进行中显示加载态并禁用输入框与按钮。
- * - 消息列表自动滚动到底部（新消息出现时）。
+ * - 提问进行中（qaAsking=true）禁用输入框与按钮。
+ * - 消息列表自动滚动到底部（新消息 / token 累积时）。
  * - 可清空对话历史重新开始。
  */
 
@@ -53,7 +58,9 @@ export function QAPanel() {
   const setWorkPanel = useAppStore((s) => s.setWorkPanel)
   const qaMessages = useAppStore((s) => s.qaMessages)
   const qaAsking = useAppStore((s) => s.qaAsking)
-  const askWorkQuestion = useAppStore((s) => s.askWorkQuestion)
+  const qaStreamingActive = useAppStore((s) => s.qaStreamingActive)
+  const qaStreamingText = useAppStore((s) => s.qaStreamingText)
+  const askWorkQuestionStream = useAppStore((s) => s.askWorkQuestionStream)
   const clearQaMessages = useAppStore((s) => s.clearQaMessages)
   const currentGraphId = useAppStore((s) => s.currentGraphId)
 
@@ -61,12 +68,12 @@ export function QAPanel() {
   // 消息列表底部锚点，用于自动滚动
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
-  // 新消息出现时自动滚动到底部
+  // 新消息或流式 token 累积时自动滚动到底部
   useEffect(() => {
     if (open) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
     }
-  }, [qaMessages, open, qaAsking])
+  }, [qaMessages, open, qaAsking, qaStreamingActive, qaStreamingText])
 
   if (!open) return null
 
@@ -77,7 +84,8 @@ export function QAPanel() {
     const q = input.trim()
     if (!q) return
     setInput('')
-    await askWorkQuestion(q)
+    // 流式提问：无 sessionId 时 store 内部自动回退到非流式
+    await askWorkQuestionStream(q)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -135,7 +143,7 @@ export function QAPanel() {
             </div>
           </div>
           <p className="work-panel__subtitle">
-            基于当前 work 图谱上下文回答你的问题，标注信息来源与置信度。
+            基于当前 work 图谱上下文流式回答你的问题，标注信息来源与置信度。
           </p>
         </header>
 
@@ -144,27 +152,21 @@ export function QAPanel() {
           {qaMessages.length === 0 ? (
             <div className="work-empty qa-empty">
               {currentGraphId
-                ? '暂无对话。在下方输入框提问，Agent 会基于图谱上下文回答。'
+                ? '暂无对话。在下方输入框提问，Agent 会基于图谱上下文流式回答。'
                 : (<><Icon name="warning" size={16} /> 请先在左侧选中一个 work 图谱</>)}
             </div>
           ) : (
             <ul className="qa-message-list">
               {qaMessages.map((m, i) => (
-                <QaMessageItem key={i} message={m} />
+                <QaMessageItem
+                  key={i}
+                  message={m}
+                  // 标记最后一条 assistant 消息是否处于流式占位态
+                  streaming={qaStreamingActive &&
+                    i === qaMessages.length - 1 &&
+                    m.role === 'assistant'}
+                />
               ))}
-              {/* 提问中加载态 */}
-              {qaAsking && (
-                <li className="qa-message qa-message--assistant">
-                  <div className="qa-message__bubble qa-message__bubble--assistant qa-message__bubble--loading">
-                    <span className="qa-typing">
-                      <span className="qa-typing__dot" />
-                      <span className="qa-typing__dot" />
-                      <span className="qa-typing__dot" />
-                    </span>
-                    Agent 正在思考…
-                  </div>
-                </li>
-              )}
             </ul>
           )}
           <div ref={messagesEndRef} />
@@ -210,7 +212,13 @@ export function QAPanel() {
 // 单条消息子组件
 // ============================================================================
 
-function QaMessageItem({ message }: { message: QaMessage }) {
+interface QaMessageItemProps {
+  message: QaMessage
+  /** 是否为流式进行中的最后一条 assistant 占位消息（content 为空时显示打字机）。 */
+  streaming?: boolean
+}
+
+function QaMessageItem({ message, streaming }: QaMessageItemProps) {
   const isUser = message.role === 'user'
   if (isUser) {
     return (
@@ -225,11 +233,32 @@ function QaMessageItem({ message }: { message: QaMessage }) {
   // assistant 消息
   const confidence = message.confidence ?? 0
   const meta = confidenceMeta(confidence)
+  // 流式占位态：content 为空且处于流式中，显示三点打字动画
+  const isStreamingPlaceholder = streaming && !message.content
+
   return (
     <li className="qa-message qa-message--assistant">
-      <div className="qa-message__bubble qa-message__bubble--assistant">
-        {/* 回答正文 */}
-        <p className="qa-answer-text">{message.content}</p>
+      <div
+        className={`qa-message__bubble qa-message__bubble--assistant${
+          isStreamingPlaceholder ? ' qa-message__bubble--loading' : ''
+        }`}
+      >
+        {/* 回答正文（流式 token 实时累积） */}
+        {isStreamingPlaceholder ? (
+          <span className="qa-typing" aria-label="Agent 正在生成回答">
+            <span className="qa-typing__dot" />
+            <span className="qa-typing__dot" />
+            <span className="qa-typing__dot" />
+          </span>
+        ) : (
+          <p className="qa-answer-text">
+            {message.content}
+            {/* 流式进行中且已有内容：末尾闪烁光标 */}
+            {streaming && message.content && (
+              <span className="qa-streaming-cursor" aria-hidden="true">▋</span>
+            )}
+          </p>
+        )}
 
         {/* 降级提示 */}
         {message.degraded && (
@@ -239,8 +268,8 @@ function QaMessageItem({ message }: { message: QaMessage }) {
           </div>
         )}
 
-        {/* 置信度 + 来源 */}
-        {(message.sources?.length || !message.degraded) && (
+        {/* 置信度 + 来源（流式完成后再展示，避免占位阶段闪烁） */}
+        {!streaming && (message.sources?.length || !message.degraded) && (
           <div className="qa-answer-meta">
             {!message.degraded && (
               <span

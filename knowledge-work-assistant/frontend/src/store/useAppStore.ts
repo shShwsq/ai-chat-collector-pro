@@ -69,7 +69,6 @@ import type {
   GraphAgentCancelledEvent,
   GraphAgentDoneEvent,
   GraphAgentErrorEvent,
-  GraphAgentOp,
   GraphAgentTokenEvent,
   LlmConfig,
   LlmConfigUpdate,
@@ -95,6 +94,7 @@ import type {
   WorkExtractResponse,
   WorkAskResponse,
 } from '../lib/types'
+// GraphAgentOp 仅作为类型字面量出现在事件 payload 中，无需在此处导入
 
 /** Toast 类型。 */
 export type ToastType = 'info' | 'success' | 'warning' | 'error'
