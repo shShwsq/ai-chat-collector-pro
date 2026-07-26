@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ai-chat-collector</title>
+  <link rel="stylesheet" href="popup.css">
+  <link rel="stylesheet" href="../lib/katex.min.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>ai-chat-collector</h1>
+      <div class="status" id="status"></div>
+    </header>
+
+    <div class="toolbar">
+      <div class="search-bar">
+        <input type="text" id="searchInput" placeholder="搜索对话内容..." />
+        <button id="searchBtn" class="btn" title="搜索">搜索</button>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <select id="platformFilter">
+        <option value="">全部平台</option>
+      </select>
+      <button id="exportAllBtn" class="btn btn-primary" title="导出全部对话">导出全部</button>
+      <button id="pushLocalBtn" class="btn btn-push-local" title="将对话记录发送到本地软件">发送到本地软件</button>
+      <button id="refreshBtn" class="btn" title="刷新列表">刷新</button>
+      <button id="settingsBtn" class="btn" title="AI 问答设置">设置</button>
+    </div>
+
+    <div class="conversation-list" id="conversationList">
+      <div class="empty-state">暂无对话记录</div>
+    </div>
+
+    <!-- 推送结果临时提示条 -->
+    <div class="popup-banner" id="pushBanner"></div>
+
+    <!-- 完整对话查看弹窗 -->
+    <div class="viewer-overlay" id="viewerOverlay">
+      <div class="viewer-box">
+        <div class="viewer-header">
+          <h3 id="viewerTitle">对话详情</h3>
+          <button class="viewer-close" id="viewerClose">&times;</button>
+        </div>
+        <div class="viewer-body" id="viewerBody"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="../lib/marked.min.js"></script>
+  <script src="../lib/katex.min.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

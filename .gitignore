@@ -44,6 +44,5 @@ chroma/
 !package-lock.json
 
 # ===== 开发素材目录（不推送到远程）=====
-# 「步影」与「web-ai-chat-collector」为参考素材，仅本地保留
+# 「步影」为参考素材，仅本地保留
 步影/
-web-ai-chat-collector/

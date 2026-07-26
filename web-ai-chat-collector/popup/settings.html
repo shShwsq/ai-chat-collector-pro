@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ai-chat-collector - 设置</title>
+  <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <div class="container">
+    <div class="sticky-top">
+      <header>
+        <h1>设置</h1>
+        <button class="nav-btn" id="navStorageBtn">存储位置</button>
+        <button class="nav-btn" id="navDataBtn">数据管理</button>
+        <div class="header-right">
+          <button class="nav-btn nav-btn-primary" id="saveBtn">保存设置</button>
+          <button class="back-btn" id="backBtn">返回</button>
+        </div>
+      </header>
+    </div>
+
+    <!-- 对话提取设置 -->
+    <section class="setting-section">
+      <h2>对话提取</h2>
+      <p class="desc">选择在哪些网站自动采集对话记录</p>
+
+      <div class="form-group">
+        <div class="platform-row">
+          <div class="checkbox-row">
+            <input type="checkbox" id="platformDeepseek" />
+            <label for="platformDeepseek">DeepSeek（chat.deepseek.com）</label>
+          </div>
+          <div class="mode-options">
+            <label><input type="radio" name="deepseek-mode" value="dom" checked>DOM提取</label>
+            <label><input type="radio" name="deepseek-mode" value="network">网络拦截</label>
+          </div>
+        </div>
+        <div class="platform-row">
+          <div class="checkbox-row">
+            <input type="checkbox" id="platformQianwen" />
+            <label for="platformQianwen">通义千问（www.qianwen.com）</label>
+          </div>
+          <div class="mode-options">
+            <label><input type="radio" name="qianwen-mode" value="dom" checked>DOM提取</label>
+            <label><input type="radio" name="qianwen-mode" value="network">网络拦截</label>
+          </div>
+        </div>
+        <div class="platform-row">
+          <div class="checkbox-row">
+            <input type="checkbox" id="platformFudan" checked />
+            <label for="platformFudan">复旦 AI Agent（aiagent.fudan.edu.cn）</label>
+          </div>
+          <div class="mode-options">
+            <label><input type="radio" name="fudan-mode" value="dom" checked>DOM提取</label>
+            <label><input type="radio" name="fudan-mode" value="network">网络拦截</label>
+          </div>
+        </div>
+        <div class="platform-row">
+          <div class="checkbox-row">
+            <input type="checkbox" id="platformDoubao" />
+            <label for="platformDoubao">豆包（www.doubao.com）</label>
+          </div>
+          <div class="mode-options">
+            <label><input type="radio" name="doubao-mode" value="dom" checked>DOM提取</label>
+            <label><input type="radio" name="doubao-mode" value="network">网络拦截</label>
+          </div>
+        </div>
+        <div class="platform-row">
+          <div class="checkbox-row">
+            <input type="checkbox" id="platformKimi" />
+            <label for="platformKimi">Kimi（www.kimi.com）</label>
+          </div>
+          <div class="mode-options">
+            <label><input type="radio" name="kimi-mode" value="dom" checked>DOM提取</label>
+            <label title="Kimi 使用 WebSocket + protobuf，不支持网络拦截"><input type="radio" name="kimi-mode" value="network" disabled>网络拦截</label>
+          </div>
+        </div>
+        <small>关闭后，对应网站不再自动采集对话、也不显示采集悬浮球。AI 问答悬浮球仍保留，便于查询历史对话。更改需刷新已打开的网页生效。</small>
+      </div>
+    </section>
+
+    <!-- Embedding 设置 -->
+    <section class="setting-section">
+      <h2 class="section-title-with-action">Embedding 服务 <button class="btn btn-sm" id="testEmbeddingBtn">测试 Embedding</button></h2>
+      <p class="desc">用于将对话内容转换为向量，支持语义搜索</p>
+
+      <div class="form-group">
+        <label>Embedding 厂商</label>
+        <select id="embeddingProvider">
+          <!-- 动态填充 -->
+        </select>
+        <small>所有模型均输出 1024 维向量，与向量库兼容</small>
+      </div>
+
+      <div class="form-group">
+        <label id="embeddingKeyLabel">API Key</label>
+        <input type="password" id="dashscopeEmbeddingKey" placeholder="sk-..." />
+        <small id="embeddingKeyHelp"></small>
+      </div>
+
+      <div class="form-group">
+        <label>Base URL</label>
+        <input type="text" id="embeddingBaseUrl" placeholder="https://..." />
+        <small>选预设后自动填充，也可手动修改</small>
+      </div>
+
+      <div class="form-group">
+        <label>Embedding 模型</label>
+        <div class="model-select" id="embeddingModelSelect">
+          <input type="text" id="embeddingModel" placeholder="模型名称或 Endpoint ID" autocomplete="off" />
+          <span class="model-select-arrow">▾</span>
+          <div class="model-select-dropdown" id="embeddingModelDropdown"></div>
+        </div>
+        <small id="embeddingModelHelp"></small>
+      </div>
+
+      <div class="form-group">
+        <label>向量库对话内容</label>
+        <div class="checkbox-row">
+          <input type="checkbox" id="includeThinking" />
+          <label for="includeThinking">包含深度思考内容</label>
+        </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="includeSearch" />
+          <label for="includeSearch">包含联网搜索结果</label>
+        </div>
+        <small>取消勾选后，对应内容不会进入向量库（仅影响新嵌入的内容；历史向量需「重建向量索引」生效）</small>
+      </div>
+
+      <div class="form-group">
+        <label>切片大小（字符数）</label>
+        <input type="number" id="chunkSize" min="100" max="8000" step="50" value="500" />
+        <small>单条消息过长时按此长度切分为多段分别 embedding。text-embedding-v4 最大输入约 2048 token，中文建议 500-1000 字符</small>
+      </div>
+
+      <div class="form-group">
+        <label>切片重叠（字符数）</label>
+        <input type="number" id="chunkOverlap" min="0" max="2000" step="10" value="50" />
+        <small>相邻切片的重叠长度，避免语义在切片边界被截断。必须小于切片大小</small>
+      </div>
+
+      <div class="form-group">
+        <small>注：修改切片参数仅影响此后新嵌入的内容。已存向量若需按新参数重新切片，请点击下方「重建向量索引」</small>
+      </div>
+      <div class="form-group">
+        <button class="btn btn-danger" id="rebuildIndexBtn">重建向量索引</button>
+      </div>
+    </section>
+
+    <!-- 本地软件对接 -->
+    <section class="setting-section">
+      <h2 class="section-title-with-action">本地软件对接 <button class="btn btn-sm" id="testLocalAppBtn">测试连通性</button></h2>
+      <p class="desc">将采集到的对话推送到本地运行的 knowledge-work-assistant 软件（FastAPI 后端默认监听 8788 端口）</p>
+
+      <div class="form-group">
+        <div class="checkbox-row">
+          <input type="checkbox" id="localAppEnabled" />
+          <label for="localAppEnabled">启用本地软件对接</label>
+        </div>
+        <small>启用后可在插件 popup 主页点击「发送到本地软件」按钮手动推送</small>
+      </div>
+
+      <div class="form-group">
+        <label>本地软件地址</label>
+        <input type="text" id="localAppBaseUrl" placeholder="http://localhost:8788" />
+        <small>本地软件后端地址。默认 http://localhost:8788，已通过 manifest 预置 host 权限</small>
+      </div>
+
+      <div class="form-group">
+        <div class="checkbox-row">
+          <input type="checkbox" id="localAppPushOnSave" />
+          <label for="localAppPushOnSave">保存对话后立即推送</label>
+        </div>
+        <small>插件采集到新对话后立即异步推送。本地后端未启动时静默失败，不影响插件其他功能</small>
+      </div>
+
+      <div class="form-group">
+        <div class="checkbox-row">
+          <input type="checkbox" id="localAppAutoPush" />
+          <label for="localAppAutoPush">启用定时自动推送</label>
+        </div>
+        <small>由 chrome.alarms 触发，最小间隔 1 分钟（Chrome MV3 service worker 限制，无法做到 10 秒级）</small>
+      </div>
+
+      <div class="form-group">
+        <label>推送间隔</label>
+        <select id="localAppInterval">
+          <option value="1" selected>1 分钟</option>
+          <option value="5">5 分钟</option>
+          <option value="10">10 分钟</option>
+          <option value="30">30 分钟</option>
+        </select>
+        <small>定时触发时只推送未推送或已变更的对话（增量优化）；后端 24h 幂等去重兜底，重复推送安全</small>
+      </div>
+
+      <div class="form-group">
+        <label>已推送统计</label>
+        <div id="localAppPushedCount" class="info-text">加载中...</div>
+        <button class="btn btn-mini" id="refreshLocalAppStatsBtn" style="margin-top:4px;">刷新</button>
+      </div>
+
+      <div class="form-group">
+        <button class="btn btn-danger" id="resetLocalAppPushedBtn">清空已推送记录</button>
+        <small>清空后所有对话会被视为未推送，下次推送将重新发送（后端 24h 幂等去重仍会兜底，不会产生重复记录）</small>
+      </div>
+    </section>
+
+    <!-- 召回（Retrieval）设置 -->
+    <section class="setting-section">
+      <h2>召回设置</h2>
+      <p class="desc">控制 AI 问答 / 整理信息 / 生成测验时如何从向量库检索相关片段</p>
+
+      <div class="form-group">
+        <label>召回模式</label>
+        <select id="retrievalMode">
+          <option value="combined" selected>Top-K + 相似度阈值（推荐）</option>
+          <option value="topk">仅 Top-K（取前 N 条）</option>
+          <option value="threshold">仅相似度阈值（取所有相似度达标的结果）</option>
+        </select>
+        <small id="retrievalModeDesc">先按 Top-K 召回候选，再过滤掉相似度低于阈值的结果</small>
+      </div>
+
+      <div class="form-group" id="topKGroup">
+        <label>Top-K（候选条数上限）</label>
+        <input type="number" id="retrievalTopK" min="1" max="100" step="1" value="20" />
+        <small>从向量库中召回相似度最高的前 N 条候选</small>
+      </div>
+
+      <div class="form-group" id="thresholdGroup">
+        <label>相似度阈值（0 - 1）</label>
+        <input type="number" id="retrievalThreshold" min="0" max="1" step="0.05" value="0.3" />
+        <small>相似度低于此值的候选会被丢弃。建议 0.2-0.5；过低会引入噪声，过高可能漏召回</small>
+      </div>
+
+      <div class="form-group">
+        <label>单对话上下文上限（字数）</label>
+        <input type="number" id="retrievalMaxContextChars" min="500" max="50000" step="500" value="8000" />
+        <small>喂给 LLM 的单对话内容上限。命中消息取完整内容，超此上限会截断。建议 5000-10000；过小会截断长消息，过大可能超出模型上下文窗口</small>
+      </div>
+    </section>
+
+    <!-- 向量库设置 -->
+    <section class="setting-section">
+      <h2>向量库</h2>
+      <p class="desc">存储和检索向量数据</p>
+
+      <div class="form-group">
+        <label>向量库类型</label>
+        <select id="vectorStoreType">
+          <option value="local">内置（IndexedDB，零配置）</option>
+          <option value="chroma">ChromaDB</option>
+          <option value="milvus">Milvus</option>
+          <option value="pgvector">PostgreSQL + pgvector</option>
+          <option value="supabase">Supabase</option>
+          <option value="qdrant">Qdrant</option>
+        </select>
+        <div class="help-link" id="vectorHelpLink" style="display:none">
+          <span class="help-icon-inline">?</span>
+          <a href="#" id="vectorHelpLinkText">查看部署说明</a>
+        </div>
+      </div>
+
+      <div id="remoteVectorConfig" style="display:none">
+        <div class="form-group">
+          <label>服务地址</label>
+          <input type="text" id="vectorUrl" placeholder="http://localhost:8000" />
+        </div>
+        <div class="form-group">
+          <label>API Key（可选）</label>
+          <input type="password" id="vectorApiKey" placeholder="留空则不使用认证" />
+        </div>
+        <div class="form-group">
+          <label>集合/表名</label>
+          <input type="text" id="vectorCollection" placeholder="ai_chat_vectors" />
+        </div>
+        <div class="form-group">
+          <button class="btn" id="testVectorConnectionBtn">测试连通性</button>
+          <small>使用当前填写的配置（未保存也可测）发起一次轻量请求，验证地址、API Key 和集合名是否正确</small>
+        </div>
+      </div>
+    </section>
+
+    <!-- LLM 设置 -->
+    <section class="setting-section">
+      <h2 class="section-title-with-action">LLM 大模型 <button class="btn btn-sm" id="testLlmBtn">测试 LLM</button></h2>
+      <p class="desc">用于 AI 问答、整理信息和生成测验</p>
+
+      <div class="form-group">
+        <label>LLM 后端</label>
+        <select id="llmBackend">
+          <option value="openai">OpenAI 兼容 API（DashScope/DeepSeek/智谱/Kimi/豆包等）</option>
+          <option value="ollama">Ollama 本地</option>
+        </select>
+      </div>
+
+      <!-- OpenAI 兼容 -->
+      <div id="openaiLlmConfig">
+        <div class="form-group">
+          <label>厂商预设</label>
+          <select id="openaiPreset">
+            <option value="">自定义（手动填写下方字段）</option>
+            <!-- 动态填充 -->
+          </select>
+          <small>选择预设后自动填充 Base URL 与模型列表；仍可手动修改</small>
+        </div>
+        <div class="form-group">
+          <label>API Base URL</label>
+          <input type="text" id="openaiBaseUrl" placeholder="https://api.openai.com 或 https://open.bigmodel.cn/api/paas/v4（含版本号）" />
+          <small>若地址已含版本前缀（如 /v1、/v4），直接拼接 /chat/completions；否则自动补 /v1</small>
+        </div>
+        <div class="form-group">
+          <label id="openaiApiKeyLabel">API Key</label>
+          <input type="password" id="openaiApiKey" placeholder="sk-..." />
+          <small id="openaiApiKeyHelp"></small>
+        </div>
+        <div class="form-group">
+          <label>模型</label>
+          <div class="model-select" id="openaiModelSelect">
+            <input type="text" id="openaiModel" placeholder="模型名称" autocomplete="off" />
+            <span class="model-select-arrow">▾</span>
+            <div class="model-select-dropdown" id="openaiModelDropdown"></div>
+          </div>
+          <small>选预设后可从下拉选择，也可手动输入</small>
+        </div>
+        <div class="form-group" id="openaiThinkingGroup" style="display:none">
+          <div class="checkbox-row">
+            <input type="checkbox" id="openaiEnableThinking" />
+            <label for="openaiEnableThinking">启用深度思考（先思考再回答，质量更高、耗时更长）</label>
+          </div>
+          <small id="openaiThinkingHelp"></small>
+        </div>
+      </div>
+
+      <!-- Ollama -->
+      <div id="ollamaLlmConfig" style="display:none">
+        <div class="form-group">
+          <label>Ollama 地址</label>
+          <input type="text" id="ollamaBaseUrl" placeholder="http://localhost:11434" />
+        </div>
+        <div class="form-group">
+          <label>模型名称</label>
+          <input type="text" id="ollamaModel" placeholder="qwen2.5:7b" />
+        </div>
+      </div>
+    </section>
+
+    <!-- 存储位置信息 -->
+    <section class="setting-section storage-info-section">
+      <h2>存储位置信息</h2>
+      <p class="desc">查看本地数据存储位置，便于手动检查或备份</p>
+
+      <!-- 总览（默认展开） -->
+      <div class="form-group">
+        <label>扩展 ID</label>
+        <div class="info-row">
+          <code id="storageExtensionId" class="info-code">加载中...</code>
+          <button class="btn btn-mini" id="copyExtensionIdBtn" title="复制扩展 ID">复制</button>
+          <button class="btn btn-mini" id="openExtensionsBtn" title="打开 chrome://extensions">打开扩展页</button>
+        </div>
+        <small>在 chrome://extensions 中可定位本扩展的存储</small>
+      </div>
+
+      <div class="form-group">
+        <label>估算存储占用</label>
+        <div id="storageUsage" class="info-text">加载中...</div>
+        <small>该数值包含 IndexedDB、chrome.storage 等所有扩展数据</small>
+      </div>
+
+      <!-- 数据库详情（默认折叠） -->
+      <div class="form-group">
+        <div class="collapsible-header collapsed" id="dbDetailToggle">
+          <span class="arrow">▼</span>数据库详情
+        </div>
+        <div class="collapsible-body collapsed" id="dbDetailBody">
+          <div id="dbDetailContent">加载中...</div>
+        </div>
+      </div>
+
+      <!-- 文件路径（默认折叠） -->
+      <div class="form-group">
+        <div class="collapsible-header collapsed" id="filePathToggle">
+          <span class="arrow">▼</span>磁盘文件路径
+        </div>
+        <div class="collapsible-body collapsed" id="filePathBody">
+          <p class="info-text">Chrome 扩展的 IndexedDB 文件位于：</p>
+          <pre class="info-code-block" id="storageFilePath">加载中...</pre>
+          <small>该文件夹是 LevelDB 格式，无法直接打开查看内容。可右键查看文件夹大小，或通过 DevTools 查看（见下方步骤）。</small>
+        </div>
+      </div>
+
+      <!-- DevTools 查看步骤（默认折叠） -->
+      <div class="form-group">
+        <div class="collapsible-header collapsed" id="devtoolsToggle">
+          <span class="arrow">▼</span>如何在 DevTools 中查看
+        </div>
+        <div class="collapsible-body collapsed" id="devtoolsBody">
+          <ol class="info-list">
+            <li>点击上方「打开扩展页」按钮（或访问 chrome://extensions）</li>
+            <li>找到「ai-chat-collector」扩展，点击详情中的「Service Worker」链接</li>
+            <li>在弹出的 DevTools 窗口中切换到 <code>Application</code> 标签</li>
+            <li>左侧展开 <code>IndexedDB</code>，即可看到 <code>AIChatCollector</code> 和 <code>AIChatEmbeddings</code> 两个数据库</li>
+            <li>展开数据库可查看各 objectStore 的内容；右键可刷新或清空</li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <button class="btn" id="refreshStorageInfoBtn">刷新存储信息</button>
+      </div>
+    </section>
+
+    <!-- 数据管理 -->
+    <section class="setting-section danger-zone">
+      <h2>数据管理</h2>
+      <p class="desc">清理本地存储数据，操作不可撤销</p>
+
+      <!-- 子区 1：对话相关 -->
+      <div class="data-subsection">
+        <h3 class="data-subsection-title">对话相关</h3>
+        <div class="form-group">
+          <button class="btn btn-danger" id="clearConversationsBtn">清空所有对话</button>
+          <small>删除所有对话记录及关联的向量索引（含远程向量库对应数据）</small>
+        </div>
+      </div>
+
+      <!-- 子区 2：向量库数据管理 -->
+      <div class="data-subsection">
+        <h3 class="data-subsection-title">向量库数据管理</h3>
+        <p class="desc">管理当前配置的向量库（本地或远程），删除对话时会自动同步删除对应向量</p>
+
+        <div class="form-group">
+          <label>当前后端</label>
+          <div id="vectorBackendLabel" class="info-text">加载中...</div>
+        </div>
+
+        <div class="form-group">
+          <label>向量条数</label>
+          <div id="vectorCount" class="info-text">加载中...</div>
+          <div id="vectorCountHint" class="hint-text" style="display:none">注：Milvus 计数可能有几分钟延迟，保存对话后若未立即增长，稍候刷新即可</div>
+        </div>
+
+        <!-- 远程配置详情（默认折叠，仅远程后端时显示） -->
+        <div class="form-group" id="remoteConfigGroup" style="display:none">
+          <div class="collapsible-header collapsed" id="remoteConfigToggle">
+            <span class="arrow">▼</span>远程配置
+          </div>
+          <div class="collapsible-body collapsed" id="remoteConfigBody">
+            <div id="remoteConfigContent">加载中...</div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <button class="btn" id="refreshVectorStatsBtn">刷新统计</button>
+          <button class="btn btn-danger" id="clearVectorStoreBtn">清空当前向量库</button>
+        </div>
+      </div>
+
+      <!-- 子区 3：设置重置 -->
+      <div class="data-subsection">
+        <h3 class="data-subsection-title">设置重置</h3>
+        <div class="form-group">
+          <button class="btn btn-danger" id="resetSettingsBtn">重置全部设置</button>
+          <small>恢复所有配置为默认值（不影响已保存的对话和向量数据）</small>
+        </div>
+      </div>
+    </section>
+
+    <!-- 状态提示 -->
+    <div class="toast" id="toast"></div>
+
+    <!-- 帮助弹窗（pgvector 部署说明等） -->
+    <div class="help-overlay" id="helpOverlay">
+      <div class="help-box">
+        <div class="help-header">
+          <h3 id="helpTitle">帮助</h3>
+          <button class="help-close" id="helpClose">&times;</button>
+        </div>
+        <div class="help-body" id="helpBody"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="../lib/marked.min.js"></script>
+  <script src="settings.js"></script>
+</body>
+</html>

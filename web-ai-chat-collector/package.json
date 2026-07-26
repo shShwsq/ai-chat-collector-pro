@@ -1,0 +1,18 @@
+{
+  "name": "ai-chat-collector-tests",
+  "version": "2.0.0",
+  "private": true,
+  "description": "测试套件：DOM 提取回归保护 + 核心纯函数单测",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:dom": "vitest run tests/dom",
+    "test:unit": "vitest run tests/unit",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.8",
+    "jsdom": "^25.0.1",
+    "@vitest/coverage-v8": "^2.1.8"
+  }
+}
