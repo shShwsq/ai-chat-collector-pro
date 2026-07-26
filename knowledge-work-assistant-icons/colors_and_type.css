@@ -1,0 +1,15 @@
+:root {
+  --font-sans: "Inter", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --color-bg: #0b1220;
+  --color-panel: rgba(22, 34, 54, 0.72);
+  --color-accent: #2dd4bf;
+  --color-accent-2: #3b82f6;
+  --color-text: #f0f4f8;
+  --color-muted: #94a3b8;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--color-text);
+  background: var(--color-bg);
+}
