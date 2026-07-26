@@ -1,7 +1,10 @@
 # 知识工作助手（Knowledge Work Assistant）规格说明
 
 ## Why
+
 用户需要一个长期使用的双模式（Study / Work）知识图谱软件：学习侧把浏览器插件采集的 AI 对话沉淀为可视化的知识无向图，并自动出题检验学习效果；工作侧以工作对象（线索/承诺/关键人等）为节点，辅助整理长程上下文、推荐行业风口、生成工作报告。软件复用「步影」的 Electron + React + FastAPI 架构与 Agent / 文件管理 / 上下文管理代码，与浏览器插件通过预留接口对接（插件不由用户开发）。
+
+> **仓库范围约定**：`步影/` 是本地参考素材目录，**不进入本仓库**（已写入 `.gitignore`）。开发中可拷贝、参考、适配步影代码到 `knowledge-work-assistant/`，但不得将 `步影/` 原目录本身提交到远程。
 
 ## What Changes
 - 新建项目 `knowledge-work-assistant/`，采用 Electron + React + TypeScript 前端 + Python FastAPI 后端，参考并拷贝适配步影的 `main_agent / sub_agent / knowledge_store / file_storage / llm_factory / llm_client / ws_notify` 等模块。
