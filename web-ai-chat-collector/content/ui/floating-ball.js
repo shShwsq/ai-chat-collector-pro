@@ -207,7 +207,7 @@ class FloatingBall {
       }
 
       if (!response || response.length === 0) {
-        listEl.innerHTML = '<div class="empty">暂无对话记录<br><small style="color:#ccc">打开 AI 平台开始对话，数据将自动采集</small></div>';
+        listEl.innerHTML = '<div class="empty">暂无对话记录<small>打开 AI 平台开始对话，数据将自动采集</small></div>';
         return;
       }
 
@@ -301,7 +301,7 @@ class FloatingBall {
       }
     } catch (e) {
       if (e.message === 'CONTEXT_INVALIDATED') {
-        listEl.innerHTML = '<div class="empty" style="color:#e74c3c">扩展已更新或重载<br><small style="color:#999">请刷新当前页面后重试</small></div>';
+        listEl.innerHTML = '<div class="empty empty-error">扩展已更新或重载<small>请刷新当前页面后重试</small></div>';
       }
     }
   }

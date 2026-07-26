@@ -190,19 +190,25 @@ export default function App() {
         {/* 最左侧竖排导航条：对话 / 图谱 / 设置 */}
         <SideNav />
 
-        {/* 主内容区：按 activeNav 切换 */}
-        {activeNav === 'chat' ? (
-          <main className="content-area content-area--chat">
-            <ChatPanel />
-          </main>
-        ) : activeNav === 'settings' ? (
-          <main className="content-area content-area--settings">
-            <SettingsPanel />
-          </main>
-        ) : (
-          <>
-            <GraphList />
-            <main className="content-area">
+        {/* 模式滑动容器：用 View Transitions API 实现横向"推出"过渡。
+            .mode-slide-wrap 上挂 view-transition-name=mode-slide，
+            ModeSwitch 中 startViewTransition 捕获新旧快照，
+            CSS ::view-transition-old/new 分别播放滑出/滑入动画。
+            SideNav 不在此容器内，保持固定不参与滑动。 */}
+        <div className="mode-slide-wrap">
+          {/* 主内容区：按 activeNav 切换 */}
+          {activeNav === 'chat' ? (
+            <main className="content-area content-area--chat">
+              <ChatPanel />
+            </main>
+          ) : activeNav === 'settings' ? (
+            <main className="content-area content-area--settings">
+              <SettingsPanel />
+            </main>
+          ) : (
+            <>
+              <GraphList />
+              <main className="content-area">
               {error && (
                 <div className="error-bar">
                   <span>{error}</span>
@@ -223,11 +229,7 @@ export default function App() {
                     onRelayout={handleRelayout}
                   />
                   <div className="content-stage">
-                    {loading && !fullGraph ? (
-                      <div className="content-loading">
-                        正在加载图谱数据…
-                      </div>
-                    ) : view === 'graph' ? (
+                    {view === 'graph' ? (
                       <GraphView ref={graphViewRef} />
                     ) : (
                       <CardView />
@@ -251,7 +253,8 @@ export default function App() {
               <QAPanel />
             </main>
           </>
-        )}
+          )}
+        </div>
       </div>
 
       {/* 全局 Toast（成功 / 警告 / 错误提示） */}

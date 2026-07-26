@@ -38,6 +38,7 @@ import { useMemo } from 'react'
 
 import { Icon } from '../Icon'
 import { useAppStore } from '../../store/useAppStore'
+import { renderMarkdown } from '../../lib/markdown'
 import type { ReportPeriod } from '../../lib/types'
 
 /** 周期显示名映射。 */
@@ -47,85 +48,10 @@ const PERIOD_LABELS: Record<ReportPeriod, string> = {
 }
 
 /**
- * 轻量 Markdown → HTML 渲染（无需引入第三方库）。
- *
- * 支持：# / ## / ### 标题、- / * 无序列表、1. 有序列表、
- * 空行分段、**加粗**、行内 `code`。
- * 不支持的语法原样输出为段落文本，保证降级报告也能展示。
+ * Markdown 渲染委托到 ``lib/markdown.ts`` 的共享 ``renderMarkdown``，
+ * 它在原 ReportPanel 本地实现基础上扩展了围栏代码块（```lang ... ```）支持，
+ * 并对 HTML 特殊字符做转义，可安全用于 LLM 输出。
  */
-function renderMarkdown(md: string): string {
-  if (!md) return '<p class="report-empty">（报告内容为空）</p>'
-  const lines = md.split(/\r?\n/)
-  const html: string[] = []
-  let inUl = false
-  let inOl = false
-
-  const closeLists = () => {
-    if (inUl) {
-      html.push('</ul>')
-      inUl = false
-    }
-    if (inOl) {
-      html.push('</ol>')
-      inOl = false
-    }
-  }
-
-  const inline = (text: string): string => {
-    // 转义 HTML 特殊字符
-    let s = text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-    // 加粗 **text**
-    s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    // 行内代码 `code`
-    s = s.replace(/`([^`]+)`/g, '<code>$1</code>')
-    return s
-  }
-
-  for (const raw of lines) {
-    const line = raw.replace(/\s+$/, '')
-    if (!line.trim()) {
-      closeLists()
-      continue
-    }
-    // 标题
-    let m: RegExpMatchArray | null
-    if ((m = /^###\s+(.+)$/.exec(line))) {
-      closeLists()
-      html.push(`<h3>${inline(m[1])}</h3>`)
-    } else if ((m = /^##\s+(.+)$/.exec(line))) {
-      closeLists()
-      html.push(`<h2>${inline(m[1])}</h2>`)
-    } else if ((m = /^#\s+(.+)$/.exec(line))) {
-      closeLists()
-      html.push(`<h1>${inline(m[1])}</h1>`)
-    } else if ((m = /^\s*[-*]\s+(.+)$/.exec(line))) {
-      // 无序列表
-      if (!inUl) {
-        closeLists()
-        html.push('<ul>')
-        inUl = true
-      }
-      html.push(`<li>${inline(m[1])}</li>`)
-    } else if ((m = /^\s*\d+\.\s+(.+)$/.exec(line))) {
-      // 有序列表
-      if (!inOl) {
-        closeLists()
-        html.push('<ol>')
-        inOl = true
-      }
-      html.push(`<li>${inline(m[1])}</li>`)
-    } else {
-      // 普通段落
-      closeLists()
-      html.push(`<p>${inline(line)}</p>`)
-    }
-  }
-  closeLists()
-  return html.join('\n')
-}
 
 export function ReportPanel() {
   const open = useAppStore((s) => s.workActivePanel === 'report')

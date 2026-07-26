@@ -161,7 +161,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="msg-text">${escapeHtml(m.content)}</div>
           </div>
         `).join('')}
-        ${conv.messages.length > 6 ? `<div style="text-align:center;color:#9ca3af;font-size:11px;">还有 ${conv.messages.length - 6} 条消息...</div>` : ''}
+        ${conv.messages.length > 6 ? `<div class="conv-more">还有 ${conv.messages.length - 6} 条消息...</div>` : ''}
       </div>
       <div class="conv-actions">
         <button class="btn btn-view" data-id="${conv.id}">查看</button>

@@ -2,6 +2,18 @@
 
 > 一句话定位：本目录是项目的"业务无关基础设施层"，提供四大单例服务（`EmbeddingService`/`VectorStore`/`LLMService`/`AIAssistant`）、IndexedDB 持久化（`db.js`）、设置项读写、向量相似度计算，以及 vendored 的第三方库（turndown/marked/katex）；同时被 Service Worker（通过 `importScripts`）和 content scripts（通过 manifest 静态注入）加载。
 
+## 与 knowledge-work-assistant 的关系（插件 + 软件一体化）
+
+本目录是 collector 的"基础设施层"，与软件侧 [knowledge-work-assistant](../../knowledge-work-assistant/DEVELOPMENT.md) 的关系如下：
+
+- **两套独立的 LLM 客户端**：本目录 `llm.js` 的 `LLMService`/`AIAssistant` 是 collector 本地的 LLM 客户端（用于浮球 RAG 问答），与 KWA 后端 [services/llm_client.py](../../knowledge-work-assistant/backend/app/services/llm_client.py) 是**两套独立的 LLM 调用实现**——前者用 JavaScript + fetch SSE，后者用 Python + OpenAI SDK。共享 LLM 凭据时，两侧各自配置（collector 用 `models.json` + `chrome.storage.local`，KWA 后端用 `model_config.json` + `.env`）。
+- **远程向量库共享**：本目录 `vector-store.js` 写入的远程向量库（Chroma/Milvus/pgvector/Supabase/Qdrant）可被 KWA 后端通过 [docs/skills/query_knowledge.py](../docs/skills/scripts/query_knowledge.py) SKILL 脚本检索（跨子工程协作）；两侧共享同一份向量数据，但写入仅由 collector 负责。
+- **维度一致性约束**：本目录所有预设 embedding 模型强制 1024 维（与向量库 schema 匹配）；KWA 后端的 SKILL 脚本检索时不校验维度，但若维度不一致会返回 NaN 相似度。切换 embedding 模型需"清空向量库 + 重建索引"。
+- **对话格式契约**：本目录 `db.js` 的 `saveConversation` 写入的对话 Markdown（`## 用户`/`## 助手` 分段）是 KWA 后端 [services/graph_agent.py](../../knowledge-work-assistant/backend/app/services/graph_agent.py) 解析的来源格式（二次开发推送后）。
+- **LLM 厂商清单独立维护**：本目录 `models.json`（6 家 LLM + 5 家 Embedding）与 KWA 后端 [services/model_config.py](../../knowledge-work-assistant/backend/app/services/model_config.py) 的 `model_config.json` 是**两份独立清单**，同步新增厂商时需两侧各改一处（详见工作区根 [DEVELOPMENT.md](../../DEVELOPMENT.md) 的"任务 1：在两侧同步新增一个 LLM Provider"）。
+
+跨子工程任务（同步 LLM Provider、共享远程向量库、并行开发联调等）请参考工作区根 [DEVELOPMENT.md](../../DEVELOPMENT.md) 的"常见跨子工程任务"章节。
+
 ## 模块职责
 
 `lib/` 共 9 个文件，分两类：

@@ -2,6 +2,18 @@
 
 > 浏览器扩展 content script 主入口层：负责适配器注册表、导出器基类、主世界网络拦截器、AI 问答悬浮球，以及五个 AI 平台（Kimi / DeepSeek / 豆包 / 千问 / 复旦）的入口脚本。
 
+## 与 knowledge-work-assistant 的关系（插件 + 软件一体化）
+
+本目录是 collector 在宿主页面注入的"采集触角"，与软件侧 [knowledge-work-assistant](../../knowledge-work-assistant/DEVELOPMENT.md) 的对接关系如下：
+
+- **平台 ID 对齐**：本目录 5 个平台入口文件（`kimi.js`/`deepseek.js`/`doubao.js`/`qianwen.js`/`fudan.js`）的 `platformName` 与 KWA 后端 [routers/plugin.py](../../knowledge-work-assistant/backend/app/routers/plugin.py) 的 `SUPPORTED_PLATFORMS` 白名单取交集；推送时 `metadata.platform` 必须命中白名单（`chatgpt`/`claude`/`gemini`/`deepseek`/`qwen`/`doubao`/`kimi`/`fudan`/`custom`）。
+- **对话格式契约**：`exporter-base.js` 的 `saveConversation()` 写入本地 IndexedDB 时使用 `## 用户`/`## 助手` 分段的 Markdown；二次开发推送后，KWA 后端 `graph_agent` 据此解析角色与内容（详见 [services/graph_agent.py](../../knowledge-work-assistant/backend/app/services/graph_agent.py)）。改格式需两侧同步。
+- **采集事件触发推送**：`ChatExporterBase.saveConversation()` 成功后会派发采集事件；应用 [plugin-sdk/secondary-dev/kwa-push-handler.js](../../knowledge-work-assistant/plugin-sdk/secondary-dev/kwa-push-handler.js) patch 后，该事件会被监听并触发 `KwaPush.pushConversation()` 推送。
+- **UI 风格统一**：应用 [plugin-sdk/ui/kwa-plugin.css](../../knowledge-work-assistant/plugin-sdk/ui/kwa-plugin.css) patch 后，本目录的 `ai-ball.js` 与 `content/ui/` 悬浮球颜色会随 KWA 模式（study 墨绿 / work 琥珀）联动（CSS 变量 `--kwa-accent`）。
+- **独立运行能力**：默认行为下（未应用 patch），本目录所有逻辑独立运行，不依赖 KWA 后端；KWA 后端不在线时采集功能不受影响。
+
+跨子工程任务（启用推送、新增平台、并行开发联调等）请参考工作区根 [DEVELOPMENT.md](../../DEVELOPMENT.md) 的"常见跨子工程任务"章节。
+
 ## 模块职责
 
 - **常量与注册表**：定义 `EXTRACTION_MODE`（NETWORK / DOM 两种提取模式）和两个全局适配器表 `window.NETWORK_ADAPTERS` / `window.DOM_ADAPTERS`，供 `network/` 与 `dom/` 子目录中的适配器文件挂载。

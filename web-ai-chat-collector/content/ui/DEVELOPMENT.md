@@ -2,6 +2,18 @@
 
 > 采集器悬浮球 UI 层：负责在宿主 AI 平台页面右下角注入可拖拽的悬浮球、对话列表面板、对话详情查看器，以及所有相关的样式注入与 Markdown/KaTeX 渲染。本目录是「采集侧」UI——与 `content/ai-ball.js`（紫色 AI 问答球，独立 Shadow DOM）是两套并存的 UI 组件，不要混淆。
 
+## 与 knowledge-work-assistant 的关系（插件 + 软件一体化）
+
+本目录是 collector 在宿主页面渲染的"采集侧 UI"，与软件侧 [knowledge-work-assistant](../../../knowledge-work-assistant/DEVELOPMENT.md) 的关系如下：
+
+- **两套独立 UI**：本目录的悬浮球（`#ai-chat-ball`）+ 列表面板 + 查看器是 collector 本地 UI，与 KWA 前端 [frontend/src/components/](../../../knowledge-work-assistant/frontend/src/components/DEVELOPMENT.md) 的图谱 UI（GraphView / NodeDetailCard 等）是**两套完全独立的 UI**，互不依赖、互不通信。
+- **UI 风格统一 patch**：应用 [plugin-sdk/secondary-dev/styles.patch.js](../../../knowledge-work-assistant/plugin-sdk/secondary-dev/styles.patch.js) patch 后，本目录 `styles.js` 中硬编码的主色（如 `#4f46e5` 紫色）会被替换为 CSS 变量 `var(--kwa-accent)`，并 `<link>` 引入 [plugin-sdk/ui/kwa-plugin.css](../../../knowledge-work-assistant/plugin-sdk/ui/kwa-plugin.css)；之后悬浮球颜色会随 KWA 模式（study 墨绿 / work 琥珀）联动。
+- **patch 不破坏原 UI**：`styles.patch.js` 是**覆盖式 patch**（替换整个 `styles.js` 文件），不修改 `floating-ball.js`/`viewer.js` 的逻辑；patch 后 `FloatingBall`/`ConversationViewer` 的实例化流程、拖拽逻辑、删除回调等不变。
+- **本地查看器与 KWA 报告**：本目录的 `ConversationViewer` 用于查看 collector 采集的原始对话；KWA 后端的"工作报告"（[services/report_service.py](../../../knowledge-work-assistant/backend/app/services/report_service.py)）是另一回事——后者基于图谱节点生成周期性报告，不读 collector 数据。
+- **删除对话的级联**：`FloatingBall` 删除对话时调 `chrome.runtime.sendMessage({ type: 'DELETE_CONVERSATION' })`，由 [bg/conversations.js](../../bg/conversations.js) 的 `dbDeleteConversation` 删本地 IndexedDB + 触发 `VectorStore.deleteByConvId`；**不会**通知 KWA 后端删除已推送的 `Observation`（KWA 后端的 `Observation` 需在软件侧手动删除）。
+
+跨子工程任务（应用 UI patch、并行开发联调等）请参考工作区根 [DEVELOPMENT.md](../../../DEVELOPMENT.md) 的"常见跨子工程任务"章节。
+
 ## 模块职责
 
 - **悬浮球入口**：`FloatingBall` 类创建蓝色圆形悬浮球（`#ai-chat-ball`），点击展开对话列表面板，拖拽可移动位置；球上角标显示已采集对话总数。
