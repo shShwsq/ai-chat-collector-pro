@@ -223,15 +223,28 @@ class FloatingBall {
         const date = new Date(conv.updatedAt).toLocaleDateString('zh-CN');
         const tag = platformNames[conv.platform] || conv.platform;
 
+        // 语义命中时显示相似度徽章（0-1 → 百分比）
+        const simBadge = conv._similarity > 0
+          ? `<span class="conv-similarity" title="语义相似度 ${Math.round(conv._similarity * 100)}%">语义 ${Math.round(conv._similarity * 100)}%</span>`
+          : '';
+
+        // 关键字命中时提取并高亮包含 term 的句子（标题优先，否则取首条命中消息）
+        const snippet = this._findMatchSnippet(this.searchQuery, conv);
+        const snippetHTML = snippet
+          ? `<div class="conv-snippet">${this._escapeHtmlWithHighlight(snippet.text, snippet.terms)}</div>`
+          : '';
+
         item.innerHTML = `
           <div class="conv-top">
             <div class="conv-title" title="${this.escapeHtml(conv.title)}">${this.escapeHtml(conv.title)}</div>
             <span class="conv-tag">${tag}</span>
+            ${simBadge}
           </div>
           <div class="conv-info">
             <span>${conv.messages.length} 条消息</span>
             <span>${date}</span>
           </div>
+          ${snippetHTML}
           <div class="conv-btns">
             <button class="btn-view" data-id="${conv.id}">查看</button>
             <button class="btn-export" data-id="${conv.id}" data-fmt="markdown">导出 MD</button>
@@ -364,6 +377,68 @@ class FloatingBall {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+  }
+  
+  // 从 query 和对话内容中提取命中片段（用于关键字高亮）
+  // 优先级：标题 > 第一条命中的消息
+  // 返回 { text, terms } 或 null
+  _findMatchSnippet(query, conv) {
+    const terms = (query || '').trim().split(/\s+/).filter(t => t.length > 0);
+    if (terms.length === 0) return null;
+    const lowerTerms = terms.map(t => t.toLowerCase());
+
+    // 1. 标题优先
+    if (conv.title) {
+      const found = this._extractSentenceWithTerms(conv.title, lowerTerms);
+      if (found) return found;
+    }
+
+    // 2. 扫描消息，找第一条命中
+    for (const msg of (conv.messages || [])) {
+      const found = this._extractSentenceWithTerms(msg.content || '', lowerTerms);
+      if (found) return found;
+    }
+
+    return null;
+  }
+
+  // 在文本中找第一个包含任一 term 的句子
+  // 拆句按中英文句末标点和换行；过长句子围绕首个命中位置截取 80 字符
+  // 返回 { text, terms } 或 null
+  _extractSentenceWithTerms(text, lowerTerms) {
+    if (!text) return null;
+    // lookbehind 在现代 Chrome 中支持（content script 运行环境）
+    const sentences = text.split(/(?<=[。!?；.!?;\n])/);
+    for (const sentence of sentences) {
+      const lower = sentence.toLowerCase();
+      const hitTerms = lowerTerms.filter(t => lower.includes(t));
+      if (hitTerms.length > 0) {
+        let s = sentence.trim();
+        if (!s) continue;
+        if (s.length > 80) {
+          const idx = lower.indexOf(hitTerms[0].toLowerCase());
+          const start = Math.max(0, idx - 30);
+          const end = Math.min(s.length, start + 80);
+          s = (start > 0 ? '...' : '') + s.substring(start, end) + (end < s.length ? '...' : '');
+        }
+        return { text: s, terms: hitTerms };
+      }
+    }
+    return null;
+  }
+
+  // 转义 HTML 后用 <mark> 包裹命中 term
+  _escapeHtmlWithHighlight(text, terms) {
+    const escaped = this.escapeHtml(text);
+    let result = escaped;
+    for (const term of terms) {
+      const escapedTerm = this.escapeHtml(term);
+      if (!escapedTerm) continue;
+      // 转义 regex 特殊字符
+      const safe = escapedTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      result = result.replace(new RegExp(safe, 'gi'), '<mark>$&</mark>');
+    }
+    return result;
   }
   
   // ===== 搜索 =====
