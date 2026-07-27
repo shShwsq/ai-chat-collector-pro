@@ -9,7 +9,7 @@
 - **平台 ID 对齐**：本目录 5 个适配器（`kimi.js`/`deepseek.js`/`doubao.js`/`qianwen.js`/`fudan.js`）注册到 `window.DOM_ADAPTERS[platformName]` 的 `name` 字段，与 KWA 后端 [routers/plugin.py](../../../knowledge-work-assistant/backend/app/routers/plugin.py) 的 `SUPPORTED_PLATFORMS` 白名单取交集。
 - **对话格式契约**：适配器 `extractMessages()` 返回的 `messages` 数组中，助手消息按 `<think>...</think>\n\n<search_result>...</search_result>\n\n回答` 三段式拼接；这与 `network/common.js` 的 `buildAssistantContent` 一致，也是 KWA 后端 `graph_agent` 解析思考/搜索/回答三段式的来源格式。改格式需同步 [content/network/common.js](../network/common.js) 与 KWA 后端 [services/graph_agent.py](../../../knowledge-work-assistant/backend/app/services/graph_agent.py)。
 - **流式输出检测**：`isStreaming()` 返回 true 时 `exporter-base.js` 跳过采集，避免推送半截消息到 KWA 后端造成 `Observation` 内容不完整。
-- **采集事件 → 推送**：DOM 模式采集成功后由 `exporter-base.js` 派发事件，应用 [plugin-sdk/secondary-dev/kwa-push-handler.js](../../../knowledge-work-assistant/plugin-sdk/secondary-dev/kwa-push-handler.js) patch 后自动推送到 KWA 后端。
+- **保存后推送**：DOM 模式采集成功后由 `exporter-base.js` 调 SW `SAVE_CONVERSATION`，启用对接时由 `bg/local-app.js` 自动推送（详见 `bg/local-app.js` 的 `LocalApp_pushByConvId`）。
 - **Kimi 特例**：Kimi 仅支持 DOM 模式（WebSocket + protobuf 不可拦截），但 KWA 后端 `SUPPORTED_PLATFORMS` 仍包含 `kimi`，DOM 采集后可正常推送。
 
 跨子工程任务（新增平台、调整对话格式等）请参考工作区根 [DEVELOPMENT.md](../../../DEVELOPMENT.md) 的"常见跨子工程任务"章节。

@@ -7,10 +7,14 @@
 本目录是 collector 的"配置与展示层"，与软件侧 [knowledge-work-assistant](../../knowledge-work-assistant/DEVELOPMENT.md) 的关系如下：
 
 - **平台模式与 KWA 白名单对齐**：`settings.html` 的"对话提取"区 5 个平台 checkbox + DOM/网络拦截 radio 写入 `chrome.storage.local` 的 `platformModes`，5 个平台 ID 与 KWA 后端 [routers/plugin.py](../../knowledge-work-assistant/backend/app/routers/plugin.py) 的 `SUPPORTED_PLATFORMS` 白名单取交集；新增平台时需两侧同步（详见工作区根 [DEVELOPMENT.md](../../DEVELOPMENT.md) 的"任务 1"）。
-- **二次开发 patch 新增分区**：应用 [plugin-sdk/secondary-dev/settings.patch.html](../../knowledge-work-assistant/plugin-sdk/secondary-dev/settings.patch.html) + [settings.patch.js](../../knowledge-work-assistant/plugin-sdk/secondary-dev/settings.patch.js) patch 后，`settings.html` 会新增"知识工作助手推送"分区，含：
-  - 推送目标 URL 输入框（默认 `http://127.0.0.1:8788/api/plugin/conversations`）
-  - "测试推送"按钮（调 `KwaPush.pushConversation()` 推一条测试对话）
-  - 启用/禁用开关（保存到 `chrome.storage.local`）
+- **本地应用对接分区**：collector 设置页原生提供"本地应用对接"分区，含：
+  - 启用总开关
+  - 自动推送开关
+  - 定时推送间隔选择（1/5/10/30 分钟）
+  - baseUrl 输入框（默认 `http://127.0.0.1:8788`）
+  - 连通性测试按钮（调 `GET /api/plugin/health`）
+  - 手动"推送全部"按钮
+  - 设置保存到 `chrome.storage.local` 的 `localAppSettings` key
 - **LLM 配置独立**：本目录 `settings.js` 的 LLM 配置（backend/baseUrl/apiKey/model/thinking）写入 `chrome.storage.local` 的 `llmSettings`，与 KWA 后端 [backend/.env](../../knowledge-work-assistant/backend/.env) 的 `LLM_API_KEY`/`LLM_BASE_URL` 等**完全独立**；共享 LLM 凭据时需在两侧各填一次。
 - **本地查看器与 KWA 图谱 UI**：`popup.js` 的 `openViewer()` 弹出的对话查看器是 collector 本地的；KWA 前端的图谱视图（[frontend/src/components/graph/GraphView.tsx](../../knowledge-work-assistant/frontend/src/components/graph/GraphView.tsx)）是另一套 UI，不读 collector 数据。
 - **数据管理独立**：`settings.js` 的"清空对话"/"重置设置"按钮只影响 collector 本地（IndexedDB + chrome.storage + 远程向量库）；**不会**删除已推送到 KWA 后端的 `Observation`（需在软件侧手动删除）。

@@ -8,9 +8,9 @@
 
 - **平台 ID 对齐**：本目录 5 个平台入口文件（`kimi.js`/`deepseek.js`/`doubao.js`/`qianwen.js`/`fudan.js`）的 `platformName` 与 KWA 后端 [routers/plugin.py](../../knowledge-work-assistant/backend/app/routers/plugin.py) 的 `SUPPORTED_PLATFORMS` 白名单取交集；推送时 `metadata.platform` 必须命中白名单（`chatgpt`/`claude`/`gemini`/`deepseek`/`qwen`/`doubao`/`kimi`/`fudan`/`custom`）。
 - **对话格式契约**：`exporter-base.js` 的 `saveConversation()` 写入本地 IndexedDB 时使用 `## 用户`/`## 助手` 分段的 Markdown；二次开发推送后，KWA 后端 `graph_agent` 据此解析角色与内容（详见 [services/graph_agent.py](../../knowledge-work-assistant/backend/app/services/graph_agent.py)）。改格式需两侧同步。
-- **采集事件触发推送**：`ChatExporterBase.saveConversation()` 成功后会派发采集事件；应用 [plugin-sdk/secondary-dev/kwa-push-handler.js](../../knowledge-work-assistant/plugin-sdk/secondary-dev/kwa-push-handler.js) patch 后，该事件会被监听并触发 `KwaPush.pushConversation()` 推送。
-- **UI 风格统一**：应用 [plugin-sdk/ui/kwa-plugin.css](../../knowledge-work-assistant/plugin-sdk/ui/kwa-plugin.css) patch 后，本目录的 `ai-ball.js` 与 `content/ui/` 悬浮球颜色会随 KWA 模式（study 墨绿 / work 琥珀）联动（CSS 变量 `--kwa-accent`）。
-- **独立运行能力**：默认行为下（未应用 patch），本目录所有逻辑独立运行，不依赖 KWA 后端；KWA 后端不在线时采集功能不受影响。
+- **保存后即时推送**：`ChatExporterBase.saveConversation()` 成功后，SW 端 `bg/router.js` 的 SAVE_CONVERSATION 处理会异步调用 `bg/local-app.js` 的 `LocalApp_pushByConvId`（若启用对接），POST 到 KWA 后端 `http://127.0.0.1:8788/api/plugin/conversations`。
+- **UI 风格独立**：本目录的悬浮球 UI 与 KWA 前端图谱 UI 完全独立，无样式联动。
+- **独立运行能力**：默认不启用对接，本目录所有逻辑独立运行，不依赖 KWA 后端；KWA 后端不在线时采集功能不受影响（对接开关默认关闭）。
 
 跨子工程任务（启用推送、新增平台、并行开发联调等）请参考工作区根 [DEVELOPMENT.md](../../DEVELOPMENT.md) 的"常见跨子工程任务"章节。
 

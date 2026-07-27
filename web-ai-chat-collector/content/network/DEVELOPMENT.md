@@ -9,7 +9,7 @@
 - **平台 ID 对齐**：本目录 4 个适配器（`deepseek.js`/`doubao.js`/`qianwen.js`/`fudan.js`，**无 Kimi**）注册到 `window.NETWORK_ADAPTERS[platformName]` 的 `name` 字段，与 KWA 后端 [routers/plugin.py](../../../knowledge-work-assistant/backend/app/routers/plugin.py) 的 `SUPPORTED_PLATFORMS` 白名单取交集。
 - **对话格式契约**：`common.js` 的 `buildAssistantContent(thinking, search, answer)` 是三段式拼接的"权威实现"，被 DOM 适配器与网络适配器共同遵循；KWA 后端 [services/graph_agent.py](../../../knowledge-work-assistant/backend/app/services/graph_agent.py) 据此解析思考/搜索/回答三段式。改 `buildAssistantContent` 必须同步 KWA 后端解析逻辑。
 - **历史消息解析**：`fetchConversation(convId)` 通过 `fetchViaInterceptor` 让 MAIN world 拦截器主动请求历史对话 API，保证用户切换到历史对话时也能完整采集并推送到 KWA 后端。
-- **采集事件 → 推送**：网络模式采集成功后由 `exporter-base.js` 派发事件，应用 [plugin-sdk/secondary-dev/kwa-push-handler.js](../../../knowledge-work-assistant/plugin-sdk/secondary-dev/kwa-push-handler.js) patch 后自动推送到 KWA 后端。
+- **保存后推送**：网络模式采集成功后由 `exporter-base.js` 调 SW `SAVE_CONVERSATION`，启用对接时由 `bg/local-app.js` 自动推送（详见 `bg/local-app.js` 的 `LocalApp_pushByConvId`）。
 - **Kimi 不在此目录**：Kimi 走 WebSocket + protobuf，网络拦截无法解析，故本目录无 `kimi.js`；但 KWA 后端 `SUPPORTED_PLATFORMS` 仍包含 `kimi`（由 DOM 适配器采集后推送）。
 
 跨子工程任务（新增平台、调整对话格式等）请参考工作区根 [DEVELOPMENT.md](../../../DEVELOPMENT.md) 的"常见跨子工程任务"章节。

@@ -177,7 +177,7 @@ routers/
 参考 [models/DEVELOPMENT.md](../models/DEVELOPMENT.md) 的"任务 4"流程。要点：
 - `PluginConversationRequest.metadata` 是 `dict[str, Any]`，不强约束结构，新字段文档化即可。
 - 在 `routers/plugin.py` 的 `_validate_metadata` 中加新字段的类型校验（如必须为 string）。
-- 同步更新 [../../../plugin-sdk/kwa-push.d.ts](../../../plugin-sdk/kwa-push.d.ts) 与 [../../../plugin-sdk/README.md](../../../plugin-sdk/README.md)。
+- 同步更新 [../../../web-ai-chat-collector/bg/local-app.js](../../../web-ai-chat-collector/bg/local-app.js) 中 metadata 字段的构造逻辑。
 
 ## 代码约定
 
@@ -266,7 +266,7 @@ if node is None:
 **步骤**：
 1. 在 [plugin.py](./plugin.py) 把 `_DEDUP_WITHIN_HOURS = 24` 改为 `48`。
 2. （可选）把常量提到 `config.py` 的 `Settings` 类，从 `.env` 读取。
-3. 同步更新 [../../../plugin-sdk/README.md](../../../plugin-sdk/README.md) 的"幂等去重"章节。
+3. 同步检查 [../../../web-ai-chat-collector/bg/local-app.js](../../../web-ai-chat-collector/bg/local-app.js) 的 `localAppPushedConvIds` 去重逻辑与后端一致。
 
 **验证**：推送同一 `conversation_id` 的对话两次（间隔 30h）→ 第二次仍返回 `deduplicated: true`。
 
@@ -318,7 +318,7 @@ if node is None:
 
 ### 推送端点的鉴权风险
 
-`POST /api/plugin/conversations` 当前**不做 token / Origin / 签名校验**，仅适用于本机 loopback（`127.0.0.1:8788`）。若将后端绑定到 `0.0.0.0` 或部署到公网 / 局域网，请务必自行在反向代理层（如 Nginx / Caddy）加 token / Origin 白名单 / IP 限制。详见 [../../../plugin-sdk/README.md](../../../plugin-sdk/README.md) 的"风险提示"章节。
+`POST /api/plugin/conversations` 当前**不做 token / Origin / 签名校验**，仅适用于本机 loopback（`127.0.0.1:8788`）。若将后端绑定到 `0.0.0.0` 或部署到公网 / 局域网，请务必自行在反向代理层（如 Nginx / Caddy）加 token / Origin 白名单 / IP 限制。详见本文件（[plugin.py](./plugin.py)）顶部注释与工作区根 [DEVELOPMENT.md](../../../DEVELOPMENT.md) 的"推送链路的鉴权风险"章节。
 
 ### WebSocket 连接的 session_id 不能为空
 
@@ -336,5 +336,5 @@ if node is None:
 | 要改服务层 / graph_agent / LLM 调用 / 图谱存储 | [../services/DEVELOPMENT.md](../services/DEVELOPMENT.md) |
 | 要看应用入口 / 配置 / DB 初始化 | [../DEVELOPMENT.md](../DEVELOPMENT.md) |
 | 要改前端 React 组件 / 图谱可视化 | [../../../frontend/DEVELOPMENT.md](../../../frontend/DEVELOPMENT.md) |
-| 要做插件推送对接 | [../../../plugin-sdk/DEVELOPMENT.md](../../../plugin-sdk/DEVELOPMENT.md) |
+| 要做插件推送对接 | [../../../web-ai-chat-collector/bg/DEVELOPMENT.md](../../../web-ai-chat-collector/bg/DEVELOPMENT.md)（`bg/local-app.js` 段落） |
 | 要看后端整体架构 | [../../DEVELOPMENT.md](../../DEVELOPMENT.md) |
