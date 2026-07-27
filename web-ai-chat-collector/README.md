@@ -1,5 +1,7 @@
 # ai-chat-collector
 
+[中文](README-zh.md) | **English**
+
 A browser extension that captures AI platform conversations and turns them into a searchable, queryable knowledge base. Built on RAG (Retrieval-Augmented Generation): conversations are embedded into vectors, recalled via semantic search, and fed to an LLM to answer questions, organize notes, or generate quizzes.
 
 ## Features
@@ -21,6 +23,7 @@ A browser extension that captures AI platform conversations and turns them into 
 | Fudan AI Agent (aiagent.fudan.edu.cn) | ✅ | ✅ |
 | Doubao (www.doubao.com) | ✅ | ✅ |
 | Kimi (www.kimi.com) | ✅ | — (WebSocket + protobuf, DOM only) |
+| Tencent Yuanbao (yuanbao.tencent.com) | ✅ | — (WebSocket + custom protocol, DOM only) |
 
 ## Mode Descriptions
 
@@ -41,7 +44,7 @@ Intercepts browser network requests and parses conversation data directly from A
 **Trade-offs:**
 
 - Tightly coupled to each platform's API contract; breaks when the platform updates its API
-- Cannot be used on Kimi (WebSocket + protobuf transport)
+- Cannot be used on Kimi / Yuanbao (WebSocket + protobuf / custom protocol transport)
 - Use this only if you need raw streaming data not yet exposed via DOM
 
 ## Compliance & Privacy
@@ -163,7 +166,7 @@ ai-plugin/
 │   ├── exporter-base.js       # ChatExporterBase (network / DOM dispatch)
 │   ├── network-interceptor.js # Shared network hook (MAIN world)
 │   ├── ai-ball.js             # AI Q&A floating ball + panel
-│   ├── kimi.js                # Kimi entry (DOM-only, no network adapter)
+│   ├── kimi.js / yuanbao.js   # Kimi / Yuanbao entries (DOM-only, no network adapter)
 │   ├── deepseek.js / qianwen.js / fudan.js / doubao.js  # Per-platform entries
 │   ├── network/               # Per-platform network adapters (REST parsing)
 │   │   ├── common.js
@@ -171,7 +174,7 @@ ai-plugin/
 │   ├── dom/                   # Per-platform DOM adapters
 │   │   ├── html-to-markdown.js  # Unified HTML→Markdown wrapper (turndown.js + GFM)
 │   │   ├── katex-html-to-latex.js # KaTeX HTML→LaTeX reverse parser (Kimi fallback)
-│   │   ├── kimi.js / deepseek.js / qianwen.js / fudan.js / doubao.js
+│   │   ├── kimi.js / deepseek.js / qianwen.js / fudan.js / doubao.js / yuanbao.js
 │   └── ui/                    # floating-ball, viewer, styles
 │       ├── floating-ball.js / viewer.js / styles.js
 ├── lib/                       # Shared services (loaded by both SW and content)

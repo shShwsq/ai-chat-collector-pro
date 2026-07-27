@@ -87,6 +87,72 @@
     }
   });
 
+  // 自定义规则：元宝 <div class="ybc-p"> → 段落
+  // 元宝用 div.ybc-p 作为段落容器（div 而非 p），需同样按段落处理
+  // 例外：表格单元格（th/td）内的 .ybc-p 不能输出任何换行符（\n\n 或 \n 都会破坏 GFM 表格识别），
+  //       单元格内多个 .ybc-p 用空格连接（GFM 表格单元格内不允许换行）
+  turndownService.addRule('yuanbaoParagraphDiv', {
+    filter: function (node) {
+      return node.nodeName === 'DIV' &&
+             node.getAttribute('class') &&
+             /\bybc-p\b/.test(node.getAttribute('class'));
+    },
+    replacement: function (content, node) {
+      // 判断是否位于表格单元格内
+      var inCell = node.closest && node.closest('th, td');
+      if (inCell) {
+        return content + ' ';
+      }
+      return '\n\n' + content + '\n\n';
+    }
+  });
+
+  // 自定义规则：元宝代码块
+  // 结构（3 层 pre 嵌套）：
+  //   <pre class="ybc-pre-component">
+  //     <div class="hyc-common-markdown__code">
+  //       <div class="hyc-common-markdown__code__hd">  ← 标题栏（语言标签 + 复制按钮）
+  //         <span class="hyc-common-markdown__code__langComponent">bash</span>
+  //       </div>
+  //       <pre class="hyc-common-markdown__code-lan">  ← 中间层（滚动容器）
+  //         <div class="hyc-code-scrollbar"><div class="hyc-code-scrollbar__view">
+  //           <pre><code class="language-bash">实际代码</code></pre>  ← 最内层
+  //         </div></div>
+  //       </pre>
+  //     </div>
+  //   </pre>
+  // 问题：turndown 默认 codeBlock 规则匹配最外层 <pre> 时会把标题栏的"bash"语言文字当作代码内容输出，
+  //       且最内层 <pre><code> 又被单独识别为代码块，导致代码块前多出"bash"纯文本
+  // 方案：匹配 .hyc-common-markdown__code 容器，从 langComponent 提取语言，从最内层 <code> 提取代码
+  turndownService.addRule('yuanbaoCodeBlock', {
+    filter: function (node) {
+      return node.nodeName === 'DIV' &&
+             node.getAttribute('class') &&
+             /\bhyc-common-markdown__code\b/.test(node.getAttribute('class'));
+    },
+    replacement: function (content, node) {
+      // 语言标签在标题栏的 .hyc-common-markdown__code__langComponent
+      var lang = '';
+      var langEl = node.querySelector('.hyc-common-markdown__code__langComponent');
+      if (langEl) {
+        lang = langEl.textContent.trim();
+      }
+      // 兜底：从最内层 <code class="language-xxx"> 提取语言
+      if (!lang) {
+        var codeWithLang = node.querySelector('code[class*="language-"]');
+        if (codeWithLang) {
+          var m = codeWithLang.className.match(/language-(\S+)/);
+          if (m) lang = m[1];
+        }
+      }
+      // 代码在最内层 <pre><code>（跳过中间层 .hyc-common-markdown__code-lan）
+      var codeEl = node.querySelector('pre pre code, code[class*="language-"], code');
+      var code = codeEl ? (codeEl.textContent || '') : '';
+      code = code.replace(/^\n+|\n+$/g, '');
+      return '\n\n```' + lang + '\n' + code + '\n```\n\n';
+    }
+  });
+
   // 自定义规则：DeepSeek 代码块
   // 结构：<div class="md-code-block"><div class="md-code-block-banner-wrap">...<span>bash</span>...复制/下载按钮...</div><pre>code</pre></div>
   // 问题：turndown 默认 codeBlock 规则不提取语言（语言在 banner 而非 <code class="language-xxx">），
@@ -306,7 +372,22 @@
     '.linenumber',
     // Kimi 代码块标题栏（含语言标签 .segment-code-lang 和复制按钮 .kimi-tooltip），
     // 与 <pre> 分属 .segment-code 下平级的 header 和 content 容器，移除后不影响代码提取
-    '.segment-code-header'
+    '.segment-code-header',
+    // 元宝引用标记图标容器（.hyc-common-markdown__ref-list，含 img 图标，无实际 URL，
+    // data-idx-list 属性记录引用编号但用户选择过滤不输出）
+    '.hyc-common-markdown__ref-list',
+    // 元宝列表项的点符号容器（.ybc-li-component__dot-wp，内含 • 符号 span，
+    // turndown 默认会将 li 内所有文本合并，导致 • 重复输出）
+    '.ybc-li-component__dot-wp',
+    // 元宝思考块标题栏（"已深度思考(用时N秒)" + 折叠按钮，非思考正文）
+    '.hyc-component-deepsearch-cot__think__header-container',
+    // 元宝思考块加载占位（流式中的动画占位，无实际内容）
+    '.hyc-component-deepsearch-cot__think__content__item-loading',
+    // 元宝 Agent 模式折叠箭头图标
+    '.agent-process-timeline_groupChevron',
+    // 元宝文件卡片（.ybc-p--file-card，含文件图标 + 文件名 + 截断的代码预览）
+    // 文件名已在正文中提及，代码预览不完整（被截断），文件图标为装饰性，整块过滤
+    '.ybc-p--file-card'
   ];
 
   window.HtmlToMarkdown = {

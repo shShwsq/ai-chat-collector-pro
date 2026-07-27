@@ -76,6 +76,16 @@
             <label title="Kimi 使用 WebSocket + protobuf，不支持网络拦截"><input type="radio" name="kimi-mode" value="network" disabled>网络拦截</label>
           </div>
         </div>
+        <div class="platform-row">
+          <div class="checkbox-row">
+            <input type="checkbox" id="platformYuanbao" />
+            <label for="platformYuanbao">腾讯元宝（yuanbao.tencent.com）</label>
+          </div>
+          <div class="mode-options">
+            <label><input type="radio" name="yuanbao-mode" value="dom" checked>DOM提取</label>
+            <label title="元宝使用 WebSocket + 自定义协议，不支持网络拦截"><input type="radio" name="yuanbao-mode" value="network" disabled>网络拦截</label>
+          </div>
+        </div>
         <small>关闭后，对应网站不再自动采集对话、也不显示采集悬浮球。AI 问答悬浮球仍保留，便于查询历史对话。更改需刷新已打开的网页生效。</small>
       </div>
     </section>
