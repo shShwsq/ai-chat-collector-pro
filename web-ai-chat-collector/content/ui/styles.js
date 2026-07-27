@@ -399,11 +399,48 @@ const AIChatStyles = {
         white-space: nowrap;
         letter-spacing: 0.02em;
       }
+      /* 语义相似度徽章（紫色，与绿色平台徽章区分） */
+      #ai-chat-panel .conv-item .conv-similarity {
+        flex: 0 0 auto;
+        font-size: 10px;
+        font-weight: 500;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: #f3eeff;
+        color: #6b46c1;
+        white-space: nowrap;
+        letter-spacing: 0.02em;
+      }
       #ai-chat-panel .conv-item .conv-info {
         display: flex;
         justify-content: space-between;
         font-size: 11px;
         color: #8e8e93;
+      }
+      /* 命中片段：搜索结果中提取的句子，配合 <mark> 高亮 term */
+      #ai-chat-panel .conv-item .conv-snippet {
+        margin-top: 6px;
+        padding: 6px 10px;
+        font-size: 11.5px;
+        line-height: 1.5;
+        color: #6e6e73;
+        background: #fafafa;
+        border-left: 2px solid #c4b5fd;
+        border-radius: 6px;
+        word-break: break-word;
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        line-clamp: 3;
+        box-orient: vertical;
+        overflow: hidden;
+      }
+      #ai-chat-panel .conv-item .conv-snippet mark {
+        background: #fef3c7;
+        color: #1d1d1f;
+        padding: 0 2px;
+        border-radius: 2px;
+        font-weight: 600;
       }
       #ai-chat-panel .conv-item .conv-btns {
         display: none;
