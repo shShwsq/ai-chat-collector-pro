@@ -157,3 +157,62 @@ export function loadDomAdapter(platform) {
   runInWindow(path.join(ROOT, 'content', 'dom', `${platform}.js`));
   return window.DOM_ADAPTERS[platform];
 }
+
+// 加载 bg/local-app.js（插件↔本地应用对接）
+// 与 lib/ 不同：local-app.js 用 chrome.alarms 做定时推送，且 loadPushedMap/savePushedMap
+// 会读写 chrome.storage.local，需要 get 能读回 set 写入的数据（持久化 storage mock）。
+// fetch / getConversations / getConversation 不在此加载——由测试按需 mock window.fetch。
+export function loadLocalApp() {
+  // 持久化 storage mock：savePushedMap 写入后 loadPushedMap 能读回
+  const storageStore = {};
+  const storageMock = {
+    local: {
+      get: (keys, cb) => {
+        const result = {};
+        // chrome.storage.local.get 支持三种 keys 形式：string / string[] / object（带默认值）
+        const keyList = typeof keys === 'string'
+          ? [keys]
+          : Array.isArray(keys)
+            ? keys
+            : (keys && typeof keys === 'object' ? Object.keys(keys) : []);
+        for (const k of keyList) {
+          if (k in storageStore) result[k] = storageStore[k];
+        }
+        cb(result);
+      },
+      set: (data, cb) => {
+        Object.assign(storageStore, data);
+        cb && cb();
+      }
+    }
+  };
+  // alarms mock：_syncAlarm 会 clear + create，LocalApp_init 会注册 onAlarm listener
+  const alarmsMock = {
+    create: () => {},
+    clear: () => {},
+    onAlarm: { addListener: () => {} }
+  };
+  mockChrome({
+    storage: storageMock,
+    alarms: alarmsMock
+  });
+  runInWindow(path.join(ROOT, 'bg', 'local-app.js'));
+  return {
+    _buildRequestBody: window._buildRequestBody.bind(window),
+    _fallbackMarkdown: window._fallbackMarkdown.bind(window),
+    LocalApp_pushConversation: window.LocalApp_pushConversation.bind(window),
+    LocalApp_pushAll: window.LocalApp_pushAll.bind(window),
+    LocalApp_pushByConvId: window.LocalApp_pushByConvId.bind(window),
+    LocalApp_testConnection: window.LocalApp_testConnection.bind(window),
+    LocalApp_getStatus: window.LocalApp_getStatus.bind(window),
+    LocalApp_applySettings: window.LocalApp_applySettings.bind(window),
+    LocalApp_resetPushedMap: window.LocalApp_resetPushedMap.bind(window),
+    // 模块状态访问器：_settings / _pushedMap 是模块级 let，const/let→var 后挂 window
+    getSettings: () => window._settings,
+    setSettings: (s) => { window._settings = { ...window._settings, ...s }; },
+    getPushedMap: () => window._pushedMap,
+    setPushedMap: (m) => { window._pushedMap = m; },
+    PLATFORM_MAP: window.PLATFORM_MAP,
+    DEFAULT_LOCAL_APP_SETTINGS: window.DEFAULT_LOCAL_APP_SETTINGS
+  };
+}
