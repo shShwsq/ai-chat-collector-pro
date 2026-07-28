@@ -215,7 +215,7 @@ exportXxxFile: async (graphId: string) => {
 
 ## 扩展点
 
-1. **API 客户端实例化**：当前 `api` 是单例对象；如需多后端（dev / staging），可参考 `kwa-push.js` 的 `createClient` 模式封装。
+1. **API 客户端实例化**：当前 `api` 是单例对象；如需多后端（dev / staging），可参考 OpenAI 兼容客户端的工厂模式自行封装 `createClient(baseUrl)` 函数。
 2. **WebSocket 重连**：当前 `TestSocket` 不自动重连；如需重连，在 `onclose` 中延迟 `connect` 并指数退避。
 3. **请求拦截器**：当前无全局请求拦截器（如添加 `Authorization` header）；如需鉴权，在 `request<T>` 中读取 token 注入 header。
 4. **类型生成**：当前 `types.ts` 手写维护；后续可引入 `openapi-typescript` 从后端 OpenAPI 自动生成。

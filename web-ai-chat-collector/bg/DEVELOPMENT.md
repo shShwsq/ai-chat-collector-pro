@@ -6,11 +6,11 @@
 
 本目录是 collector 采集侧的"业务大脑"，与软件侧 [knowledge-work-assistant](../../knowledge-work-assistant/DEVELOPMENT.md) 的对接关系如下：
 
-- **`conversations.js` 的 `dbSaveConversation`**：默认行为只写本地 IndexedDB；二次开发后，[plugin-sdk/secondary-dev/kwa-push-handler.js](../../knowledge-work-assistant/plugin-sdk/secondary-dev/kwa-push-handler.js) 会在采集事件后额外调用 `KwaPush.pushConversation()` 推送到 KWA 后端 `POST /api/plugin/conversations`，落库为 `Observation`。
+- **`conversations.js` 的 `dbSaveConversation`**：默认行为只写本地 IndexedDB；启用对接后，`bg/local-app.js` 的 `LocalApp_pushByConvId` 会在保存后即时推送（由 `bg/router.js` 在 SAVE_CONVERSATION 处理完成后异步调用），POST 到 `http://127.0.0.1:8788/api/plugin/conversations`，落库为 `Observation`。
 - **`settings-handlers.js` 的 `platformModes`**：本扩展支持的 5 个平台 ID（`deepseek`/`qianwen`/`fudan`/`doubao`/`kimi`）与 KWA 后端 [routers/plugin.py](../../knowledge-work-assistant/backend/app/routers/plugin.py) 的 `SUPPORTED_PLATFORMS` 白名单（`chatgpt/claude/gemini/deepseek/qwen/doubao/kimi/fudan/custom`）取交集；推送时 `platform` 字段必须命中白名单。
 - **`ai-handlers.js` 的 RAG 编排**：本扩展的 `organizeInfo`/`generateQuiz`/`askQuestion` 是 collector 本地的 RAG 能力（用本地向量库），与 KWA 后端的 `graph_agent`（[services/graph_agent.py](../../knowledge-work-assistant/backend/app/services/graph_agent.py)）是**两套独立的 LLM 编排**——前者服务于浏览器浮球就地问答，后者服务于图谱节点抽取与延伸。
 - **`vector-handlers.js` 的远程向量库**：远程向量库（Chroma/Milvus/pgvector/Supabase/Qdrant）可被 KWA 后端通过 [docs/skills/query_knowledge.py](../docs/skills/scripts/query_knowledge.py) SKILL 脚本检索（跨子工程协作），共享同一份向量数据。
-- **推送链路鉴权**：KWA 后端当前不鉴权，仅适用于 loopback（`127.0.0.1:8788`）；推送 URL 在 patched 后的设置页"知识工作助手推送"分区配置。
+- **推送链路鉴权**：KWA 后端当前不鉴权，仅适用于 loopback（`127.0.0.1:8788`）；推送 URL 在 collector 设置页"本地应用对接"分区配置，默认 `http://127.0.0.1:8788`。
 
 跨子工程任务（启用推送、同步 LLM Provider、并行开发联调等）请参考工作区根 [DEVELOPMENT.md](../../DEVELOPMENT.md) 的"常见跨子工程任务"章节。
 
