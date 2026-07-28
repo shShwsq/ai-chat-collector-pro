@@ -115,17 +115,21 @@ Study 模式：测验 / 费曼解释    Work 模式：风口推荐 / 工作报�
 │   └── tests/DEVELOPMENT.md
 └── knowledge-work-assistant/DEVELOPMENT.md
     ├── backend/DEVELOPMENT.md
-    │   └── app/DEVELOPMENT.md
-    │       ├── models/DEVELOPMENT.md
-    │       ├── routers/DEVELOPMENT.md
-    │       └── services/DEVELOPMENT.md
+    │   ├── app/DEVELOPMENT.md
+    │   │   ├── models/DEVELOPMENT.md
+    │   │   ├── routers/DEVELOPMENT.md
+    │   │   └── services/DEVELOPMENT.md
+    │   │       └── tools/DEVELOPMENT.md
+    │   └── tests/DEVELOPMENT.md
     ├── frontend/DEVELOPMENT.md
     │   ├── electron/DEVELOPMENT.md
     │   └── src/DEVELOPMENT.md
     │       ├── components/DEVELOPMENT.md
     │       │   └── graph/DEVELOPMENT.md
     │       ├── lib/DEVELOPMENT.md
+    │       │   └── __tests__/DEVELOPMENT.md
     │       ├── store/DEVELOPMENT.md
+    │       │   └── __tests__/DEVELOPMENT.md
     │       └── styles/DEVELOPMENT.md
     └── plugin-sdk/DEVELOPMENT.md
         ├── example/DEVELOPMENT.md

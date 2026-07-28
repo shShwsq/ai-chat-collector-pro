@@ -60,8 +60,22 @@ import type {
   AskSource,
   BatchCreateNodesRequest,
   BatchCreateNodesResponse,
+  CancelChatResponse,
   CandidateNode,
   CandidateWorkObject,
+  ChatCancelledEvent,
+  ChatCheckpoint,
+  ChatDoneEvent,
+  ChatErrorEvent,
+  ChatMessage,
+  ChatSession,
+  ChatStreamStartedResponse,
+  ChatToolCallEvent,
+  ChatToolConfirmationEvent,
+  ChatToolResultEvent,
+  ChatTokenEvent,
+  ConfirmToolCallResponse,
+  CreateChatSessionRequest,
   ExtendMode,
   ExtendResponse,
   FullGraph,
@@ -88,7 +102,10 @@ import type {
   RecommendationItem,
   ReportPeriod,
   ReportResponse,
+  ToolCall,
+  ToolConfirmation,
   Trend,
+  TriggerCheckpointResponse,
   ViewType,
   WorkConfirmResponse,
   WorkExtractResponse,
@@ -327,6 +344,34 @@ interface AppState {
   // 配合 App.tsx 的横向滑动过渡，实现"切换模式时状态保留 + 视觉滑动"。
   modeSnapshots: Partial<Record<Mode, ModeSnapshot>>
 
+  // 对话首页瀑布流中"点击展开为中央大卡"的节点 ID。
+  // 提升到全局是为了让大卡浮层（ChatExpandedOverlay）在 activeNav 从 'chat'
+  // 切到 'graph'（无缝衔接图谱）时仍能存活——本地 state 会随 ChatHome 卸载而丢失。
+  chatExpandedNodeId: string | null
+
+  // ===== Task 9：多轮对话 chat 状态 =====
+  /** 当前模式下的 chat 会话列表（按 created_at 倒序）。 */
+  chatSessions: ChatSession[]
+  /** 当前选中的 chat 会话（null = 未选中，进入对话页时自动创建/恢复）。 */
+  currentChatSession: ChatSession | null
+  /** 当前会话的消息历史（按 created_at 升序，含工具调用记录）。 */
+  chatMessages: ChatMessage[]
+  /** chat 流式 token 是否进行中（用于禁用输入框与显示打字机）。 */
+  chatStreamingActive: boolean
+  /** chat 流式文本累积（逐 token 拼接，done/cancelled 时清空）。 */
+  chatStreamingText: string
+  /** chat 流式请求的 request_id（用于取消）。 */
+  chatStreamingRequestId: string | null
+  /** chat 是否处于提问/回答中（含工具调用阶段，禁用输入框）。 */
+  chatAsking: boolean
+  /** 当前会话最新的 checkpoint（null = 未加载或无）。 */
+  currentCheckpoint: ChatCheckpoint | null
+  /** Plan 模式开关（false = Build 默认；true = Plan 只读模式）。
+   *  仅 Work 模式有意义；Study 模式忽略此开关。 */
+  planMode: boolean
+  /** 待处理的高风险工具确认请求（非 null 时弹确认对话框）。 */
+  pendingToolConfirmation: ToolConfirmation | null
+
   // ===== 动作 =====
   /** 切换模式：保存当前模式快照，恢复目标模式快照（若有），加载新模式图谱列表。 */
   setMode: (mode: Mode) => void
@@ -336,6 +381,8 @@ interface AppState {
   setActiveNav: (nav: ActiveNav) => void
   /** 设置「对话」导航项红点角标计数（0 不显示）。 */
   setReminderCount: (n: number) => void
+  /** 设置对话首页瀑布流中展开为大卡的节点 ID（null = 收回）。 */
+  setChatExpandedNodeId: (id: string | null) => void
   /** 选中节点（传 null 取消选中），用于图谱视图与卡片视图间同步选中态。 */
   setSelectedNode: (id: string | null) => void
   /** 选中图谱（传 null 取消选中），自动加载完整图谱。 */
@@ -562,6 +609,99 @@ interface AppState {
   clearReportStreaming: () => void
   /** 清空节点详情流式状态。 */
   clearNodeDetailStreaming: () => void
+
+  // ===== Task 9：多轮对话 chat 动作 =====
+  /**
+   * 加载当前模式下的 chat 会话列表。
+   * 无 currentGraphId 时仅按 mode 过滤（拉取该模式全部会话）；
+   * 有 currentGraphId 时优先按 graph_id 过滤，找不到则回退到按 mode 拉取。
+   */
+  loadChatSessions: () => Promise<void>
+  /**
+   * 创建新 chat 会话并自动选中。
+   * - body.mode 默认用当前 store.mode；
+   * - body.graph_id 默认用 currentGraphId；
+   * - 创建成功后写入 chatSessions 头部并设为 currentChatSession，
+   *   同时清空 chatMessages（新会话无历史）。
+   * 返回新建的会话或 null。
+   */
+  createChatSession: (
+    body?: Partial<CreateChatSessionRequest>,
+  ) => Promise<ChatSession | null>
+  /**
+   * 选中指定会话：写入 currentChatSession 并加载其消息历史。
+   * 传 null 时清空当前会话与消息列表。
+   */
+  selectChatSession: (session: ChatSession | null) => Promise<void>
+  /**
+   * 发送消息：追加 user 消息 + 空 assistant 占位，触发后端 chat/stream。
+   * - 自动确保 currentChatSession 存在（缺失时按当前 mode + graphId 自动创建）；
+   * - 自动确保 streamingSessionId 存在（缺失时仅追加消息不触发流式）；
+   * - 流式 token / tool_call / done 等通过 WS 事件实时更新占位消息。
+   * 返回是否成功触发流式（false 表示已降级或失败）。
+   */
+  sendMessage: (content: string) => Promise<boolean>
+  /**
+   * 取消当前 chat 流式请求（标记 cancelled，触发 MainAgent.cancel）。
+   * 通过 chatStreamingRequestId 调用 cancelChatStream API。
+   * 返回是否成功标记取消。
+   */
+  cancelChat: () => Promise<boolean>
+  /**
+   * 同意高风险工具调用：调 confirmChatToolCall(approved=true) + 清空 pendingToolConfirmation。
+   * 返回是否成功。
+   */
+  confirmToolCall: () => Promise<boolean>
+  /**
+   * 拒绝高风险工具调用：调 confirmChatToolCall(approved=false, reason) + 清空 pendingToolConfirmation。
+   * 返回是否成功。
+   */
+  rejectToolCall: (reason?: string) => Promise<boolean>
+  /** 加载当前会话最新 checkpoint，写入 currentCheckpoint。 */
+  loadCheckpoint: () => Promise<void>
+  /** 手动触发 writer_agent 生成 checkpoint。返回是否成功。 */
+  triggerCheckpoint: () => Promise<boolean>
+  /**
+   * 切换 Plan/Build 模式（仅 Work 模式有意义）。
+   * - planMode=true：Plan 只读模式，高风险工具一律拒绝；
+   * - planMode=false：Build 默认模式，高风险工具走确认弹框。
+   */
+  setPlanMode: (plan: boolean) => void
+  /** 清空当前 chat 会话与消息（用于「返回首页」按钮）。 */
+  clearChat: () => void
+
+  // ===== Task 9：chat WS 事件处理 =====
+  /**
+   * 处理 chat 流式 token 事件（op="chat"）：
+   * 累加到 chatStreamingText，同步更新最后一条 assistant 占位消息的 content。
+   */
+  handleChatToken: (event: ChatTokenEvent) => void
+  /**
+   * 处理 chat 工具调用开始事件：在最后一条 assistant 消息的 tool_calls
+   * 数组追加一条 pending 项（status=pending），UI 据此展示「正在查询…」状态。
+   */
+  handleChatToolCall: (event: ChatToolCallEvent) => void
+  /**
+   * 处理 chat 工具结果事件：把对应 tool_call 的 status 改为 done 并写入 result。
+   */
+  handleChatToolResult: (event: ChatToolResultEvent) => void
+  /**
+   * 处理 chat 高风险工具确认事件：写入 pendingToolConfirmation，
+   * 触发前端弹确认对话框（ChatPanel 中的 ToolConfirmDialog）。
+   */
+  handleChatToolConfirmation: (event: ChatToolConfirmationEvent) => void
+  /**
+   * 处理 chat 流式完成事件：终结流式状态，用 full_text 兜底最后一条消息。
+   */
+  handleChatDone: (event: ChatDoneEvent) => void
+  /**
+   * 处理 chat 流式被取消事件：终结流式状态，保留已生成部分文本。
+   */
+  handleChatCancelled: (event: ChatCancelledEvent) => void
+  /**
+   * 处理 chat 流式失败事件：终结流式状态，弹错误 Toast。
+   */
+  handleChatError: (event: ChatErrorEvent) => void
 }
 
 /** 统一提取错误消息。 */
@@ -683,6 +823,22 @@ export const useAppStore = create<AppState>((set, get) => ({
   // 模式快照初始为空，首次切换时填充
   modeSnapshots: {},
 
+  // 对话首页大卡浮层初始无展开
+  chatExpandedNodeId: null,
+
+  // ===== Task 9：多轮对话 chat 初始状态 =====
+  chatSessions: [],
+  currentChatSession: null,
+  chatMessages: [],
+  chatStreamingActive: false,
+  chatStreamingText: '',
+  chatStreamingRequestId: null,
+  chatAsking: false,
+  currentCheckpoint: null,
+  // 默认 Build 模式；Work 模式下用户可切到 Plan
+  planMode: false,
+  pendingToolConfirmation: null,
+
   setMode: (mode) => {
     if (mode === get().mode) return
     // 切换模式：保存当前模式快照，恢复目标模式快照（若有），加载新模式图谱列表。
@@ -781,6 +937,17 @@ export const useAppStore = create<AppState>((set, get) => ({
         nodeDetailStreamingText: '',
         nodeDetailStreamingActive: false,
         nodeDetailStreamingNodeId: null,
+        // Task 9：切模式时清空 chat 会话与流式状态（按 mode 重新加载）
+        chatSessions: [],
+        currentChatSession: null,
+        chatMessages: [],
+        chatStreamingActive: false,
+        chatStreamingText: '',
+        chatStreamingRequestId: null,
+        chatAsking: false,
+        currentCheckpoint: null,
+        planMode: false,
+        pendingToolConfirmation: null,
         toast: null,
       })
       // 测验面板打开时自动加载该图谱历史
@@ -842,6 +1009,17 @@ export const useAppStore = create<AppState>((set, get) => ({
         nodeDetailStreamingText: '',
         nodeDetailStreamingActive: false,
         nodeDetailStreamingNodeId: null,
+        // Task 9：切模式时清空 chat 会话与流式状态（按 mode 重新加载）
+        chatSessions: [],
+        currentChatSession: null,
+        chatMessages: [],
+        chatStreamingActive: false,
+        chatStreamingText: '',
+        chatStreamingRequestId: null,
+        chatAsking: false,
+        currentCheckpoint: null,
+        planMode: false,
+        pendingToolConfirmation: null,
         toast: null,
       })
       void get().loadGraphs()
@@ -854,9 +1032,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (nav === get().activeNav) return
     set({ activeNav: nav })
     if (nav === 'chat') {
-      // 进入对话视图：加载当前模式推荐 + 刷新角标计数
+      // 进入对话视图：加载当前模式推荐 + 刷新角标计数 + 拉取 chat 会话列表
       void get().loadRecommendations(get().recommendationsMode)
       void get().loadReminderCount()
+      void get().loadChatSessions()
     } else if (nav === 'settings') {
       // 进入设置面板：懒加载 LLM 配置与请求列表
       void get().loadLlmConfig()
@@ -866,6 +1045,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setReminderCount: (n) => set({ reminderCount: n }),
+
+  setChatExpandedNodeId: (id) => {
+    if (id === get().chatExpandedNodeId) return
+    set({ chatExpandedNodeId: id })
+  },
 
   setSelectedNode: (id) => {
     if (id === get().selectedNodeId) return
@@ -917,11 +1101,23 @@ export const useAppStore = create<AppState>((set, get) => ({
       nodeDetailStreamingText: '',
       nodeDetailStreamingActive: false,
       nodeDetailStreamingNodeId: null,
+      // Task 9：切换图谱时清空 chat 会话与流式状态
+      // （下次进入对话页时会按新 graph_id 拉取该图谱的 chat 会话列表）
+      currentChatSession: null,
+      chatMessages: [],
+      chatStreamingActive: false,
+      chatStreamingText: '',
+      chatStreamingRequestId: null,
+      chatAsking: false,
+      currentCheckpoint: null,
+      pendingToolConfirmation: null,
     })
     if (id) {
       void get().loadFullGraph(id)
       // 测验面板打开时自动加载该图谱历史
       if (get().quizPanelOpen) void get().loadQuizHistory()
+      // 进入对话页时自动按新 graph_id 拉取 chat 会话列表
+      if (get().activeNav === 'chat') void get().loadChatSessions()
     }
   },
 
@@ -2269,4 +2465,453 @@ export const useAppStore = create<AppState>((set, get) => ({
       nodeDetailStreamingActive: false,
       nodeDetailStreamingNodeId: null,
     }),
+
+  // ===== Task 9：多轮对话 chat 动作 =====
+
+  loadChatSessions: async () => {
+    const mode = get().mode
+    const graphId = get().currentGraphId
+    try {
+      // 优先按 graph_id 过滤；无 currentGraphId 时按 mode 拉取全部
+      const sessions = await api.listChatSessions(mode, graphId ?? undefined, 50)
+      set({ chatSessions: sessions })
+      // 自动恢复最近一个会话为 currentChatSession（若当前未选中）
+      if (!get().currentChatSession && sessions.length > 0) {
+        await get().selectChatSession(sessions[0])
+      }
+    } catch (e) {
+      // 静默降级：不弹 toast，仅写 error
+      set({ error: errMsg(e) })
+    }
+  },
+
+  createChatSession: async (body) => {
+    const mode = body?.mode ?? get().mode
+    const graphId = body?.graph_id !== undefined ? body.graph_id : get().currentGraphId
+    set({ error: '' })
+    try {
+      const session = await api.createChatSession({
+        mode,
+        graph_id: graphId,
+        title: body?.title,
+      })
+      set({
+        chatSessions: [session, ...get().chatSessions],
+        currentChatSession: session,
+        chatMessages: [],
+        chatStreamingActive: false,
+        chatStreamingText: '',
+        chatStreamingRequestId: null,
+        chatAsking: false,
+        currentCheckpoint: null,
+        pendingToolConfirmation: null,
+      })
+      return session
+    } catch (e) {
+      const msg = errMsg(e)
+      set({ error: msg })
+      get().pushToast(`创建会话失败：${msg}`, 'error')
+      return null
+    }
+  },
+
+  selectChatSession: async (session) => {
+    if (session === null) {
+      set({
+        currentChatSession: null,
+        chatMessages: [],
+        chatStreamingActive: false,
+        chatStreamingText: '',
+        chatStreamingRequestId: null,
+        chatAsking: false,
+        currentCheckpoint: null,
+        pendingToolConfirmation: null,
+      })
+      return
+    }
+    set({ currentChatSession: session, error: '' })
+    try {
+      const messages = await api.getChatMessages(session.id)
+      set({ chatMessages: messages })
+    } catch (e) {
+      const msg = errMsg(e)
+      set({ error: msg })
+      get().pushToast(`加载消息历史失败：${msg}`, 'error')
+    }
+  },
+
+  sendMessage: async (content) => {
+    const trimmed = content.trim()
+    if (!trimmed) {
+      get().pushToast('请输入问题', 'warning')
+      return false
+    }
+    if (get().chatAsking) {
+      get().pushToast('当前对话进行中，请稍候', 'warning')
+      return false
+    }
+
+    // 确保 currentChatSession 存在：缺失时按当前 mode + graphId 自动创建
+    let session = get().currentChatSession
+    if (!session) {
+      session = await get().createChatSession()
+      if (!session) return false
+    }
+
+    const sessionId = get().streamingSessionId
+    if (!sessionId) {
+      get().pushToast('WebSocket 未连接，无法流式对话', 'error')
+      return false
+    }
+
+    // 追加 user 消息 + 空 assistant 占位消息
+    const now = new Date().toISOString()
+    const userMsg: ChatMessage = {
+      id: `local-user-${Date.now()}`,
+      session_id: session.id,
+      role: 'user',
+      content: trimmed,
+      attachments: [],
+      created_at: now,
+    }
+    const assistantPlaceholder: ChatMessage = {
+      id: `local-assistant-${Date.now()}`,
+      session_id: session.id,
+      role: 'assistant',
+      content: '',
+      attachments: [],
+      created_at: now,
+      tool_calls: [],
+    }
+    set({
+      chatMessages: [...get().chatMessages, userMsg, assistantPlaceholder],
+      chatAsking: true,
+      chatStreamingActive: true,
+      chatStreamingText: '',
+      chatStreamingRequestId: null,
+      error: '',
+    })
+
+    try {
+      const resp: ChatStreamStartedResponse = await api.startChatStream(
+        session.id,
+        {
+          content: trimmed,
+          session_id: sessionId,
+          plan_mode: get().planMode,
+        },
+      )
+      // 保存 request_id 用于取消
+      set({ chatStreamingRequestId: resp.request_id })
+      // 流式 token / tool_call / done 等通过 WS 事件实时更新占位消息
+      return true
+    } catch (e) {
+      const msg = errMsg(e)
+      // 标记占位 assistant 消息为错误
+      const messages = get().chatMessages
+      if (messages.length > 0) {
+        const last = messages[messages.length - 1]
+        if (last.role === 'assistant') {
+          const updated: ChatMessage = {
+            ...last,
+            content: `（回答失败：${msg}）`,
+          }
+          set({
+            chatMessages: [...messages.slice(0, -1), updated],
+          })
+        }
+      }
+      set({
+        chatAsking: false,
+        chatStreamingActive: false,
+        chatStreamingText: '',
+        chatStreamingRequestId: null,
+        error: msg,
+      })
+      get().pushToast(`发送失败：${msg}`, 'error')
+      return false
+    }
+  },
+
+  cancelChat: async () => {
+    const requestId = get().chatStreamingRequestId
+    if (!requestId) {
+      get().pushToast('当前无进行中的流式请求', 'info')
+      return false
+    }
+    try {
+      const resp: CancelChatResponse = await api.cancelChatStream(requestId)
+      if (resp.ok) {
+        // 立即终结本地流式状态（最终 cancelled 事件会再次确认）
+        set({
+          chatStreamingActive: false,
+          chatAsking: false,
+          chatStreamingText: '',
+          chatStreamingRequestId: null,
+        })
+        get().pushToast('已取消当前对话', 'info')
+      }
+      return resp.ok
+    } catch (e) {
+      const msg = errMsg(e)
+      get().pushToast(`取消失败：${msg}`, 'error')
+      return false
+    }
+  },
+
+  confirmToolCall: async () => {
+    const pending = get().pendingToolConfirmation
+    if (!pending) return false
+    try {
+      const resp: ConfirmToolCallResponse = await api.confirmChatToolCall(
+        pending.request_id,
+        { approved: true },
+      )
+      if (resp.ok) {
+        set({ pendingToolConfirmation: null })
+        get().pushToast('已同意执行，继续对话…', 'info')
+      }
+      return resp.ok
+    } catch (e) {
+      const msg = errMsg(e)
+      get().pushToast(`确认失败：${msg}`, 'error')
+      return false
+    }
+  },
+
+  rejectToolCall: async (reason) => {
+    const pending = get().pendingToolConfirmation
+    if (!pending) return false
+    try {
+      const resp: ConfirmToolCallResponse = await api.confirmChatToolCall(
+        pending.request_id,
+        { approved: false, reason: reason ?? '用户拒绝执行' },
+      )
+      if (resp.ok) {
+        set({ pendingToolConfirmation: null })
+        get().pushToast('已拒绝执行，agent 将据此调整后续对话', 'info')
+      }
+      return resp.ok
+    } catch (e) {
+      const msg = errMsg(e)
+      get().pushToast(`拒绝失败：${msg}`, 'error')
+      return false
+    }
+  },
+
+  loadCheckpoint: async () => {
+    const session = get().currentChatSession
+    if (!session) {
+      set({ currentCheckpoint: null })
+      return
+    }
+    try {
+      const cp = await api.getChatCheckpoint(session.id)
+      set({ currentCheckpoint: cp })
+    } catch (e) {
+      // 静默：checkpoint 加载失败不打扰用户
+      set({ error: errMsg(e) })
+    }
+  },
+
+  triggerCheckpoint: async () => {
+    const session = get().currentChatSession
+    if (!session) {
+      get().pushToast('当前无选中会话', 'warning')
+      return false
+    }
+    try {
+      const resp: TriggerCheckpointResponse = await api.triggerChatCheckpoint(
+        session.id,
+      )
+      if (resp.ok) {
+        get().pushToast('已生成 checkpoint', 'success')
+        // 刷新 checkpoint 状态
+        await get().loadCheckpoint()
+      } else {
+        get().pushToast(
+          `未生成 checkpoint：${resp.reason ?? '未知原因'}`,
+          'warning',
+        )
+      }
+      return resp.ok
+    } catch (e) {
+      const msg = errMsg(e)
+      get().pushToast(`触发 checkpoint 失败：${msg}`, 'error')
+      return false
+    }
+  },
+
+  setPlanMode: (plan) => {
+    if (get().mode !== 'work') {
+      // Study 模式不支持 Plan，强制 Build
+      set({ planMode: false })
+      return
+    }
+    set({ planMode: plan })
+    get().pushToast(
+      plan ? '已切换到 Plan 模式（只读，高风险操作将被拒绝）' : '已切换到 Build 模式',
+      'info',
+    )
+  },
+
+  clearChat: () =>
+    set({
+      currentChatSession: null,
+      chatMessages: [],
+      chatStreamingActive: false,
+      chatStreamingText: '',
+      chatStreamingRequestId: null,
+      chatAsking: false,
+      currentCheckpoint: null,
+      pendingToolConfirmation: null,
+    }),
+
+  // ===== Task 9：chat WS 事件处理 =====
+
+  handleChatToken: (event) => {
+    const { content } = event
+    if (!content) return
+    // 累加流式文本
+    const nextText = get().chatStreamingText + content
+    set({ chatStreamingText: nextText })
+    // 同步更新最后一条 assistant 占位消息的 content（打字机效果）
+    const messages = get().chatMessages
+    if (messages.length > 0) {
+      const last = messages[messages.length - 1]
+      if (last.role === 'assistant') {
+        const updated: ChatMessage = { ...last, content: nextText }
+        set({
+          chatMessages: [...messages.slice(0, -1), updated],
+        })
+      }
+    }
+  },
+
+  handleChatToolCall: (event) => {
+    const { tool, args, tool_call_id } = event
+    const messages = get().chatMessages
+    if (messages.length === 0) return
+    const last = messages[messages.length - 1]
+    if (last.role !== 'assistant') return
+    // 追加 pending tool_call 项
+    const newCall: ToolCall = {
+      id: tool_call_id || `${tool}-${Date.now()}`,
+      tool,
+      args,
+      status: 'pending',
+    }
+    const toolCalls = [...(last.tool_calls ?? []), newCall]
+    const updated: ChatMessage = { ...last, tool_calls: toolCalls }
+    set({
+      chatMessages: [...messages.slice(0, -1), updated],
+    })
+  },
+
+  handleChatToolResult: (event) => {
+    const { tool, result } = event
+    const messages = get().chatMessages
+    if (messages.length === 0) return
+    const last = messages[messages.length - 1]
+    if (last.role !== 'assistant') return
+    const toolCalls = (last.tool_calls ?? []).map((c) =>
+      c.tool === tool && c.status === 'pending'
+        ? { ...c, status: 'done' as const, result }
+        : c,
+    )
+    const updated: ChatMessage = { ...last, tool_calls: toolCalls }
+    set({
+      chatMessages: [...messages.slice(0, -1), updated],
+    })
+  },
+
+  handleChatToolConfirmation: (event) => {
+    const { request_id, tool, args, timeout } = event
+    const confirmation: ToolConfirmation = {
+      request_id,
+      tool,
+      args,
+      timeout,
+      session_id: get().currentChatSession?.id,
+    }
+    set({ pendingToolConfirmation: confirmation })
+    get().pushToast(
+      `Agent 想执行高风险操作：${tool}，请确认`,
+      'warning',
+    )
+  },
+
+  handleChatDone: (event) => {
+    const { full_text } = event
+    // 终结流式状态
+    set({
+      chatStreamingActive: false,
+      chatAsking: false,
+      chatStreamingText: '',
+      chatStreamingRequestId: null,
+    })
+    // 用 full_text 兜底最后一条 assistant 消息
+    const messages = get().chatMessages
+    if (messages.length > 0) {
+      const last = messages[messages.length - 1]
+      if (last.role === 'assistant' && full_text) {
+        const updated: ChatMessage = { ...last, content: full_text }
+        set({
+          chatMessages: [...messages.slice(0, -1), updated],
+        })
+      }
+    }
+    // 异步刷新会话列表（updated_at 变更）+ checkpoint
+    void get().loadChatSessions()
+    void get().loadCheckpoint()
+  },
+
+  handleChatCancelled: (event) => {
+    const { full_text } = event
+    set({
+      chatStreamingActive: false,
+      chatAsking: false,
+      chatStreamingText: '',
+      chatStreamingRequestId: null,
+    })
+    const messages = get().chatMessages
+    if (messages.length > 0 && full_text) {
+      const last = messages[messages.length - 1]
+      if (last.role === 'assistant') {
+        const updated: ChatMessage = {
+          ...last,
+          content: full_text + '\n\n（已取消）',
+        }
+        set({
+          chatMessages: [...messages.slice(0, -1), updated],
+        })
+      }
+    }
+    get().pushToast('已取消对话生成', 'info')
+  },
+
+  handleChatError: (event) => {
+    const { message } = event
+    set({
+      chatStreamingActive: false,
+      chatAsking: false,
+      chatStreamingText: '',
+      chatStreamingRequestId: null,
+    })
+    // 在最后一条 assistant 消息上标记失败
+    const messages = get().chatMessages
+    if (messages.length > 0) {
+      const last = messages[messages.length - 1]
+      if (last.role === 'assistant') {
+        const updated: ChatMessage = {
+          ...last,
+          content: last.content || `（回答失败：${message}）`,
+        }
+        set({
+          chatMessages: [...messages.slice(0, -1), updated],
+        })
+      }
+    }
+    get().pushToast(`对话失败：${message}`, 'error')
+  },
 }))

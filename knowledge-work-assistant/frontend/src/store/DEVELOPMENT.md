@@ -6,14 +6,16 @@
 
 ```
 store/
-└── useAppStore.ts    # Zustand 单一 store：所有业务态 + 全部 action（约 80+ 字段 / 60+ action）
+├── useAppStore.ts    # Zustand 单一 store：所有业务态 + 全部 action（约 90+ 字段 / 80+ action）
+└── __tests__/        # 状态测试套件，vitest 跑（详见 __tests__/DEVELOPMENT.md）
+    └── useAppStore.plugin-event.test.ts # WS 事件处理 action 测试（插件事件 + chat 事件）
 ```
 
 ## 关键文件说明
 
 ### `useAppStore.ts`（单一 store）
 
-- **状态规模**：约 80+ 状态字段 + 60+ action，是 KWA 前端最大的单文件（约 2100 行）。
+- **状态规模**：约 90+ 状态字段 + 80+ action，是 KWA 前端最大的单文件（约 2900+ 行）。
 - **核心导出**：`useAppStore`（Zustand hook）、`ToastType` / `ToastMessage` / `ActiveNav` / `WorkPanel` / `QaMessage` 类型。
 - **设计原则**：
   1. **单一 store**：所有业务态集中管理，避免多 store 同步问题；UI 控制态（如 `isHover`）由组件本地 state 管理。
@@ -75,6 +77,15 @@ store/
 - `reportStreamingText: string`、`reportStreamingActive: boolean`
 - `nodeDetailStreamingText: string`、`nodeDetailStreamingActive: boolean`、`nodeDetailStreamingNodeId: string | null`
 
+#### Task 9 多轮对话 Chat + Task 10 高风险工具确认
+
+- `chatSessions: ChatSession[]`、`currentChatSession: ChatSession | null`、`chatMessages: ChatMessage[]`
+- `chatStreamingActive: boolean`、`chatStreamingText: string`、`chatStreamingRequestId: string | null`、`chatAsking: boolean`
+- `currentCheckpoint: ChatCheckpoint | null`
+- `planMode: boolean`（Work 模式 Plan/Build 切换）
+- `pendingToolConfirmation: ToolConfirmation | null`（Task 10 高风险工具确认）
+- `chatExpandedNodeId: string | null`（对话首页大卡浮层展开态，提升到全局以跨视图存活）
+
 #### 通用 Toast
 
 - `toast: ToastMessage | null`（含 `id` / `type` / `message`）
@@ -83,11 +94,11 @@ store/
 
 #### 模式 / 视图 / 导航
 
-- `setMode(mode)`：清空当前模式相关状态（含延伸 / 候选 / 测验 / Work / 流式 / Toast），重新加载新模式图谱列表。
+- `setMode(mode)`：清空当前模式相关状态（含延伸 / 候选 / 测验 / Work / 流式 / Chat 会话与消息 / 工具确认态 / 大卡浮层态 / Toast），重新加载新模式图谱列表。
 - `setView(view)`：切换内容区视图（graph / card）。
-- `setActiveNav(nav)`：切换左侧竖排导航；进入 `chat` 时加载推荐 + 刷新角标，进入 `settings` 时懒加载 LLM 配置。
+- `setActiveNav(nav)`：切换左侧竖排导航；进入 `chat` 时加载推荐 + 刷新角标 + 调 `loadChatSessions()`，进入 `settings` 时懒加载 LLM 配置。
 - `setSelectedNode(id)`：选中节点（图谱视图与卡片视图间同步）。
-- `selectGraph(id)`：切换图谱，清空选中节点 / 延伸批次 / 候选 / 测验作答态 / Work 业务态 / 流式态；自动加载完整图谱。
+- `selectGraph(id)`：切换图谱，清空选中节点 / 延伸批次 / 候选 / 测验作答态 / Work 业务态 / 流式态 / Chat 会话与消息 / 工具确认态 / 大卡浮层态；自动加载完整图谱。
 
 #### 图谱 CRUD
 
@@ -145,6 +156,16 @@ store/
 - `setRemind(id, remindAt)` / `clearRemind(id)`：设置 / 清除节点提醒时间。
 - `toggleStar(id)`：切换节点星标。
 - `loadReminderCount()`：从推荐列表统计到期数量，写入 reminderCount。
+
+#### Task 9 多轮对话 Chat + Task 10 高风险工具确认（17 个 action）
+
+- **会话管理**：`loadChatSessions()` / `createChatSession(body?)` / `selectChatSession(session)` / `clearChat()`
+- **消息发送**：`sendMessage(content)` / `cancelChat()`
+- **工具确认（Task 10）**：`confirmToolCall()` / `rejectToolCall(reason?)`
+- **Checkpoint**：`loadCheckpoint()` / `triggerCheckpoint()`
+- **Plan/Build**：`setPlanMode(plan)`
+- **大卡浮层**：`setChatExpandedNodeId(id)`
+- **WS 事件处理**：`handleChatToken` / `handleChatToolCall` / `handleChatToolResult` / `handleChatToolConfirmation` / `handleChatDone` / `handleChatCancelled` / `handleChatError`
 
 #### 通用 Toast
 
@@ -270,7 +291,7 @@ set({
 1. **状态拆分**：如 store 规模继续增长，可按业务域拆分为多个 slice 文件（如 `graphSlice` / `quizSlice` / `workSlice`），再合并为单一 store。
 2. **持久化**：当前 store 不持久化；如需持久化部分字段（如 `mode` / `view`），用 `zustand/middleware` 的 `persist`。
 3. **DevTools**：Zustand 自带 DevTools middleware，可集成 Redux DevTools 调试状态变化。
-4. **测试**：action 是纯函数（除副作用外），可 mock `api` 后单元测试；当前未引入测试框架。
+4. **测试**：action 是纯函数（除副作用外），已引入 vitest，`store/__tests__/` 下有测试（详见 __tests__/DEVELOPMENT.md）；mock `api` 后即可单元测试。
 
 ## 注意事项
 

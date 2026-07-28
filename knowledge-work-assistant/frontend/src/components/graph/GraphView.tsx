@@ -86,6 +86,12 @@ export interface GraphViewHandle {
   relayout: () => void
   /** 重置缩放与平移到默认（1x，居中）。 */
   resetView: () => void
+  /**
+   * 平移画布让指定节点位于视口正中央（缩放保持不变）。
+   * 用于对话首页大卡无缝切换到图谱视图时把目标节点居中。
+   * 节点不存在或位置未就绪时静默返回。
+   */
+  focusNodeAtCenter: (nodeId: string) => void
 }
 
 export interface GraphViewProps {
@@ -689,6 +695,19 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
         },
         resetView: () => {
           setTransform({ x: 0, y: 0, k: 1 })
+        },
+        focusNodeAtCenter: (nodeId: string) => {
+          const pos = positionsRef.current.get(nodeId)
+          if (!pos) return
+          const { width, height } = sizeRef.current
+          if (!width || !height) return
+          // 保持当前缩放 k，平移让节点位于视口正中
+          const cur = transformRef.current
+          setTransform({
+            x: width / 2 - pos.x * cur.k,
+            y: height / 2 - pos.y * cur.k,
+            k: cur.k,
+          })
         },
       }),
       [],

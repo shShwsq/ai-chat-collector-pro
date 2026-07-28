@@ -13,7 +13,9 @@
     "build:electron": "tsc -p electron/tsconfig.json",
     "dist": "npm run build:frontend && npm run build:electron && electron-builder --win",
     "lint": "eslint . --ext .ts,.tsx",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "d3-force": "^3.0.0",
@@ -42,6 +44,7 @@
     "eslint-plugin-react-hooks": "^4.6.2",
     "typescript": "^5.5.3",
     "vite": "^5.3.3",
+    "vitest": "^1.6.1",
     "wait-on": "^7.2.0"
   },
   "build": {

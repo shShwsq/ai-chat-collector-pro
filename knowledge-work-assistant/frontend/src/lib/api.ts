@@ -17,6 +17,14 @@
 import type {
   BatchCreateNodesRequest,
   BatchCreateNodesResponse,
+  CancelChatResponse,
+  ChatCheckpoint,
+  ChatMessage,
+  ChatSession,
+  ChatStreamStartedResponse,
+  ConfirmToolCallRequest,
+  ConfirmToolCallResponse,
+  CreateChatSessionRequest,
   DeleteResult,
   Edge,
   EdgeCreate,
@@ -32,6 +40,8 @@ import type {
   GraphStats,
   GraphUpdate,
   HealthResponse,
+  ListChatMessagesResponse,
+  ListChatSessionsResponse,
   LlmCancelResponse,
   LlmConfig,
   LlmConfigUpdate,
@@ -54,9 +64,11 @@ import type {
   RecommendationsResponse,
   ReportRequest,
   ReportResponse,
+  StartChatStreamRequest,
   StreamStartedResponse,
   TrendAddResponse,
   TrendsResponse,
+  TriggerCheckpointResponse,
   UserFillAppend,
   WorkAskRequest,
   WorkAskResponse,
@@ -585,6 +597,90 @@ export const api = {
         body: JSON.stringify({ period, session_id: sessionId }),
       },
     ),
+
+  // ===== 多轮对话 chat（Task 9，与 backend/app/routers/chat.py 对齐）=====
+  /**
+   * 创建 chat 会话。
+   * 写入 sessions 表（含 mode / graph_id 字段），返回会话快照。
+   */
+  createChatSession: (body: CreateChatSessionRequest) =>
+    request<ChatSession>('/chat/sessions', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  /**
+   * 列出 chat 会话（按 created_at 倒序，可按 mode / graph_id 过滤）。
+   * 后端返回 { sessions: [...], count } 包装结构。
+   */
+  listChatSessions: async (
+    mode?: Mode,
+    graphId?: string,
+    limit?: number,
+  ): Promise<ChatSession[]> => {
+    const params = new URLSearchParams()
+    if (mode) params.set('mode', mode)
+    if (graphId) params.set('graph_id', graphId)
+    if (limit !== undefined) params.set('limit', String(limit))
+    const qs = params.toString()
+    const url = qs ? `/chat/sessions?${qs}` : '/chat/sessions'
+    const resp = await request<ListChatSessionsResponse>(url)
+    return resp?.sessions ?? []
+  },
+  /**
+   * 获取会话消息历史（按 created_at 升序）。
+   * 后端返回 { messages: [...], count } 包装结构，此处解包为纯数组。
+   */
+  getChatMessages: async (sessionId: string): Promise<ChatMessage[]> => {
+    const resp = await request<ListChatMessagesResponse>(
+      `/chat/sessions/${sessionId}/messages`,
+    )
+    return resp?.messages ?? []
+  },
+  /**
+   * 触发流式对话。
+   * HTTP 立即返回 request_id，后台异步跑 main_agent.chat_stream，
+   * 逐 token 通过 WS 推送至 session_id 对应的前端连接（op="chat"）。
+   */
+  startChatStream: (sessionId: string, body: StartChatStreamRequest) =>
+    request<ChatStreamStartedResponse>(`/chat/sessions/${sessionId}/stream`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  /**
+   * 取消流式对话。
+   * 标记 LLM 请求为 cancelled，并触发 MainAgent.cancel() 让流式循环
+   * 在下一个 chunk 边界主动中断，最终推送 graph_agent_cancelled 事件。
+   */
+  cancelChatStream: (requestId: string) =>
+    request<CancelChatResponse>(`/chat/requests/${requestId}/cancel`, {
+      method: 'POST',
+    }),
+  /**
+   * 确认高风险工具调用。
+   * 唤醒 main_agent.request_tool_confirmation 暂停的工具循环：
+   * - approved=true：执行工具，结果回填给 agent 继续；
+   * - approved=false：把拒绝原因作为工具结果回填，agent 据此调整后续对话。
+   */
+  confirmChatToolCall: (requestId: string, body: ConfirmToolCallRequest) =>
+    request<ConfirmToolCallResponse>(`/chat/requests/${requestId}/confirm`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  /**
+   * 手动触发 writer_agent 生成 checkpoint。
+   * 通常由 context_manager 在阈值触发时自动派发；此端点供用户主动触发。
+   */
+  triggerChatCheckpoint: (sessionId: string) =>
+    request<TriggerCheckpointResponse>(
+      `/chat/sessions/${sessionId}/checkpoint`,
+      { method: 'POST' },
+    ),
+  /**
+   * 获取会话最新 checkpoint 内容（11 字段结构化数据）。
+   * 无 checkpoint 时返回 has_checkpoint=false。
+   */
+  getChatCheckpoint: (sessionId: string) =>
+    request<ChatCheckpoint>(`/chat/sessions/${sessionId}/checkpoint`),
 }
 
 export type ApiClient = typeof api

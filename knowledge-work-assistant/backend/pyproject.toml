@@ -26,6 +26,10 @@ dev = [
     "ruff>=0.4.0",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
+    # httpx 已在主依赖中，测试用 ASGITransport + AsyncClient 也依赖它，
+    # 此处显式列出以便「测试依赖」清单完整（参见 spec E 段验证项）
+    "httpx>=0.27.0",
+    "httpx-ws>=0.9.0",
 ]
 
 [tool.ruff]
@@ -37,3 +41,9 @@ select = ["E", "F", "W", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# 测试根目录指向 backend/tests，避免误收集 app/ 下非测试文件
+testpaths = ["tests"]
+# 同时收集 tests/ 下的 e2e 子目录
+python_files = ["test_*.py", "*_test.py"]
+python_functions = ["test_*"]
+asyncio_default_fixture_loop_scope = "function"

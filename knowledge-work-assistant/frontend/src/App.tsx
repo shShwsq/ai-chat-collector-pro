@@ -6,6 +6,7 @@ import { ModeSwitch } from './components/ModeSwitch'
 import { ContentToolbar } from './components/ContentToolbar'
 import { SideNav } from './components/SideNav'
 import { ChatPanel } from './components/ChatPanel'
+import { ChatExpandedOverlay } from './components/ChatExpandedOverlay'
 import { SettingsPanel } from './components/SettingsPanel'
 import { CardView } from './components/graph/CardView'
 import { GraphView, type GraphViewHandle } from './components/graph/GraphView'
@@ -54,7 +55,6 @@ export default function App() {
   const currentGraphId = useAppStore((s) => s.currentGraphId)
   const fullGraph = useAppStore((s) => s.fullGraph)
   const error = useAppStore((s) => s.error)
-  const loading = useAppStore((s) => s.loading)
   const clearError = useAppStore((s) => s.clearError)
   const loadGraphs = useAppStore((s) => s.loadGraphs)
   const activeNav = useAppStore((s) => s.activeNav)
@@ -123,16 +123,42 @@ export default function App() {
               store.handlePluginConversationReceived(event.payload)
               break
             case 'graph_agent_token':
-              store.handleGraphAgentToken(event)
+              // 按 op 区分：op="chat" 走多轮对话流式；其他走 graph_agent 流式
+              if (event.op === 'chat') {
+                store.handleChatToken(event)
+              } else {
+                store.handleGraphAgentToken(event)
+              }
               break
             case 'graph_agent_done':
-              store.handleGraphAgentDone(event)
+              if (event.op === 'chat') {
+                store.handleChatDone(event)
+              } else {
+                store.handleGraphAgentDone(event)
+              }
               break
             case 'graph_agent_cancelled':
-              store.handleGraphAgentCancelled(event)
+              if (event.op === 'chat') {
+                store.handleChatCancelled(event)
+              } else {
+                store.handleGraphAgentCancelled(event)
+              }
               break
             case 'graph_agent_error':
-              store.handleGraphAgentError(event)
+              if (event.op === 'chat') {
+                store.handleChatError(event)
+              } else {
+                store.handleGraphAgentError(event)
+              }
+              break
+            case 'chat_tool_call':
+              store.handleChatToolCall(event)
+              break
+            case 'chat_tool_result':
+              store.handleChatToolResult(event)
+              break
+            case 'chat_tool_call_confirmation':
+              store.handleChatToolConfirmation(event)
               break
             default:
               // welcome / pong / echo 等不处理
@@ -259,6 +285,11 @@ export default function App() {
 
       {/* 全局 Toast（成功 / 警告 / 错误提示） */}
       <Toast />
+
+      {/* 对话首页"点击卡片展开为大卡"的顶层浮层。
+          放在 App 顶层是为了让大卡浮层在 activeNav 从 'chat' 切到 'graph'
+          （无缝衔接图谱）时仍能存活——ChatHome 会随 ChatPanel 卸载而消失。 */}
+      <ChatExpandedOverlay graphViewRef={graphViewRef} />
 
       <footer className="app-footer">
         知识工作助手 · 后端端口 8788 · 前端端口 5174

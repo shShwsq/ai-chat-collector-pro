@@ -1,6 +1,6 @@
 # styles/ 样式开发指南
 
-> 一句话定位：本目录是 KWA 前端的"样式层"，仅两个 CSS 文件：`app.css`（主样式，约 1000+ 行，定义全部布局 / 组件 / 模式变量 / 动画）与 `animations.css`（关键帧动画，被 `app.css` 引用）。本目录**不写组件**，只做"视觉呈现"；样式约定为 **BEM 类名 + CSS 变量**，不使用 CSS-in-JS、不使用 Tailwind 等原子 CSS。
+> 一句话定位：本目录是 KWA 前端的"样式层"，仅两个 CSS 文件：`app.css`（主样式，约 6700+ 行，定义全部布局 / 组件 / 模式变量 / 动画）与 `animations.css`（关键帧动画，被 `app.css` 引用）。本目录**不写组件**，只做"视觉呈现"；样式约定为 **BEM 类名 + CSS 变量**，不使用 CSS-in-JS、不使用 Tailwind 等原子 CSS。
 
 ## 模块职责
 
@@ -86,6 +86,53 @@ styles/
 | `.confirm-dialog` | 二次确认弹窗 | `position: fixed` + 遮罩层 |
 | `.plugin-section` | 插件对接分区 | 最近推送 + 契约展示 |
 | `.llm-request-list` | LLM 请求列表 | 含取消按钮 |
+
+#### Task 9 / Task 10 / 对话首页交互增强 新增组件类
+
+> 以下分组为近期落地的新增类，全部遵循 BEM；带"局部变量"标注的类在自身作用域内注入 CSS 变量（非 `:root` 全局变量），供子元素或伪元素引用。
+
+##### 对话首页 ChatHome
+
+- `.chat-home` / `.chat-home__input-wrap` / `.chat-home__input` / `.chat-home__search-graph-btn` / `.chat-home__waterfall` / `.chat-home__empty` / `.chat-home--sending`
+- **局部变量**：`.chat-home` 注入 `--cover`（封面图高度）/ `--input-h`（输入框高度）/ `--slide-y`（瀑布流上滑位移），用于切换"无消息居中 / 有消息贴底"两种布局的过渡动画。
+
+##### 大卡浮层 ChatExpandedOverlay
+
+- `.chat-expanded-overlay` / `.chat-expanded-overlay__backdrop` / `.chat-expanded-overlay__card`
+- **状态类**：`is-open` / `is-playing` / `is-transitioning`。
+- **局部变量**：`.chat-expanded-overlay__card` 注入 `--flip-x` / `--flip-y` / `--flip-scale`，用于卡片翻转 / 缩放进场动效。
+
+##### 工具确认 ToolConfirmDialog（Task 10）
+
+- `.tool-confirm-overlay` / `.tool-confirm-dialog` / `.tool-confirm__header` / `.tool-confirm__title` / `.tool-confirm__countdown`（含 `is-urgent`）/ `.tool-confirm__body` / `.tool-confirm__info` / `.tool-confirm__tool-name` / `.tool-confirm__args` / `.tool-confirm__risk` / `.tool-confirm__reason-input` / `.tool-confirm__btn--reject` / `.tool-confirm__btn--approve`
+
+##### 推荐卡 RecommendationCard
+
+- `.rec-card` / `.rec-card--overdue` / `.rec-card--upcoming` / `.rec-card--entering` / `.rec-card--dimmed` / `.rec-card__head` / `.rec-card__title` / `.rec-card__tag` / `.rec-card__reason` / `.rec-card__meta` / `.rec-card__error-badge` / `.rec-card__star`
+
+##### 提醒横幅 ReminderBanner
+
+- `.reminder-banner` / `.reminder-banner__icon` / `.reminder-banner__text` / `.reminder-banner__count` / `.reminder-banner__action`（现状无关闭按钮）
+
+##### 多轮对话 ChatPanel
+
+- `.chat-panel--multi` / `.chat-panel__conv` / `.chat-panel__cancel-btn` / `.chat-panel__back-btn` / `.chat-msg` / `.chat-msg--user` / `.chat-msg--assistant` / `.chat-msg__bubble` / `.chat-msg__bubble--loading` / `.chat-msg__text` / `.chat-msg__tool-calls`
+
+##### 工具调用 ChatToolCallItem
+
+- `.chat-tool-call` / `.chat-tool-call--pending|done|error` / `.chat-tool-call__icon` / `.chat-tool-call__label` / `.chat-tool-call__status`
+
+##### 打字动画
+
+- `.chat-typing` / `.chat-typing__dot` / `.chat-streaming-cursor`
+
+##### Plan/Build 切换
+
+- `.plan-build-toggle` / `.plan-build-toggle--plan|build` / `.plan-build-toggle__label--plan|build`
+
+##### 模式滑动
+
+- `.mode-slide-wrap`：View Transitions API 模式滑动容器，`view-transition-name: mode-slide`
 
 #### 全局重置
 
@@ -194,6 +241,6 @@ styles/
 3. **滚动条样式仅 webkit**：Firefox 不支持 `::-webkit-scrollbar`，如需 Firefox 兼容用 `scrollbar-color` / `scrollbar-width`。
 4. **动画性能**：闪烁 / 旋转等高频动画用 `transform` / `opacity`（GPU 加速），避免触发 layout / paint；节点闪烁用 `box-shadow` + `filter: drop-shadow` 而非 `border` 变化。
 5. **`z-index` 层级**：浮层（200）< 模态（9998）< Toast（9999）；新增浮层时按此层级分配，避免遮挡 Toast。
-6. **`app.css` 规模**：当前约 1000+ 行，修改时务必先 `Ctrl+F` 定位到对应类名，避免误改其他组件样式。
+6. **`app.css` 规模**：当前约 6700+ 行，修改时务必先 `Ctrl+F` 定位到对应类名，避免误改其他组件样式。
 7. **BEM 命名一致性**：现有类名均遵循 BEM，新增类名必须保持一致；不要混用驼峰（`graphView`）或下划线（`graph_view`）。
 8. **`@media` 断点**：当前未定义统一断点变量，如需响应式建议先在 `:root` 定义 `--bp-sm: 640px` 等，再用 `@media (max-width: var(--bp-sm))`（注：CSS 变量不能直接用于 `@media`，需用 `@custom-media` 或预处理器）。

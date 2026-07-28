@@ -2,6 +2,19 @@
 
 > 一句话定位：本目录是 KWA 软件侧的前端工程，由 **Electron 31 + React 18 + TypeScript 5 + Vite 5** 构成桌面应用骨架。`electron/` 子目录承担主进程 / preload / 后端启动器（CommonJS 编译产物），`src/` 子目录承担渲染进程的 React 应用（ESM + Vite HMR）。本文件只描述前端顶层骨架与子目录导航，子目录细节请见各自 DEVELOPMENT.md。
 
+## 与 web-ai-chat-collector 的关系（软件 + 插件一体化）
+
+本目录是 KWA 软件侧的前端，与插件侧 [web-ai-chat-collector](../../web-ai-chat-collector/DEVELOPMENT.md) 的关系如下：
+
+- **通过后端间接交互**：前端**不直接**与 collector 通信，所有 collector 推送的数据经 KWA 后端 `POST /api/plugin/conversations` 落库后，前端通过 `GET /api/plugin/conversations/recent` 拉取展示。
+- **WebSocket 事件订阅**：[src/App.tsx](./src/App.tsx) 启动时连 `/ws?session_id=<uuid>`，订阅 `plugin.conversation_received` 事件；collector 推送成功后后端广播此事件，前端收到后弹 Toast 并刷新"待抽取"侧栏。
+- **PluginIntegrationSection 组件**：[src/components/PluginIntegrationSection.tsx](./src/components/PluginIntegrationSection.tsx) 展示 collector 最近推送的对话列表 + 接口契约 + 复制推送 URL 按钮，供用户在设置页查看 collector 对接状态。
+- **两套独立 UI**：本目录的图谱 UI（GraphView / NodeDetailCard 等）与 collector 的悬浮球 UI（[content/ui/](../../web-ai-chat-collector/content/ui/DEVELOPMENT.md)）是**两套完全独立的 UI**，互不依赖、互不通信。
+- **UI 风格统一 patch**：应用 [plugin-sdk/secondary-dev/styles.patch.js](../plugin-sdk/secondary-dev/styles.patch.js) patch 后，collector 悬浮球颜色会随 KWA 模式（study 墨绿 / work 琥珀）联动（CSS 变量 `--kwa-accent`）；本前端自身的样式不受影响。
+- **类型契约不共享**：本目录 [src/lib/types.ts](./src/lib/types.ts) 与 collector 的代码无类型共享（collector 是纯 JS，无 TypeScript）；`PluginConversationRequest` 等 schema 仅在后端 `schemas.py` 与前端 `types.ts` 之间一一对应。
+
+跨子工程任务（启用推送、UI 风格统一、并行开发联调等）请参考工作区根 [DEVELOPMENT.md](../../DEVELOPMENT.md) 的"常见跨子工程任务"章节。
+
 ## 模块职责
 
 ```
@@ -16,7 +29,7 @@ frontend/
 ├── src/                       # 渲染进程 React 应用（详见 src/DEVELOPMENT.md）
 │   ├── App.tsx                #   根组件：header + SideNav + 主内容区 + Toast + WebSocket 订阅
 │   ├── main.tsx               #   React 入口：挂载 <App /> 到 #root
-│   ├── components/            #   React 组件（含 graph/ 子目录：图谱可视化与节点编辑）
+│   ├── components/            #   React 组件（含 graph/ 子目录：图谱可视化与节点编辑；ChatExpandedOverlay 大卡浮层 / ToolConfirmDialog 高风险工具确认）
 │   ├── lib/                   #   api / ws / types / electron.d.ts / nodeTemplates
 │   ├── store/                 #   Zustand 全局状态（useAppStore 单一 store）
 │   └── styles/                #   animations.css + app.css（BEM 风格，无 CSS-in-JS）
@@ -36,12 +49,13 @@ frontend/
 
 | 文件 | 职责 | 关键内容 |
 |------|------|---------|
-| [package.json](./package.json) | 依赖与脚本 | `react 18.3` / `react-markdown 9` / `remark-gfm 4` / `d3-force 3` / `react-force-graph-2d 1.25` / `zustand 4.5`；scripts：`dev` / `dev:electron`（同时拉起 Vite + Electron）/ `build`（tsc + vite build）/ `build:electron`（主进程 TS 编译）/ `dist`（前端 + 主进程 + electron-builder NSIS）；`build` 字段配置 appId / productName / NSIS / extraResources（含 backend/） |
+| [package.json](./package.json) | 依赖与脚本 | `react 18.3` / `react-markdown 9` / `remark-gfm 4` / `d3-force 3` / `react-force-graph-2d 1.25` / `zustand 4.5`；scripts：`dev` / `dev:electron`（同时拉起 Vite + Electron）/ `build`（tsc + vite build）/ `build:electron`（主进程 TS 编译）/ `dist`（前端 + 主进程 + electron-builder NSIS）/ `test`（vitest run）/ `test:watch`（vitest watch）；devDependencies 新增 `vitest`；`build` 字段配置 appId / productName / NSIS / extraResources（含 backend/） |
 | [vite.config.ts](./vite.config.ts) | Vite 配置 | `base: './'`（便于 Electron file:// 加载打包产物）；`server.port: 5174 strictPort: true`；`server.proxy`：`/api` → `http://127.0.0.1:8788`（timeout 5min，流式 LLM 用）、`/ws` → `ws://127.0.0.1:8788`；`build.outDir: 'dist'` |
 | [tsconfig.json](./tsconfig.json) | 渲染进程 TS 配置 | `target: ES2022` / `module: ESNext` / `moduleResolution: bundler` / `jsx: react-jsx` / `strict: true` / `noUnusedLocals: true` / `noUnusedParameters: true` / `isolatedModules: true` / `noEmit: true`（Vite 用 esbuild 转译）；`include: ["src"]` |
 | [index.html](./index.html) | Vite 入口 HTML | 含 `<div id="root">`；通过 `<script type="module" src="/src/main.tsx">` 引入 React 入口 |
 | [seed-graph.js](./seed-graph.js) | 种子图谱脚本 | Node 脚本：调 `POST /api/graphs` 与 `POST /api/graphs/{id}/nodes` 注入最小 study 图谱，用于验证图谱可视化是否正常 |
 | [.eslintrc.cjs](./.eslintrc.cjs) | ESLint 配置 | 启用 `@typescript-eslint` + `react` + `react-hooks` 插件；与 `pnpm lint` 配合 |
+| [vitest.config.ts](./vitest.config.ts) | vitest 配置 | `environment: 'node'`；`globals: true`（允许 describe/it/expect 等全局写法）；`include: ['src/**/*.{test,spec}.{ts,tsx}']`；与 `pnpm test` / `pnpm test:watch` 配合 |
 
 ## 开发工作流
 
