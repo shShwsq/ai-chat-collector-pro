@@ -22,8 +22,9 @@ A browser extension that captures AI platform conversations and turns them into 
 | Qianwen (www.qianwen.com) | ✅ | ✅ |
 | Fudan AI Agent (aiagent.fudan.edu.cn) | ✅ | ✅ |
 | Doubao (www.doubao.com) | ✅ | ✅ |
-| Kimi (www.kimi.com) | ✅ | — (WebSocket + protobuf, DOM only) |
-| Tencent Yuanbao (yuanbao.tencent.com) | ✅ | — (WebSocket + custom protocol, DOM only) |
+| Kimi (www.kimi.com) | ✅ | — (not yet developed) |
+| Tencent Yuanbao (yuanbao.tencent.com) | ✅ | — (not yet developed) |
+| Baidu Wenxin (chat.baidu.com / wenxin.baidu.com) | ✅ | — (not yet developed) |
 
 ## Mode Descriptions
 
@@ -31,9 +32,9 @@ A browser extension that captures AI platform conversations and turns them into 
 
 Parses the rendered page DOM to extract conversations. Universal compatibility, resilient to API changes, and preserves full Markdown formatting (via `turndown.js` + `turndown-plugin-gfm`) including headings, lists, tables, code blocks, and math (KaTeX).
 
-- All five supported platforms work out of the box
+- All seven supported platforms work out of the box
 - Markdown formatting is preserved from rendered HTML — headings, lists, **GFM tables**, strikethrough, task lists, fenced code, and KaTeX math (inline `$...$` / block `$$...$$`)
-- Deep-thinking traces and search citations are extracted per platform (Kimi/DeepSeek/Qianwen/Doubao/Fudan)
+- Deep-thinking traces and search citations are extracted per platform (Kimi/DeepSeek/Qianwen/Doubao/Fudan/Yuanbao/Wenxin)
 - Independent of platform API protocol (REST / WebSocket / protobuf)
 - Actively under optimization — further improvements to thinking-block and search-citation extraction are in progress
 
@@ -44,7 +45,7 @@ Intercepts browser network requests and parses conversation data directly from A
 **Trade-offs:**
 
 - Tightly coupled to each platform's API contract; breaks when the platform updates its API
-- Cannot be used on Kimi / Yuanbao (WebSocket + protobuf / custom protocol transport)
+- Not yet implemented for Kimi / Yuanbao / Wenxin
 - Use this only if you need raw streaming data not yet exposed via DOM
 
 ## Compliance & Privacy
@@ -166,7 +167,7 @@ ai-plugin/
 │   ├── exporter-base.js       # ChatExporterBase (network / DOM dispatch)
 │   ├── network-interceptor.js # Shared network hook (MAIN world)
 │   ├── ai-ball.js             # AI Q&A floating ball + panel
-│   ├── kimi.js / yuanbao.js   # Kimi / Yuanbao entries (DOM-only, no network adapter)
+│   ├── kimi.js / yuanbao.js / wenxin.js   # Kimi / Yuanbao / Wenxin entries (DOM-only, no network adapter)
 │   ├── deepseek.js / qianwen.js / fudan.js / doubao.js  # Per-platform entries
 │   ├── network/               # Per-platform network adapters (REST parsing)
 │   │   ├── common.js
@@ -174,7 +175,7 @@ ai-plugin/
 │   ├── dom/                   # Per-platform DOM adapters
 │   │   ├── html-to-markdown.js  # Unified HTML→Markdown wrapper (turndown.js + GFM)
 │   │   ├── katex-html-to-latex.js # KaTeX HTML→LaTeX reverse parser (Kimi fallback)
-│   │   ├── kimi.js / deepseek.js / qianwen.js / fudan.js / doubao.js / yuanbao.js
+│   │   ├── kimi.js / deepseek.js / qianwen.js / fudan.js / doubao.js / yuanbao.js / wenxin.js
 │   └── ui/                    # floating-ball, viewer, styles
 │       ├── floating-ball.js / viewer.js / styles.js
 ├── lib/                       # Shared services (loaded by both SW and content)
