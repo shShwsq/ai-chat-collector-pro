@@ -27,6 +27,8 @@
     "https://www.kimi.com/*",
     "https://kimi.moonshot.cn/*",
     "https://yuanbao.tencent.com/*",
+    "https://chat.baidu.com/*",
+    "https://wenxin.baidu.com/*",
     "http://localhost:8788/*",
     "http://127.0.0.1:8788/*"
   ],
@@ -197,6 +199,26 @@
         "content/yuanbao.js"
       ],
       "run_at": "document_start"
+    },
+    {
+      "matches": ["https://chat.baidu.com/*", "https://wenxin.baidu.com/*"],
+      "js": [
+        "lib/marked.min.js",
+        "lib/katex.min.js",
+        "lib/turndown.min.js",
+        "lib/turndown-plugin-gfm.js",
+        "content/adapter-registry.js",
+        "content/ui/styles.js",
+        "content/ui/viewer.js",
+        "content/ui/floating-ball.js",
+        "content/ai-ball.js",
+        "content/exporter-base.js",
+        "content/dom/katex-html-to-latex.js",
+        "content/dom/html-to-markdown.js",
+        "content/dom/wenxin.js",
+        "content/wenxin.js"
+      ],
+      "run_at": "document_start"
     }
   ],
   "action": {
@@ -205,6 +227,6 @@
   },
   "web_accessible_resources": [{
     "resources": ["lib/katex.min.css"],
-    "matches": ["https://chat.deepseek.com/*", "https://www.qianwen.com/*", "https://aiagent.fudan.edu.cn/*", "https://www.doubao.com/*", "https://kimi.com/*", "https://www.kimi.com/*", "https://kimi.moonshot.cn/*", "https://yuanbao.tencent.com/*"]
+    "matches": ["https://chat.deepseek.com/*", "https://www.qianwen.com/*", "https://aiagent.fudan.edu.cn/*", "https://www.doubao.com/*", "https://kimi.com/*", "https://www.kimi.com/*", "https://kimi.moonshot.cn/*", "https://yuanbao.tencent.com/*", "https://chat.baidu.com/*", "https://wenxin.baidu.com/*"]
   }]
 }
