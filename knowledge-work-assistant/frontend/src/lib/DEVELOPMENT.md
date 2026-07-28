@@ -10,7 +10,9 @@ lib/
 ├── ws.ts                # WebSocket 客户端：TestSocket 类 + generateSessionId + 后端协议对齐
 ├── types.ts             # 与 backend/app/models/schemas.py 一一对应的 TypeScript 类型定义
 ├── nodeTemplates.ts     # 与 backend/app/models/node_types.py 一一对应的节点模板镜像
-└── electron.d.ts        # window.electronAPI 全局类型声明（与 electron/preload.ts 对齐）
+├── electron.d.ts        # window.electronAPI 全局类型声明（与 electron/preload.ts 对齐）
+└── __tests__/           # 库测试套件，vitest 跑（详见 __tests__/DEVELOPMENT.md）
+    └── kwa-push.test.ts # plugin-sdk/kwa-push.js SDK 单元测试
 ```
 
 ## 关键文件说明
@@ -41,6 +43,7 @@ lib/
   - 推荐 / touch / remind / star：`getRecommendations` / `touchNode` / `setRemind` / `clearRemind` / `setStar`
   - LLM 配置：`getLlmRequests` / `cancelLlmRequest` / `getLlmConfig` / `updateLlmConfig`
   - 流式触发：`streamNodeDetail` / `streamAskQuestion` / `streamGenerateReport`
+  - 多轮对话 Chat（与 [backend/app/routers/chat.py](../../../backend/app/routers/chat.py) 对齐）：`createChatSession(body: CreateChatSessionRequest) → ChatSession` / `listChatSessions(mode?, graphId?, limit?) → ChatSession[]`（解包 `{ sessions, count }`）/ `getChatMessages(sessionId) → ChatMessage[]`（解包 `{ messages, count }`）/ `startChatStream(sessionId, body: StartChatStreamRequest) → ChatStreamStartedResponse` / `cancelChatStream(requestId) → CancelChatResponse` / `confirmChatToolCall(requestId, body: ConfirmToolCallRequest) → ConfirmToolCallResponse` / `triggerChatCheckpoint(sessionId) → TriggerCheckpointResponse` / `getChatCheckpoint(sessionId) → ChatCheckpoint`
 - **特殊方法 `exportReportDocx`**：不走 `request<T>` 封装，直接 `fetch` 拿 Blob 触发浏览器下载；从 `Content-Disposition` 解析文件名（支持 RFC5987 `filename*=UTF-8''xxx`）。
 - **`getLlmRequests` 兜底**：后端返回 `{ requests, count }` 包装结构，此处解包为纯数组；非预期结构返回 `[]`，避免组件 `.filter/.map` 白屏。
 
@@ -65,6 +68,7 @@ lib/
   - 客户端发其他 JSON → 后端回 `{ type: "echo", data }`
   - 流式 LLM 推送：`graph_agent_token` / `graph_agent_done` / `graph_agent_cancelled` / `graph_agent_error`
   - 插件对话广播：`plugin.conversation_received`
+  - 多轮对话 Chat 推送：`chat_token` / `chat_done` / `chat_cancelled` / `chat_error` / `chat_tool_call` / `chat_tool_result` / `chat_tool_call_confirmation`
 
 ### `types.ts`（前后端类型契约）
 
@@ -84,6 +88,15 @@ lib/
   - 推荐：`RecommendationItem` / `RecommendationsResponse`
   - LLM 配置：`LlmConfig` / `LlmConfigUpdate` / `LlmConfigUpdateResponse` / `LlmRequestInfo` / `LlmCancelResponse`
   - 流式：`StreamStartedResponse`
+  - 多轮对话 Chat（约 20 个类型）：
+    - 会话：`ChatSession` / `CreateChatSessionRequest` / `ListChatSessionsResponse`
+    - 消息：`ChatMessage`（含可选 `tool_calls?: ToolCall[]`）/ `ListChatMessagesResponse`
+    - 工具调用：`ToolCall`（id / tool / args / result? / status: 'pending'|'done'|'error'）
+    - Checkpoint：`ChatCheckpoint` / `TriggerCheckpointResponse`
+    - 流式：`StartChatStreamRequest` / `ChatStreamStartedResponse` / `CancelChatResponse`
+    - 工具确认：`ConfirmToolCallRequest` / `ConfirmToolCallResponse` / `ToolConfirmation`（含 request_id / tool / args / timeout / session_id?）
+    - WS 事件：`ChatOp`（'chat'）/ `ChatToolCallEvent` / `ChatToolResultEvent` / `ChatToolConfirmationEvent` / `ChatTokenEvent` / `ChatDoneEvent` / `ChatCancelledEvent` / `ChatErrorEvent`
+    - `WsEvent` 联合类型扩展加入上述 7 个 chat 事件
   - 通用删除：`DeleteResult`
 
 ### `nodeTemplates.ts`（节点模板镜像）

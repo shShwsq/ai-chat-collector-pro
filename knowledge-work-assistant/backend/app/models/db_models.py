@@ -61,10 +61,20 @@ class Session(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     title: Mapped[str] = mapped_column(String(255), default="新会话")
+    # 会话场景模式（study/work，Task 8 chat 路由用，旧库通过 migrate_session_columns 补列）
+    mode: Mapped[str] = mapped_column(String(16), default="work", nullable=False)
+    # 关联图谱 ID（可空：纯闲聊会话无图谱上下文）
+    graph_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(default=_now)
     updated_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now)
 
     messages: Mapped[list[Message]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+    checkpoints: Mapped[list[Checkpoint]] = relationship(
         back_populates="session",
         cascade="all, delete-orphan",
         passive_deletes=True,
@@ -108,6 +118,8 @@ class Checkpoint(Base):
     content: Mapped[str] = mapped_column(Text, default="{}")
     cycle_index: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(default=_now)
+
+    session: Mapped[Session] = relationship(back_populates="checkpoints")
 
 
 class FileMetadata(Base):
@@ -479,3 +491,33 @@ async def migrate_node_columns(engine: AsyncEngine) -> None:
                 text(f"ALTER TABLE nodes ADD COLUMN {col_name} {col_type}")
             )
             logger.info("nodes 表迁移：新增列 %s", col_name)
+
+
+# sessions 表需补充的列（Task 8 chat 路由用）：(列名, SQLite DDL 类型定义)
+# SQLite ALTER TABLE 仅支持 ADD COLUMN，无法修改/删除已有列，故只做加列
+_SESSION_MIGRATION_COLUMNS: list[tuple[str, str]] = [
+    ("mode", "TEXT NOT NULL DEFAULT 'work'"),
+    ("graph_id", "TEXT"),
+]
+
+
+async def migrate_session_columns(engine: AsyncEngine) -> None:
+    """检查 sessions 表并补充 chat 路由所需的 mode / graph_id 列（幂等）。
+
+    与 :func:`migrate_node_columns` 同模式：``PRAGMA table_info(sessions)``
+    比对已有列名，缺失的列用 ``ALTER TABLE sessions ADD COLUMN ...`` 添加。
+    多次执行不会报错。
+
+    Args:
+        engine: 异步引擎（通常为 ``app.db.engine``）。
+    """
+    async with engine.begin() as conn:
+        result = await conn.execute(text("PRAGMA table_info(sessions)"))
+        existing = {row[1] for row in result.all()}
+        for col_name, col_type in _SESSION_MIGRATION_COLUMNS:
+            if col_name in existing:
+                continue
+            await conn.execute(
+                text(f"ALTER TABLE sessions ADD COLUMN {col_name} {col_type}")
+            )
+            logger.info("sessions 表迁移：新增列 %s", col_name)

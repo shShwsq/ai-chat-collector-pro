@@ -2,6 +2,23 @@
 
 > 一句话定位：本目录是 KWA 后端的数据模型层，包含三个文件：`db_models.py`（SQLAlchemy 2.0 ORM，12 张基础表 + 5 张图谱表）、`schemas.py`（Pydantic 请求 / 响应模型，与前端 `types.ts` 一一对应）、`node_types.py`（节点类型枚举 + 详情卡模板 + 边关系语义 + 留白 / 测验 / 观察来源枚举）。本目录的文件**只描述数据结构与约束**，不写业务逻辑（CRUD 放 `services/graph_store.py`，校验放 `routers/`）。
 
+## 与 web-ai-chat-collector 的关系（软件 + 插件一体化）
+
+本目录是后端数据模型层，与插件侧 [web-ai-chat-collector](../../../web-ai-chat-collector/DEVELOPMENT.md) 的对接关系如下：
+
+- **`observations` 表存储推送数据**：collector 推送的对话持久化到 `observations` 表，关键字段：
+  - `platform`：与 collector 的 `platformName` 对齐（`deepseek/qwen/doubao/kimi/fudan` 等）
+  - `conversation_markdown`：collector 推送的 `## 用户` / `## 助手` 分段 Markdown 原文
+  - `source`：固定为 `'plugin'`（区别于 `'import'` / `'manual'`）
+  - `metadata_json`：JSON 字段，存 collector 传来的 `conversation_id` / `title` / `url` / `model` 等
+- **`OBSERVATION_SOURCES` 枚举**：`node_types.py` 定义 `('plugin', 'import', 'manual')`，`'plugin'` 专用于 collector 推送的数据。
+- **`NODE_SOURCES` 枚举**：`('agent', 'user', 'plugin', 'extension')`，`'plugin'` 标记节点来源是 collector 推送的对话经 `graph_agent` 抽取后入图的。
+- **`PluginConversationRequest` schema**：`schemas.py` 中定义的 Pydantic 请求模型，字段与 collector 的 [kwa-push.js](../../../knowledge-work-assistant/plugin-sdk/kwa-push.js) 推送 payload 一一对应（`platform` / `timestamp` / `conversation_markdown` / `metadata`）。
+- **FTS5 全文检索**：`observations_fts` 虚拟表索引 `observations.conversation_markdown`，供用户在 KWA 中全文搜索 collector 推送的对话内容。
+- **幂等去重字段**：`observations` 表的 `dedup_key`（由 `routers/plugin.py` 组合 `{platform}:{conversation_id}` 生成）保证 24h 内不重复落库。
+
+跨子工程任务（调整对话格式、新增平台、并行开发联调等）请参考工作区根 [DEVELOPMENT.md](../../../DEVELOPMENT.md) 的"常见跨子工程任务"章节。
+
 ## 模块职责
 
 ```
@@ -24,7 +41,7 @@ models/
 
 | 表名 | 用途 | 关键字段 |
 |------|------|---------|
-| `sessions` | 会话主表 | `id` / `title` / `created_at` / `updated_at`；`messages` 反向关系 |
+| `sessions` | 会话主表 | `id` / `title` / `mode: String(16), default="work", nullable=False`（会话场景模式 study / work，Task 8 chat 路由用）/ `graph_id: String(32) \| None, index=True`（关联图谱 ID，可空：纯闲聊会话无图谱上下文）/ `created_at` / `updated_at`；`messages` / `checkpoints` 反向关系 |
 | `messages` | 会话消息 | `id` / `session_id`（CASCADE）/ `role`（user/assistant/system）/ `content` / `attachments`（JSON 数组）/ `created_at` |
 | `checkpoints` | Agent 循环 checkpoint | `id` / `session_id`（CASCADE）/ `content`（JSON）/ `cycle_index` / `created_at` |
 | `file_metadata` | 已索引文件元数据 | `id` / `original_name` / `saved_path` / `mime_type` / `size` / `summary` / `indexed_at` / `session_id`（SET NULL）/ `tags`（多对多） |
@@ -49,7 +66,9 @@ models/
 - `file_metadata_fts`（关联 `file_metadata.original_name` 与 `file_metadata.summary`）
 - `observations_fts`（关联 `observations.conversation_markdown`）
 
-**迁移函数**：`migrate_node_columns(engine)` 幂等检查 `nodes` 表的 5 个智能推荐列，缺失则 `ALTER TABLE nodes ADD COLUMN ...`；多次执行不报错。`_NODE_MIGRATION_COLUMNS` 列表登记需迁移的列名与 SQLite DDL 类型。
+**迁移函数**：
+- `migrate_node_columns(engine)`：幂等检查 `nodes` 表的 5 个智能推荐列，缺失则 `ALTER TABLE nodes ADD COLUMN ...`；多次执行不报错。`_NODE_MIGRATION_COLUMNS` 列表登记需迁移的列名与 SQLite DDL 类型。
+- `migrate_session_columns(engine)`：与 `migrate_node_columns` 同模式，幂等检查 `sessions` 表的 `mode` / `graph_id` 两列（Task 8 chat 路由用），缺失则 `ALTER TABLE sessions ADD COLUMN ...`；多次执行不报错。`_SESSION_MIGRATION_COLUMNS = [("mode", "TEXT NOT NULL DEFAULT 'work'"), ("graph_id", "TEXT")]` 列表登记需迁移的列名与 SQLite DDL 类型。
 
 ### `node_types.py`：节点类型与模板
 

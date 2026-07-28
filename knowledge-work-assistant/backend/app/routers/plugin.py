@@ -61,6 +61,7 @@ SUPPORTED_PLATFORMS = frozenset(
         "doubao",
         "kimi",
         "fudan",
+        "yuanbao",
         "custom",
     }
 )

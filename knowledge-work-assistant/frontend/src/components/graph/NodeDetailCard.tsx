@@ -73,6 +73,11 @@ export interface NodeDetailCardProps {
   onEdit: (node: Node) => void
   /** 点击「删除」按钮。 */
   onDelete: (node: Node) => void
+  /**
+   * 点击延伸类操作（延伸方向推荐 / 保存并延伸）时额外触发。
+   * 用于对话首页大卡浮层无缝切换到图谱视图；图谱视图内调用时为 undefined，无副作用。
+   */
+  onRequestGraphSwitch?: (nodeId: string) => void
 }
 
 /** 从节点 detail_payload 缓存构建 NodeDetail。 */
@@ -170,6 +175,7 @@ export function NodeDetailCard({
   onClose,
   onEdit,
   onDelete,
+  onRequestGraphSwitch,
 }: NodeDetailCardProps) {
   // 始终从 store 读取最新节点（生成 / 编辑 / 留白后会更新）
   const latestNode =
@@ -423,6 +429,8 @@ export function NodeDetailCard({
       setFillExtending(false)
       return
     }
+    // 通知浮层无缝切换到图谱视图（在 await 延伸前触发，让视图先切过去）
+    onRequestGraphSwitch?.(latestNode.id)
     // 以用户输入作为延伸方向名调用 Agent 生成新节点
     await extendNodeAction(latestNode.id, 'single', content)
     setFillExtending(false)
@@ -436,6 +444,8 @@ export function NodeDetailCard({
    */
   const handleExtensionClick = async (direction: ExtensionDirection) => {
     if (extending) return
+    // 通知浮层无缝切换到图谱视图（在 await 延伸前触发）
+    onRequestGraphSwitch?.(latestNode.id)
     await extendNodeAction(latestNode.id, 'single', direction.name)
   }
 
@@ -489,8 +499,10 @@ export function NodeDetailCard({
   const cardStyle: React.CSSProperties = {
     left: position.left,
     top: position.top,
-    width: position.width,
-    maxHeight: position.maxHeight,
+  }
+  if (position.width > 0) cardStyle.width = position.width
+  if (position.maxHeight > 0 && position.maxHeight < 9999) {
+    cardStyle.maxHeight = position.maxHeight
   }
 
   return (

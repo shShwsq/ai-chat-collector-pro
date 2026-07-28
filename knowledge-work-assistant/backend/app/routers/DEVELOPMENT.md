@@ -1,6 +1,23 @@
 # routers/ 路由层开发指南
 
-> 一句话定位：本目录是 KWA 后端的 FastAPI 路由层，13 个 router 模块按业务域拆分，挂载在 `/api` 前缀下（`plugin.py` 自带 `/plugin` 子前缀，`ws.py` 挂在根路径 `/ws`）。本层只做参数校验与 HTTP 适配，业务逻辑下沉到 `services/`；统一用 `_handle_value_error` 把 service 抛的 `ValueError` 映射为 HTTP 异常（404 / 422 / 400）。
+> 一句话定位：本目录是 KWA 后端的 FastAPI 路由层，14 个 router 模块按业务域拆分，挂载在 `/api` 前缀下（`plugin.py` 自带 `/plugin` 子前缀，`ws.py` 挂在根路径 `/ws`）。本层只做参数校验与 HTTP 适配，业务逻辑下沉到 `services/`；统一用 `_handle_value_error` 把 service 抛的 `ValueError` 映射为 HTTP 异常（404 / 422 / 400）。
+
+## 与 web-ai-chat-collector 的关系（软件 + 插件一体化）
+
+本目录是后端路由层，与插件侧 [web-ai-chat-collector](../../../web-ai-chat-collector/DEVELOPMENT.md) 的对接关系如下：
+
+- **`plugin.py` 是对接核心**：14 个 router 中只有 `plugin.py` 直接处理 collector 推送，提供 4 个端点：
+  - `POST /api/plugin/conversations`：接收 collector 通过 [plugin-sdk/kwa-push.js](../../../knowledge-work-assistant/plugin-sdk/kwa-push.js) 推送的对话
+  - `GET /api/plugin/contract`：返回接口契约（供 collector 二次开发参考）
+  - `GET /api/plugin/conversations/recent`：返回最近推送的对话（供前端 PluginIntegrationSection 展示）
+  - `GET /api/plugin/health`：联调自检端点
+- **平台白名单**：`plugin.py` 的 `SUPPORTED_PLATFORMS` 与 collector 的 5 平台 ID 取交集；非法平台返回 422。
+- **幂等去重**：`metadata.conversation_id` 存在时，组合 `{platform}:{conversation_id}` 作为 `dedup_key`，24h 内不重复落库；collector 推送时建议带此字段。
+- **WebSocket 广播**：`plugin.py` 成功落库后调 `ws_notify.broadcast` 推 `plugin.conversation_received` 事件，前端收到后弹 Toast 并刷新"待抽取"侧栏。
+- **`extraction.py` 消费推送数据**：`GET /api/observations?processed=false` 列出 collector 推送的未处理对话，供前端"待抽取"侧栏展示；`POST /api/graphs/{id}/nodes/batch` 将抽取的候选节点批量入图。
+- **当前不自动抽取**：`plugin.py` 落库后**不触发** `graph_agent` 抽取；抽取由用户在前端主动触发（调 `extraction.py` 的端点）。
+
+跨子工程任务（启用推送、调整对话格式、并行开发联调等）请参考工作区根 [DEVELOPMENT.md](../../../DEVELOPMENT.md) 的"常见跨子工程任务"章节。
 
 ## 模块职责
 
@@ -18,10 +35,11 @@ routers/
 ├── plugin.py               # 浏览器插件对接（Task 10）
 ├── llm_admin.py            # LLM 请求队列与配置管理
 ├── stream.py               # 流式触发路由（详情卡 / 问答 / 报告）
+├── chat.py                 # 多轮对话 chat 路由（Task 8）：会话 CRUD + 流式对话 + 工具确认 + checkpoint
 └── ws.py                   # WebSocket 端点 /ws
 ```
 
-13 个 router 都通过 `main.py` 的 `app.include_router(xxx.router, prefix="/api", tags=["xxx"])` 挂载（`ws.py` 例外，挂根路径 `/ws`）。每个 router 通过 `Depends(get_xxx_store)` 拿全局单例，便于测试时用 `app.dependency_overrides` 替换。
+14 个 router 都通过 `main.py` 的 `app.include_router(xxx.router, prefix="/api", tags=["xxx"])` 挂载（`ws.py` 例外，挂根路径 `/ws`）。每个 router 通过 `Depends(get_xxx_store)` 拿全局单例，便于测试时用 `app.dependency_overrides` 替换。
 
 ## 关键文件
 
@@ -127,7 +145,32 @@ routers/
 - `POST /api/graphs/{graph_id}/work/ask-stream`：触发 Work 模式问答流式生成。
 - `POST /api/graphs/{graph_id}/work/report-stream`：触发工作报告流式生成。
 
-**双通道协议**：HTTP 响应**只**返回 `StreamStartedResponse { request_id }`，立即结束；实际 token 流通过 **WebSocket** 推送（按 `session_id` 路由），前端通过 `streamingSessionId` 绑定连接。后端 `asyncio.create_task` 跑 `graph_agent.xxx_stream`，每个 token 通过 `ws_notify.notify_session(session_id, {"type": "graph_agent_token", "op": "...", "delta": token, ...})` 推送。
+**双通道协议**：HTTP 响应**只**返回 `StreamStartedResponse { request_id }`，立即结束；实际 token 流通过 **WebSocket** 推送（按 `session_id` 路由），前端通过 `streamingSessionId` 绑定连接。后端 `asyncio.create_task` 跑 `graph_agent.xxx_stream`，每个 token 通过 `ws_notify.notify_session(session_id, {"type": "graph_agent_token", "op": "...", "delta": token, ...})` 推送。`chat.py` 的流式端点沿用同协议，但 `op` 固定为 `"chat"`，并新增 3 个 chat 事件类型（`chat_tool_call` / `chat_tool_result` / `chat_tool_call_confirmation`）用于工具调用前后端协作。
+
+### `chat.py`（Task 8 多轮对话 chat 路由）
+
+提供 8 个端点：
+
+| 方法 | 路径 | 用途 |
+|------|------|------|
+| POST | `/api/chat/sessions` | 创建会话（body: `{mode: 'study'|'work', graph_id?}`） |
+| GET | `/api/chat/sessions` | 列出当前会话（按 mode / graph_id 过滤） |
+| GET | `/api/chat/sessions/{session_id}/messages` | 获取会话历史消息 |
+| POST | `/api/chat/sessions/{session_id}/stream` | 触发流式对话（HTTP 立即返回 `request_id`，token 走 WS） |
+| POST | `/api/chat/sessions/{session_id}/checkpoint` | 触发 Agent 循环 checkpoint |
+| GET | `/api/chat/sessions/{session_id}/checkpoint` | 获取最近 checkpoint 内容 |
+| POST | `/api/chat/requests/{request_id}/cancel` | 取消进行中的对话流式任务 |
+| POST | `/api/chat/requests/{request_id}/confirm` | 确认高风险工具调用（继续执行） |
+
+**设计要点**：
+1. **会话级 MainAgent 缓存**：模块内维护 `_session_agents: dict[session_id, MainAgent]`，同一会话复用 agent 实例以保留历史与上下文，会话销毁时清理。
+2. **双通道流式**：`POST /api/chat/sessions/{id}/stream` 立即返回 `StreamStartedResponse { request_id }`，实际 token 通过 WebSocket 推送（`op="chat"`），与 `stream.py` 一致；后台 `asyncio.create_task` 跑 `main_agent.run_stream`。
+3. **新增 chat 事件类型**：在 WS `op="chat"` 通道上新增 3 个事件类型：
+   - `chat_tool_call`：Agent 决定调用工具时推送，携带工具名 / 参数 / call_id。
+   - `chat_tool_result`：工具执行完成时推送，携带返回值。
+   - `chat_tool_call_confirmation`：高风险工具需用户确认时推送，前端展示"确认 / 取消"按钮。
+4. **取消机制**：`POST /api/chat/requests/{id}/cancel` 通过 `llm_request_registry` 持有的 `asyncio.Task` 引用调 `task.cancel()`，终止流式任务。
+5. **高风险工具需确认**：工具声明 `require_confirmation=True` 时，Agent 暂停执行，推送 `chat_tool_call_confirmation` 事件等待用户确认；前端调 `POST /api/chat/requests/{id}/confirm` 续跑，或超时自动取消。
 
 ### `ws.py`（WebSocket 端点）
 
@@ -237,6 +280,11 @@ if node is None:
 2. `asyncio.create_task(graph_agent.xxx_stream(graph_id, node_id, session_id, request_id))` 后台跑流式。
 3. `graph_agent` 内部每个 token 通过 `ws_notify.notify_session(session_id, {"type": "graph_agent_token", "op": "...", "delta": token, ...})` 推送。
 4. 前端通过 `streamingSessionId` 绑定的 WebSocket 接收 token，按 `op` 字段分发到对应流式文本切片。
+
+**chat 流式端点例外**：`chat.py` 的 `/api/chat/sessions/{id}/stream` 沿用双通道协议，但 `op` 固定为 `"chat"`，并新增 3 个 chat 事件类型：
+- `chat_tool_call`：Agent 决定调用工具时推送（携带工具名 / 参数 / call_id）。
+- `chat_tool_result`：工具执行完成时推送（携带返回值）。
+- `chat_tool_call_confirmation`：高风险工具需用户确认时推送（前端展示"确认 / 取消"按钮）。
 
 ## 常见任务
 

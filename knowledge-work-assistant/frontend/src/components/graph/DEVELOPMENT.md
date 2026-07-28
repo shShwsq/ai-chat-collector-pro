@@ -32,9 +32,13 @@ graph/
   - 节点拖拽：拖拽时设置 `fx/fy` 固定位置，松开后保持。
   - 滚轮缩放：以光标为中心，缩放系数被 `clampScale` 限制在 `[0.2, 3]`。
   - 空白处拖拽平移：通过 `translate` 状态维护。
-  - 悬停 400ms 显示 `NodeDetailCard`，移开 250ms 消失；单击节点固定（pinned）详情卡。
+  - 悬停 400MS 显示 `NodeDetailCard`，移开 250ms 消失；单击节点固定（pinned）详情卡。
   - 双击节点触发 `store.extendNode(node.id, 'all')` 全部延伸。
-- **对外方法**：通过 `forwardRef` + `useImperativeHandle` 暴露 `relayout()`，供 `ContentToolbar` 的"重新布局"按钮调用。
+  - 对话首页大卡无缝切换到图谱视图：由 `focusNodeAtCenter(nodeId)` 实现，配合 `setSelectedNode` + `setActiveNav('graph')` 完成从大卡浮层到图谱视图的平滑过渡。
+- **对外方法**：通过 `forwardRef` + `useImperativeHandle` 暴露三个方法：
+  - `relayout()`：重启 d3-force 模拟，供 `ContentToolbar` 的"重新布局"按钮调用。
+  - `resetView()`：`setTransform({ x: 0, y: 0, k: 1 })`，重置画布平移与缩放到初始状态。
+  - `focusNodeAtCenter(nodeId)`：从 `positionsRef` 取节点位置，平移画布让该节点位于视口正中央，缩放保持不变；节点不存在或位置未就绪时静默返回。
 - **闪烁高亮**：`store.flashNodeIds` 命中的节点添加 `is-flash` CSS 类触发动画（见 [styles/app.css](../../styles/app.css)）。
 
 ### `NodeDetailCard.tsx`（节点详情卡）
@@ -47,9 +51,10 @@ graph/
   5. 我的补充留白区（输入框 + 类型选择 + 保存 / 保存并延伸）
 - **详情来源策略**：若 `detail_payload` 已含 `_important_points` 键则直接从缓存构建；否则调用 `store.generateNodeDetail` / `generateNodeDetailStream` 生成并回写。
 - **定位**：由父组件 `GraphView` 计算 `position`（left/top/width/maxHeight），卡片绝对定位、不超出视口、自身可滚动。
+- **props**：除 `node` / `position` 等基础字段外，新增可选 prop `onRequestGraphSwitch?: (nodeId: string) => void`，用于大卡浮层无缝切换到图谱视图；图谱视图内部渲染时该 prop 为 `undefined`，无副作用。
 - **Task 8 延伸接入**：
-  - 单击"延伸方向推荐"项 → `store.extendNode(node.id, 'single', direction.name)`，仅生成该方向一个节点，不进 batch。
-  - "保存并延伸"按钮：先保存留白内容，再以该内容作为 `direction_name` 触发单点延伸。
+  - 单击"延伸方向推荐"项 → `store.extendNode(node.id, 'single', direction.name)`，仅生成该方向一个节点，不进 batch；同时触发 `onRequestGraphSwitch?.(latestNode.id)` 通知浮层切换。
+  - "保存并延伸"按钮：先保存留白内容，再以该内容作为 `direction_name` 触发单点延伸；同时触发 `onRequestGraphSwitch?.(latestNode.id)` 通知浮层切换。
   - `extending` 进行中时禁用所有延伸类按钮，避免并发触发。
 
 ### `NodeEditor.tsx`（节点编辑表单）

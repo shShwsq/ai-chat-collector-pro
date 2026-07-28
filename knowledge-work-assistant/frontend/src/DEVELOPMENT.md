@@ -2,37 +2,52 @@
 
 > 一句话定位：本目录是 KWA 前端的 React 渲染进程层，由 Vite HMR 驱动。`App.tsx` 装配整体布局（header + SideNav + 主内容区 + Toast + WebSocket 订阅），四个子目录各司其职：`components/`（React 组件）、`lib/`（API / WS / 类型 / 工具）、`store/`（Zustand 全局状态）、`styles/`（CSS）。本文件描述渲染进程整体骨架与子目录导航，子目录细节请见各自 DEVELOPMENT.md。
 
+## 与 web-ai-chat-collector 的关系（软件 + 插件一体化）
+
+本目录是 KWA 前端渲染进程，与插件侧 [web-ai-chat-collector](../../../web-ai-chat-collector/DEVELOPMENT.md) 的关系如下：
+
+- **WebSocket 订阅推送事件**：[App.tsx](./App.tsx) 启动时连 `/ws?session_id=<uuid>`，订阅 `plugin.conversation_received` 事件；collector 推送成功后后端广播此事件，前端收到后调 `store.pushToast` 弹 Toast 并刷新"待抽取"侧栏（`store.loadPendingNodes`）。
+- **API 调用拉取推送数据**：[lib/api.ts](./lib/api.ts) 的 `api.getPluginRecent()` 调 `GET /api/plugin/conversations/recent` 拉取 collector 最近推送的对话，`api.getPluginContract()` 拉取接口契约；供 [components/PluginIntegrationSection.tsx](./components/PluginIntegrationSection.tsx) 展示。
+- **类型契约**：[lib/types.ts](./lib/types.ts) 的 `PluginConversationRequest` / `PluginConversationResponse` / `PluginRecentConversationItem` 等类型与后端 [backend/app/models/schemas.py](../../../knowledge-work-assistant/backend/app/models/schemas.py) 一一对应；**不与 collector 共享类型**（collector 是纯 JS）。
+- **待抽取侧栏消费推送数据**：[components/graph/PendingNodes.tsx](./components/graph/PendingNodes.tsx) 展示 `GET /api/observations?processed=false` 返回的未处理对话（含 collector 推送的），用户点击"抽取"后调 `POST /api/graphs/{id}/nodes/batch` 将候选节点入图。
+- **不直接通信**：本目录所有代码**不直接**调用 collector 的 API 或读写 collector 的 IndexedDB；所有交互经 KWA 后端中转。
+
+跨子工程任务（启用推送、UI 风格统一、并行开发联调等）请参考工作区根 [DEVELOPMENT.md](../../../DEVELOPMENT.md) 的"常见跨子工程任务"章节。
+
 ## 模块职责
 
 ```
 src/
 ├── App.tsx                  # 根组件：布局 + 健康轮询 + WebSocket 订阅 + 浮层面板装配
 ├── main.tsx                 # React 入口：挂载 <App /> 到 #root，导入全局样式
-│
-├── components/              # React 组件（详见 components/DEVELOPMENT.md）
+│   ├── components/              # React 组件（详见 components/DEVELOPMENT.md）
 │   ├── graph/               #   图谱相关子组件（GraphView / NodeDetailCard / QuizPanel 等）
-│   ├── ChatHome.tsx         #   对话主页（Work 模式对话入口 + 历史瀑布流）
-│   ├── ChatPanel.tsx        #   对话面板（Work 模式内嵌对话，Study 模式提示）
+│   ├── ChatExpandedOverlay.tsx  # 对话首页大卡浮层（FLIP 动画 + createPortal + 无缝切图谱）
+│   ├── ChatHome.tsx         #   对话首页瀑布流主体组件（交互增强版）：study/work 双模式推荐卡片瀑布流 + 居中输入框 + sending 过渡；4 项交互增强：卡片飞入（随机 delay/duration）、滚轮覆盖（瀑布流上移盖住输入框 + 输入框渐进模糊）、点击展开（setChatExpandedNodeId 触发顶层 ChatExpandedOverlay）、sending 过渡（仅 work）；props: `{ mode: 'study'|'work', onAsk?: (q: string) => void }`
+│   ├── ChatPanel.tsx        #   多轮对话面板（Task 9 / Task 10，Study/Work 统一）
 │   ├── ContentToolbar.tsx   #   内容区顶栏：视图切换 / 重新布局 / 撤销延伸 / 开始测验
 │   ├── GraphList.tsx        #   左侧图谱列表：新建 / 重命名 / 删除 / 选中
 │   ├── Icon.tsx             #   内联 SVG 图标组件
 │   ├── ModeSwitch.tsx       #   Study / Work 模式切换开关
 │   ├── PluginIntegrationSection.tsx  # 设置页「插件对接」分区
-│   ├── RecommendationCard.tsx        # 推荐项卡片（study 复习 / work 提醒）
-│   ├── ReminderBanner.tsx   #   顶部提醒横幅（到期 / 临近提醒）
+│   ├── RecommendationCard.tsx        # 推荐项卡片（forwardRef）：暴露 article DOM 供父组件做 FLIP First 测量；新增 props `enterDelay?` / `enterDuration?` / `isDimmed?`；study 模式底部显示'上次复习时间 + 错误率徽标'，work 模式显示'提醒时间 + 星标图标'；样式类扩展 rec-card--entering / rec-card--dimmed
+│   ├── ReminderBanner.tsx   #   受控组件：仅 `count: number` + `onClick: () => void` 两个 props；count <= 0 返回 null；移除了关闭按钮和跳转节点逻辑；内联 BellIcon
 │   ├── SettingsPanel.tsx    #   设置面板：LLM 配置 + 请求队列 + 插件对接
 │   ├── SideNav.tsx          #   最左 56px 竖排导航：对话 / 图谱 / 设置
-│   └── Toast.tsx            #   全局 Toast（成功 / 警告 / 错误）
+│   ├── Toast.tsx            #   全局 Toast（成功 / 警告 / 错误）
+│   └── ToolConfirmDialog.tsx    #   高风险工具调用确认对话框（倒计时 + 同意/拒绝）
 │
 ├── lib/                     # 通信层与类型契约（详见 lib/DEVELOPMENT.md）
 │   ├── api.ts               #   HTTP 客户端：/api 前缀 + file:// 环境地址解析 + ApiError
 │   ├── ws.ts                #   WebSocket 客户端：TestSocket 类 + generateSessionId
 │   ├── types.ts             #   与 backend/app/models/schemas.py 一一对应的类型
 │   ├── nodeTemplates.ts     #   节点模板镜像（与 backend node_types.py 对齐）
-│   └── electron.d.ts        #   window.electronAPI 全局类型声明
+│   ├── electron.d.ts        #   window.electronAPI 全局类型声明
+│   └── __tests__/           #   单元测试（vitest）
 │
 ├── store/                   # 全局状态（详见 store/DEVELOPMENT.md）
-│   └── useAppStore.ts       #   Zustand 单一 store：mode / view / 图谱 / 候选 / 测验 / 流式 / Toast
+│   ├── useAppStore.ts       #   Zustand 单一 store：mode / view / 图谱 / 候选 / 测验 / 流式 / Toast
+│   └── __tests__/           #   单元测试（vitest）
 │
 └── styles/                  # 样式（详见 styles/DEVELOPMENT.md）
     ├── app.css              #   主样式：布局 + 组件 + BEM 类名 + 模式 CSS 变量
@@ -43,21 +58,21 @@ src/
 
 | 文件 | 职责 | 关键内容 |
 |------|------|---------|
-| [App.tsx](./App.tsx) | 根组件 | 布局：`app-shell`（`data-mode`）+ `app-header`（标题 + 健康徽章 + ModeSwitch）+ `app-body`（SideNav + 主内容区）+ `Toast` + `app-footer`；`useEffect` 启动时调 `loadGraphs()` + 健康检查轮询（5s）；`useEffect` 启动 WebSocket：生成 `sessionId` → `new TestSocket()` → `connect(sessionId)` → `onEvent` 订阅 `plugin.conversation_received` / `graph_agent_token` / `done` / `cancelled` / `error` 事件并分发到 store；按 `activeNav` 切换主内容区：`'chat'` → ChatPanel / `'settings'` → SettingsPanel / `'graph'` → GraphList + content-area（ContentToolbar + GraphView/CardView + PendingNodes/QuizPanel/WorkInput/TrendsSidebar/ReportPanel/QAPanel 浮层） |
+| [App.tsx](./App.tsx) | 根组件 | 布局：`app-shell`（`data-mode`）+ `app-header`（标题 + 健康徽章 + ModeSwitch）+ `app-body`（SideNav + 主内容区）+ `Toast` + `<ChatExpandedOverlay graphViewRef={graphViewRef} />` + `app-footer`；`import ChatExpandedOverlay`；`.mode-slide-wrap` 容器包裹主内容区，配合 View Transitions API 实现横向滑动过渡；`useEffect` 启动时调 `loadGraphs()` + 健康检查轮询（5s）；`useEffect` 启动 WebSocket：生成 `sessionId` → `new TestSocket()` → `connect(sessionId)` → `onEvent` 订阅 `plugin.conversation_received` / `graph_agent_token` / `done` / `cancelled` / `error` / `chat_tool_call` / `chat_tool_result` / `chat_tool_call_confirmation` 事件；graph_agent_* 4 个事件按 `event.op === 'chat'` 分流到 `handleChat*` 系列，否则走原 `handleGraphAgent*` 路径；3 个新增 case：`chat_tool_call` → `handleChatToolCall`、`chat_tool_result` → `handleChatToolResult`、`chat_tool_call_confirmation` → `handleChatToolConfirmation`；按 `activeNav` 切换主内容区：`'chat'` → ChatPanel / `'settings'` → SettingsPanel / `'graph'` → GraphList + content-area（ContentToolbar + GraphView/CardView + PendingNodes/QuizPanel/WorkInput/TrendsSidebar/ReportPanel/QAPanel 浮层）；`<ChatExpandedOverlay>` 放在 Toast 之后、footer 之前，挂在 App 顶层是为了让大卡浮层在 activeNav 从 'chat' 切到 'graph' 时仍能存活 |
 | [main.tsx](./main.tsx) | React 入口 | `ReactDOM.createRoot(document.getElementById('root')).render(<React.StrictMode><App /></React.StrictMode>)`；导入 `./styles/animations.css` + `./styles/app.css` |
 | [components/SideNav.tsx](./components/SideNav.tsx) | 竖排导航 | 56px 宽，三个图标按钮（对话 / 图谱 / 设置），订阅 `store.activeNav`，点击调 `setActiveNav` |
 | [components/ModeSwitch.tsx](./components/ModeSwitch.tsx) | 模式切换 | 顶部右上角开关，订阅 `store.mode`，点击调 `setMode`（自动重载新模式图谱列表 + 清空当前选中） |
 | [components/GraphList.tsx](./components/GraphList.tsx) | 图谱列表 | 左侧栏：图谱列表 + 新建按钮 + 重命名 / 删除（ConfirmDialog 二次确认）；订阅 `store.graphs` / `currentGraphId` |
 | [components/ContentToolbar.tsx](./components/ContentToolbar.tsx) | 内容区顶栏 | 视图切换（graph / card）+ 重新布局（调 `graphViewRef.relayout()`）+ 撤销延伸（仅 mode=all 时可见）+ 开始测验（study 模式）+ Work 模式入口（抽取 / 风口 / 报告 / 提问） |
 | [components/SettingsPanel.tsx](./components/SettingsPanel.tsx) | 设置面板 | LLM API 配置（base_url / api_key / model / context_window）+ 请求队列（活跃 / 取消）+ 插件对接分区（懒加载） |
-| [components/ChatPanel.tsx](./components/ChatPanel.tsx) | 对话面板 | Work 模式：内嵌对话（输入框 + 历史消息流）；Study 模式：提示"对话功能在 Work 模式下可用" |
+| [components/ChatPanel.tsx](./components/ChatPanel.tsx) | 对话面板 | 多轮对话面板（Task 9 / Task 10）：Study/Work 双模式统一多轮对话；`chatMessages.length === 0` 时渲染 `<ChatHome mode={mode} onAsk={handleAsk} />`，否则渲染 `<ChatConversationView />`；顶层渲染 `pendingToolConfirmation && <ToolConfirmDialog />`；ChatConversationView 含消息列表 + 底部输入框 + header 工具栏（返回首页按钮 / 流式取消按钮）；Work 模式独有的 PlanBuildToggle 子组件；ChatMessageItem 区分 user/assistant 消息，assistant 流式占位态显示三点打字动画，工具调用过程渲染为 ChatToolCallItem 列表 |
 | [components/Toast.tsx](./components/Toast.tsx) | 全局提示 | 订阅 `store.toast`，自动消失（3s）；类型：info / success / warning / error |
 | [lib/api.ts](./lib/api.ts) | HTTP 客户端 | `httpBase()`：dev 用相对路径走 Vite 代理，file:// 经 `window.electronAPI.backend.getUrl()` 拿后端地址；`request<T>()`：统一加 `/api` 前缀 + JSON 处理 + `ApiError` 抛出；`api` 对象：50+ 方法，与后端 routers 一一对应（健康 / 图谱 / 节点 / 边 / 插件 / 抽取 / 测验 / Work / 推荐 / LLM 配置 / 流式触发） |
 | [lib/ws.ts](./lib/ws.ts) | WebSocket 客户端 | `wsBase()`：dev 用 `ws://${loc.host}`，file:// 经 `window.electronAPI.backend.getWsUrl()`；`TestSocket` 类：`connect(sessionId?)` / `send(msg)` / `onEvent(cb)` / `close()`；`generateSessionId()`：优先 `crypto.randomUUID()`，回退时间戳 + 随机数 |
-| [lib/types.ts](./lib/types.ts) | 类型契约 | 与 `backend/app/models/schemas.py` 一一对应；含 `HealthResponse` / `Graph` / `Node` / `Edge` / `Observation` / `Quiz` / `Trend` / `RecommendationItem` / `LlmConfig` / `WsEvent`（welcome / pong / echo / plugin.conversation_received / graph_agent_*）等 |
+| [lib/types.ts](./lib/types.ts) | 类型契约 | 与 `backend/app/models/schemas.py` 一一对应；含 `HealthResponse` / `Graph` / `Node` / `Edge` / `Observation` / `Quiz` / `Trend` / `RecommendationItem` / `LlmConfig` / `WsEvent`（welcome / pong / echo / plugin.conversation_received / graph_agent_*）等；新增约 20 个 chat 相关类型（`ChatSession` / `ChatMessage` / `ToolCall` / `ChatCheckpoint` / `ToolConfirmation` / `Chat*Event` / `ConfirmToolCallRequest`/`Response` / `StartChatStreamRequest` / `ChatStreamStartedResponse` / `CancelChatResponse` / `TriggerCheckpointResponse` 等） |
 | [lib/nodeTemplates.ts](./lib/nodeTemplates.ts) | 节点模板镜像 | 与 `backend/app/models/node_types.py` 一一对应；`STUDY_SUBJECTS` / `WORK_OBJECTS` 枚举 + `STUDY_TEMPLATES` / `WORK_TEMPLATES` 模板字段 + `USER_FILL_TYPES` 留白类型；`getTemplate(graphType, nodeType)` / `getTypeOptions(graphType)` / `stripMetaKeys(dp)` 等 |
 | [lib/electron.d.ts](./lib/electron.d.ts) | 全局类型声明 | `interface ElectronAPI { backend: { getUrl, getWsUrl } }`；`interface Window { electronAPI?: ElectronAPI }`；与 `electron/preload.ts` 暴露的 API 一一对应 |
-| [store/useAppStore.ts](./store/useAppStore.ts) | 全局状态 | Zustand 单一 store，含 30+ 状态字段 + 40+ action；状态分组：mode/view/图谱/选中/加载错误、Task 8 延伸、Task 11 抽取、Task 12 测验、Task 13-16 Work、推荐、LLM 配置、流式输出、Toast；所有 action 捕获异常后写 `error` 状态，不抛出 |
+| [store/useAppStore.ts](./store/useAppStore.ts) | 全局状态 | Zustand 单一 store，含 90+ 状态字段 + 80+ action + 约 2900+ 行；状态分组：mode/view/图谱/选中/加载错误、Task 8 延伸、Task 11 抽取、Task 12 测验、Task 13-16 Work、推荐、LLM 配置、流式输出、Toast、Task 9/10 chat 多轮对话（chatMessages / chatStreamingText / pendingToolConfirmation / chatSession 等）；所有 action 捕获异常后写 `error` 状态，不抛出 |
 
 ## 开发工作流
 

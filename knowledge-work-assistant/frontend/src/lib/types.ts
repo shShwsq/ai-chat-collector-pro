@@ -45,6 +45,14 @@ export type WsEvent =
   | GraphAgentDoneEvent
   | GraphAgentCancelledEvent
   | GraphAgentErrorEvent
+  // Task 9：多轮对话 chat 相关 WS 事件（op="chat"）
+  | ChatTokenEvent
+  | ChatDoneEvent
+  | ChatCancelledEvent
+  | ChatErrorEvent
+  | ChatToolCallEvent
+  | ChatToolResultEvent
+  | ChatToolConfirmationEvent
 
 /** 流式 LLM 操作类型。 */
 export type GraphAgentOp =
@@ -771,6 +779,233 @@ export interface PluginRecentConversationItem {
   dedup_key: string | null
   created_at: string
   processed: boolean
+}
+
+// ============================================================================
+// 多轮对话 chat（Task 9，与 backend/app/routers/chat.py 对齐）
+// ============================================================================
+
+/** Chat 会话（与后端 Session 表对齐）。 */
+export interface ChatSession {
+  /** 会话 ID（32 位 hex）。 */
+  id: string
+  /** 会话标题。 */
+  title: string
+  /** 场景模式：study / work。 */
+  mode: Mode
+  /** 关联图谱 ID（可空：纯闲聊会话无图谱上下文）。 */
+  graph_id: string | null
+  /** 创建时间 ISO8601。 */
+  created_at: string
+  /** 更新时间 ISO8601。 */
+  updated_at: string
+}
+
+/** 创建会话请求体。 */
+export interface CreateChatSessionRequest {
+  /** 场景模式。 */
+  mode: Mode
+  /** 关联图谱 ID（可选）。 */
+  graph_id?: string | null
+  /** 会话标题（可选，自动生成）。 */
+  title?: string
+}
+
+/** 会话列表响应。 */
+export interface ListChatSessionsResponse {
+  sessions: ChatSession[]
+  count: number
+}
+
+/** 单条 chat 消息（与后端 Message 表对齐）。 */
+export interface ChatMessage {
+  /** 消息 ID（32 位 hex）。 */
+  id: string
+  /** 关联会话 ID。 */
+  session_id: string
+  /** 角色：user / assistant / system。 */
+  role: 'user' | 'assistant' | 'system'
+  /** 消息内容。 */
+  content: string
+  /** 附件 file_id 列表。 */
+  attachments: string[]
+  /** 创建时间 ISO8601。 */
+  created_at: string
+  /**
+   * 工具调用过程记录（仅 assistant 消息，由前端 WS 事件累积）。
+   * 后端 Message 表不存储此字段，前端根据 chat_tool_call / chat_tool_result
+   * 事件实时填充到最后一条 assistant 消息上。
+   */
+  tool_calls?: ToolCall[]
+}
+
+/** 消息历史响应。 */
+export interface ListChatMessagesResponse {
+  messages: ChatMessage[]
+  count: number
+}
+
+/** 工具调用记录（agent Function Calling 过程展示用）。 */
+export interface ToolCall {
+  /** 工具调用 ID（OpenAI tool_call_id）。 */
+  id: string
+  /** 工具名（如 ``graph_query_nodes`` / ``graph_extract_from_observation``）。 */
+  tool: string
+  /** 工具调用参数。 */
+  args: Record<string, unknown>
+  /** 执行结果（异步回填，未完成时为 undefined）。 */
+  result?: Record<string, unknown>
+  /** 调用状态：pending 等待结果 / done 已完成 / error 失败。 */
+  status: 'pending' | 'done' | 'error'
+}
+
+/** Checkpoint 响应（writer_agent 生成的结构化上下文快照）。 */
+export interface ChatCheckpoint {
+  /** 关联会话 ID。 */
+  session_id: string
+  /** Checkpoint 序号（同会话内递增）。 */
+  cycle_index: number
+  /** 11 字段结构化内容。 */
+  content: Record<string, unknown>
+  /** 创建时间 ISO8601（无 checkpoint 时为 null）。 */
+  created_at: string | null
+  /** 是否存在 checkpoint。 */
+  has_checkpoint: boolean
+}
+
+/** 触发 checkpoint 响应。 */
+export interface TriggerCheckpointResponse {
+  ok: boolean
+  session_id: string
+  cycle_index: number | null
+  reason: string | null
+}
+
+/** 流式对话请求体。 */
+export interface StartChatStreamRequest {
+  /** 用户消息内容。 */
+  content: string
+  /** 前端 WebSocket session_id（后端按此推送流式 token）。 */
+  session_id: string
+  /** 本次对话是否 Plan 模式（可选，默认用会话值）。 */
+  plan_mode?: boolean
+}
+
+/** 流式任务已启动响应。 */
+export interface ChatStreamStartedResponse {
+  started: boolean
+  /** LLM 请求 id（可用于取消）。 */
+  request_id: string
+  /** 关联会话 id。 */
+  session_id: string
+  /** 流式操作类型固定为 ``"chat"``。 */
+  op: 'chat'
+}
+
+/** 取消流式对话响应。 */
+export interface CancelChatResponse {
+  ok: boolean
+  request_id: string
+}
+
+/** 高风险工具确认请求体。 */
+export interface ConfirmToolCallRequest {
+  /** 是否同意执行。 */
+  approved: boolean
+  /** 拒绝原因（approved=false 时有意义）。 */
+  reason?: string
+}
+
+/** 确认响应。 */
+export interface ConfirmToolCallResponse {
+  ok: boolean
+  request_id: string
+  approved: boolean
+}
+
+/** 高风险工具确认事件（WS 推送，由 main_agent 在高风险工具调用时推送）。 */
+export interface ToolConfirmation {
+  /** 确认请求 ID（用于调 confirm API）。 */
+  request_id: string
+  /** 工具名（如 ``graph_extract_from_observation``）。 */
+  tool: string
+  /** 工具调用参数（前端展示摘要用）。 */
+  args: Record<string, unknown>
+  /** 超时秒数（默认 60）。 */
+  timeout: number
+  /** 关联会话 ID。 */
+  session_id?: string
+}
+
+/** chat op（用于 WS 事件区分）。 */
+export type ChatOp = 'chat'
+
+/** chat 工具调用 WS 事件（agent 调用工具时推送）。 */
+export interface ChatToolCallEvent {
+  type: 'chat_tool_call'
+  op: ChatOp
+  session_id: string
+  request_id: string
+  tool: string
+  args: Record<string, unknown>
+  tool_call_id: string
+}
+
+/** chat 工具结果 WS 事件（工具执行完毕后推送）。 */
+export interface ChatToolResultEvent {
+  type: 'chat_tool_result'
+  op: ChatOp
+  session_id: string
+  request_id: string
+  tool: string
+  result: Record<string, unknown>
+}
+
+/** chat 高风险工具确认 WS 事件（暂停工具循环等待用户响应）。 */
+export interface ChatToolConfirmationEvent {
+  type: 'chat_tool_call_confirmation'
+  op: ChatOp
+  tool: string
+  args: Record<string, unknown>
+  request_id: string
+  timeout: number
+}
+
+/** chat 流式 token WS 事件（复用 graph_agent_token 协议但 op="chat"）。 */
+export interface ChatTokenEvent {
+  type: 'graph_agent_token'
+  op: ChatOp
+  session_id: string
+  request_id: string
+  content: string
+  seq: number
+}
+
+/** chat 流式完成 WS 事件。 */
+export interface ChatDoneEvent {
+  type: 'graph_agent_done'
+  op: ChatOp
+  session_id: string
+  request_id: string
+  full_text: string
+}
+
+/** chat 流式被取消 WS 事件。 */
+export interface ChatCancelledEvent {
+  type: 'graph_agent_cancelled'
+  op: ChatOp
+  session_id: string
+  request_id: string
+  full_text: string
+}
+
+/** chat 流式失败 WS 事件。 */
+export interface ChatErrorEvent {
+  type: 'graph_agent_error'
+  op: ChatOp
+  session_id: string
+  request_id: string
+  message: string
 }
 
 /** 最近推送对话列表响应。 */

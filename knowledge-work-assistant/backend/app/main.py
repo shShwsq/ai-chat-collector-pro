@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import __version__
 from app.config import settings
 from app.db import engine, init_db
-from app.models.db_models import migrate_node_columns
+from app.models.db_models import migrate_node_columns, migrate_session_columns
 from app.routers import graphs, health, nodes, plugin, ws
 # Task 8 / Task 11：节点延伸与对话抽取路由
 from app.routers import extensions as extensions_router
@@ -34,8 +34,13 @@ from app.routers import recommendations as recommendations_router
 from app.routers import llm_admin as llm_admin_router
 # 流式触发路由（详情卡 / 问答 / 报告）
 from app.routers import stream as stream_router
+# Task 8：多轮对话 chat 路由（main_agent + 高风险拦截 + WS 推送）
+from app.routers import chat as chat_router
 from app.services.graph_agent import init_graph_agent
+# Task 8：main_agent + writer_agent 单例初始化
+from app.services.main_agent import init_main_agent
 from app.services.model_config import _REGISTRY
+from app.services.writer_agent import init_writer_agent
 
 
 @asynccontextmanager
@@ -44,15 +49,31 @@ async def lifespan(_app: FastAPI):
 
     startup：加载 model_config.json（文件缺失或损坏时回退到硬编码兜底，不阻断启动）
         → 初始化数据库（init_db 内部会调用 ensure_dirs 创建 data/ 及 files/sessions 子目录）
-        → 初始化全局 GraphAgent 单例（Task 17，图谱 AI 服务层）。
+        → 迁移表新增列（nodes 智能推荐字段 + sessions mode/graph_id 字段，幂等）
+        → 初始化全局单例（GraphAgent / MainAgent / WriterAgent）。
     shutdown：当前无额外资源需释放；后续接入 MCP / 后台任务时在此清理。
     """
     _REGISTRY.load()
     await init_db()
     # 迁移 nodes 表新增列（智能推荐字段，幂等，旧库启动不报错）
     await migrate_node_columns(engine)
+    # 迁移 sessions 表新增列（Task 8 chat 路由用：mode / graph_id，幂等）
+    await migrate_session_columns(engine)
     # 初始化全局 GraphAgent 单例（无状态，仅确保模块加载与启动日志）
     init_graph_agent()
+    # 初始化全局 MainAgent + WriterAgent 单例（Task 8）
+    # 实际会话使用独立 MainAgent 实例（按 session_id 缓存于 routers/chat.py），
+    # 此处的全局单例仅供「未指定 session」的兜底场景与 import 兼容性使用。
+    try:
+        _main = init_main_agent()
+        init_writer_agent(_main.llm_client)
+    except Exception as exc:  # noqa: BLE001 - LLM 未配置时仍允许启动
+        # LLM 配置缺失：单例未初始化，前端在「设置面板」配置后调用 chat 接口会报错
+        # （chat 路由会动态构造 LLMClient，配置就绪后即可正常工作）
+        import logging
+        logging.getLogger(__name__).warning(
+            "MainAgent / WriterAgent 初始化失败（LLM 可能未配置）: %s", exc
+        )
     yield
 
 
@@ -103,6 +124,10 @@ app.include_router(llm_admin_router.router, prefix="/api", tags=["llm-admin"])
 # /api/graphs/{id}/nodes/{nid}/detail-stream、/api/graphs/{id}/work/ask-stream、
 # /api/graphs/{id}/work/report-stream
 app.include_router(stream_router.router, prefix="/api", tags=["stream"])
+# Task 8：多轮对话 chat 路由（main_agent + 高风险拦截 + WS 推送）：
+# /api/chat/sessions、/api/chat/sessions/{id}/messages|stream|checkpoint、
+# /api/chat/requests/{id}/cancel|confirm
+app.include_router(chat_router.router, prefix="/api", tags=["chat"])
 # WebSocket 挂载在根路径下：/ws（前端 lib/ws.ts 连接此处做收发测试）
 app.include_router(ws.router, tags=["ws"])
 

@@ -13,8 +13,16 @@
  * - 临近（``is_upcoming``）：左边框橙色
  * - 悬停：上浮 + 阴影；点击：调用 ``onClick``
  *
+ * 交互增强（对话首页改造）：
+ * - ``enterDelay`` / ``enterDuration``：mount 时飞入动画的延迟与时长，
+ *   由父组件 ChatHome 为每张卡片算出不均匀值（先有先后、有快有慢）。
+ * - ``isDimmed``：其他卡片被展开为大卡时，本卡加高斯模糊 + 半透明。
+ * - ``forwardRef``：暴露 article DOM，供父组件做 FLIP First 测量。
+ *
  * 图标全部使用 inline SVG，不依赖外部图标库。
  */
+
+import { forwardRef } from 'react'
 
 import type { RecommendationItem } from '../lib/types'
 
@@ -23,8 +31,14 @@ export interface RecommendationCardProps {
   item: RecommendationItem
   /** 当前模式：study 学习 / work 工作，决定底部信息行渲染策略。 */
   mode: 'study' | 'work'
-  /** 卡片点击回调（通常为跳转图谱视图并选中该节点）。 */
+  /** 卡片点击回调（父组件用于触发展开为大卡）。 */
   onClick: () => void
+  /** mount 时飞入动画延迟（ms）。不传则不播飞入动画。 */
+  enterDelay?: number
+  /** mount 时飞入动画时长（ms）。 */
+  enterDuration?: number
+  /** 其他卡片展开为大卡时，本卡加高斯模糊 + 半透明。 */
+  isDimmed?: boolean
 }
 
 /** 把 ISO 时间字符串格式化为 "MM/DD HH:mm"，解析失败时回退原值。 */
@@ -56,17 +70,32 @@ function StarIcon({ size = 14 }: { size?: number }) {
   )
 }
 
-export function RecommendationCard({ item, mode, onClick }: RecommendationCardProps) {
+export const RecommendationCard = forwardRef<HTMLElement, RecommendationCardProps>(
+  function RecommendationCard(
+    { item, mode, onClick, enterDelay, enterDuration, isDimmed },
+    ref,
+  ) {
   const { node, reason, is_overdue, is_upcoming, error_rate, days_since_review } = item
 
-  // 卡片样式类：到期 / 临近分别加修饰类
+  // 卡片样式类：到期 / 临近 / 飞入 / dimmed 分别加修饰类
   const cardCls = [
     'rec-card',
     is_overdue ? 'rec-card--overdue' : '',
     is_upcoming ? 'rec-card--upcoming' : '',
+    enterDelay != null ? 'rec-card--entering' : '',
+    isDimmed ? 'rec-card--dimmed' : '',
   ]
     .filter(Boolean)
     .join(' ')
+
+  // 飞入动画内联变量：延迟与时长（仅当 enterDelay 传入时生效）
+  const enterStyle =
+    enterDelay != null
+      ? ({
+          '--rec-delay': `${enterDelay}ms`,
+          '--rec-dur': `${enterDuration ?? 500}ms`,
+        } as React.CSSProperties)
+      : undefined
 
   // 错误率百分比（study 模式）
   const errorPct = Math.round(error_rate * 100)
@@ -80,7 +109,14 @@ export function RecommendationCard({ item, mode, onClick }: RecommendationCardPr
   const remindText = formatRemindAt(node.remind_at)
 
   return (
-    <article className={cardCls} onClick={onClick} role="button" tabIndex={0}>
+    <article
+      ref={ref}
+      className={cardCls}
+      style={enterStyle}
+      onClick={onClick}
+      role="button"
+      tabIndex={0}
+    >
       {/* 顶部：标题 + 类型标签 */}
       <div className="rec-card__head">
         <span className="rec-card__title" title={node.title}>
@@ -121,6 +157,7 @@ export function RecommendationCard({ item, mode, onClick }: RecommendationCardPr
       </div>
     </article>
   )
-}
+  },
+)
 
 export default RecommendationCard

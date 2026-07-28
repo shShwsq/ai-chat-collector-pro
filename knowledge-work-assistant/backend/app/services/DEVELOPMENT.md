@@ -1,6 +1,19 @@
 # services/ 服务层开发指南
 
-> 一句话定位：本目录是 KWA 后端的业务服务层，16 个模块按职责拆分：图谱 CRUD（`graph_store`）、图谱 AI Agent（`graph_agent`）、LLM 调用栈（`llm_client` / `llm_factory` / `llm_errors` / `llm_request_registry` / `model_config`）、配置与加密（`settings_store` / `crypto`）、WebSocket 通知（`ws_notify`）、会话队列（`session_queue`）、知识 / 标签 / 文件（`knowledge_store` / `tag_store` / `file_storage`）、子 Agent（`sub_agent`）。本层方法均 `async def`，DB 操作走 `AsyncSessionLocal`；LLM 调用必须经 `llm_factory.get_llm_client()` 获取客户端，不直接 `import openai`。
+> 一句话定位：本目录是 KWA 后端的业务服务层，21+ 个模块 + `tools/` / `multimodal/` / `prompts/` 子包按职责拆分：图谱 CRUD（`graph_store`）、图谱 AI Agent（`graph_agent`）、LLM 调用栈（`llm_client` / `llm_factory` / `llm_errors` / `llm_request_registry` / `model_config`）、配置与加密（`settings_store` / `crypto`）、WebSocket 通知（`ws_notify`）、会话队列（`session_queue`）、知识 / 标签 / 文件（`knowledge_store` / `tag_store` / `file_storage`）、子 Agent（`sub_agent`）、主 Agent 与 Writer 子 Agent（`main_agent` / `writer_agent`）、上下文管理（`context_manager` / `compaction`）、MCP 与工具（`mcp_manager` / `tool_registry` + `tools/` 子包）、多模态与提示词（`multimodal/` / `prompts/`）。本层方法均 `async def`，DB 操作走 `AsyncSessionLocal`；LLM 调用必须经 `llm_factory.get_llm_client()` 获取客户端，不直接 `import openai`。
+
+## 与 web-ai-chat-collector 的关系（软件 + 插件一体化）
+
+本目录是后端服务层，与插件侧 [web-ai-chat-collector](../../../web-ai-chat-collector/DEVELOPMENT.md) 的对接关系如下：
+
+- **`graph_agent` 消费推送数据**：`graph_agent.py` 的 `extract_candidates_from_observation(observation_id)` 读取 `observations.conversation_markdown`（collector 推送的 `## 用户` / `## 助手` 分段 Markdown），调 LLM 抽取候选节点；解析逻辑依赖 collector 的对话格式契约，改格式需同步 [content/network/common.js](../../../web-ai-chat-collector/content/network/common.js) 的 `buildAssistantContent`。
+- **`graph_store` 管理推送数据 CRUD**：`create_observation(source='plugin')` 由 `routers/plugin.py` 调用写入 collector 推送的对话；`find_observation_by_dedup_key` 实现 24h 幂等去重；`list_recent_plugin_conversations` 供前端 PluginIntegrationSection 展示。
+- **`ws_notify` 广播推送事件**：collector 推送成功后，`ws_notify.broadcast` 向所有前端 WebSocket 连接推 `plugin.conversation_received` 事件，前端收到后弹 Toast 并刷新"待抽取"侧栏。
+- **`model_config` 与 collector 清单独立**：`model_config.py` 加载 `model_config.json`，与 collector 的 [models.json](../../../web-ai-chat-collector/models.json) 是**两份独立清单**；同步新增厂商时两侧各改一处。
+- **`llm_client` 与 collector LLM 客户端独立**：本目录 `llm_client.py` 用 Python + OpenAI SDK，collector 的 [lib/llm.js](../../../web-ai-chat-collector/lib/llm.js) 用 JavaScript + fetch SSE；**两套独立实现**，不共享代码，但可共享 LLM 凭据（各自配置）。
+- **`graph_agent` 不自动抽取**：collector 推送落库后，`graph_agent` **不自动触发**抽取；抽取由用户在前端"待抽取"侧栏主动点击触发（调 `routers/extraction.py`）。
+
+跨子工程任务（同步 LLM Provider、调整对话格式、并行开发联调等）请参考工作区根 [DEVELOPMENT.md](../../../DEVELOPMENT.md) 的"常见跨子工程任务"章节。
 
 ## 模块职责
 
@@ -21,7 +34,16 @@ services/
 ├── knowledge_store.py         # 知识存储与 FTS5 全文检索
 ├── tag_store.py               # 标签库 CRUD（去重 / 同义词归一）
 ├── file_storage.py            # 文件落盘与元数据管理
-└── sub_agent.py               # 子 Agent 编排（任务分发 / 工具调用）
+├── sub_agent.py               # 子 Agent 编排（任务分发 / 工具调用）
+├── main_agent.py              # 主 Agent（Task 5）：多轮对话主循环 + Function Calling + Plan/Build 工具白名单 + 高风险工具拦截
+├── writer_agent.py            # Writer Subagent（Task 6）：带工具循环的结构化状态记录员，输出 11 字段 checkpoint
+├── context_manager.py         # 无限上下文管理器（Task 1）：Checkpoint + Rebuild + Compaction + 文件原文替换四机制协同
+├── compaction.py              # 上下文压缩：兜底层摘要压缩 + prune_tool_outputs 裁剪旧工具输出
+├── mcp_manager.py             # MCP 客户端管理器（Task 2）：管理 MCP 服务器生命周期 + 工具注册到主 Agent
+├── tool_registry.py           # Function Calling 工具注册表（Task 2）：OpenAI function schema + 统一执行框架 + plan/build 白名单
+├── tools/                     # 工具 handler 子包（详见 tools/DEVELOPMENT.md）
+├── multimodal/                # 多模态子包：image_handler（图片转 base64 data URL）
+└── prompts/                   # 系统提示词子包：main_agent_system.md + writer_system.md + 加载函数
 ```
 
 ## 关键文件
@@ -173,7 +195,66 @@ services/
 
 ### `sub_agent.py`：子 Agent 编排
 
-任务分发 / 工具调用编排。**注意**：`main_agent`（依赖 `context_manager` / `mcp_manager` / `tool_registry` / `multimodal.image_handler` / `tools.task_tools` 等未移植模块）当前**未接入路由**且不能被直接 import；待后续移植这些依赖后补齐。
+任务分发 / 工具调用编排。**注意**：`main_agent` 已完整移植（Task 5）并接入 `routers/chat.py`；依赖 `context_manager` / `mcp_manager` / `tool_registry` / `multimodal.image_handler` / `tools.task_tools` 均已就位。MCP 包为可选依赖（未在 pyproject.toml 声明），缺失时 `mcp_manager` 以降级模式运行。
+
+### `main_agent.py`：主 Agent（Task 5）
+
+多轮对话主循环，集成上下文管理、Function Calling、Plan/Build 工具白名单、高风险工具拦截、Study/Work 双模式。
+
+- **关键类**：`MainAgent` 类、`get_main_agent()`、`init_main_agent()`、`resolve_tool_confirmation()`
+- **关键常量**：`MAX_TOOL_ITERATIONS=10`、`TOOL_CONFIRMATION_TIMEOUT=60.0`、`HIGH_RISK_TOOLS`
+- **依赖**：`ContextManager` / `LLMClient` / `mcp_manager` / `ToolRegistry` + `register_default_tools` / `TaskStore` / `graph_agent`（注入图谱上下文）/ `ws_notify.notify_session` / `encode_image_for_llm` / `get_model_config`
+- **事件流**：`token` / `tool_call` / `tool_result` / `tool_call_confirmation` / `error` / `done`
+
+### `writer_agent.py`：Writer Subagent（Task 6）
+
+带工具循环的结构化状态记录员，输出 11 字段 checkpoint。
+
+- **关键类**：`WriterAgent` 类、`get_writer_agent()`、`init_writer_agent(llm_client)`、`CHECKPOINT_FIELDS`（11 字段常量）
+- **依赖**：`LLMClient` / `LLMError` / ORM `Checkpoint` / `prompts/writer_system.md`
+- **设计**：拥有 file_read/file_write/file_list 工具循环；delta as messages；从 checkpoint.md 解析 + JSON fallback
+
+### `context_manager.py`：无限上下文管理器（Task 1）
+
+MiMo-Code 风格"显式存储 + 按需检索"上下文管理，四机制协同：Checkpoint + Writer Subagent / Rebuild + Cycle / Compaction / 文件原文替换。
+
+- **关键类**：`ContextManager` 类
+- **关键常量**：`DEFAULT_CHECKPOINT_THRESHOLDS=[0.20, 0.45, 0.70]`、`COMPACT_THRESHOLD=0.85`、`REBUILD_THRESHOLD=0.85`、`REBUILD_BUDGET_RATIO=0.5`、`ROUNDS_BEFORE_FILE_REPLACE=3`、`_CHARS_PER_TOKEN=1.5`
+- **依赖**：`Compactor` / `prune_tool_outputs` / `LLMClient` / `WriterAgent` / ORM `Checkpoint` / `FileMetadata` / `Message`
+
+### `compaction.py`：上下文压缩
+
+兜底层上下文压缩，自动/手动将旧消息压缩为摘要，Prune 裁剪旧工具输出。
+
+- **关键类**：`Compactor` 类、`prune_tool_outputs()`
+- **关键常量**：`DEFAULT_KEEP_RECENT=6`、`DEFAULT_KEEP_TOOL_RECENT=4`、`DEFAULT_SUMMARY_BUDGET_TOKENS=4000`
+- **依赖**：`LLMClient` / `LLMError`
+- **设计**：与 Checkpoint/Rebuild 互补——Compaction 是简单摘要压缩（远处信息会有损失），Checkpoint/Rebuild 是结构化持久化
+
+### `mcp_manager.py`：MCP 客户端管理器（Task 2）
+
+管理 MCP（Model Context Protocol）服务器全生命周期，并将工具注册到主 Agent 命名空间。
+
+- **关键类**：`McpClientWrapper` 类、`McpManager` 类、`mcp_manager` 模块级单例
+- **关键常量**：`START_TIMEOUT_SECONDS=10.0`、`CALL_TIMEOUT_SECONDS=30.0`
+- **依赖**：`tool_registry`（`MCP_PREFIX`）；mcp SDK（**可选导入**，KWA pyproject.toml 未声明 mcp 依赖，用 try/except 包裹）
+- **设计**：stdio 传输 + `AsyncExitStack` 长效 session；命名空间 `mcp.{server}.{tool}`；MCP inputSchema → OpenAI function parameters 直接复用
+
+### `tool_registry.py`：Function Calling 工具注册表（Task 2）
+
+定义工具 schema（OpenAI function calling 格式）与统一执行框架。
+
+- **关键类**：`ToolEntry`（dataclass）、`ToolRegistry` 类、`ToolHandler` 类型、`register_default_tools()`、`MCP_PREFIX="mcp."`
+- **工具类别**：本地工具（`file_read` / `file_write` / `file_list` / `command_exec` / `open_app` / `open_url` / `system_notification` / `screenshot` / `clipboard_read` / `clipboard_write` / `append_note` / `task_*`）、知识库检索（`knowledge_search`）、图谱工具（Task 7）、MCP 工具
+- **设计**：plan/build 模式白名单过滤；`ToolRegistry.execute` 接受可选 `mode` 参数并注入 `args["_mode"]`；全局 `tool_registry` 单例不再自动 `register_default_tools`
+
+## 子包导航
+
+| 子包 | 路径 | 说明 |
+|------|------|------|
+| `tools/` | [tools/DEVELOPMENT.md](./tools/DEVELOPMENT.md) | 工具 handler 子包：file_tools / system_tools / task_tools / graph_tools |
+| `multimodal/` | ./multimodal/ | 多模态子包：image_handler（图片转 base64 data URL）；当前仅 1 文件，未独立 DEVELOPMENT.md |
+| `prompts/` | ./prompts/ | 系统提示词子包：main_agent_system.md + writer_system.md + `__init__.py`（加载函数）；当前仅 2 md + 1 py，未独立 DEVELOPMENT.md |
 
 ## 开发工作流
 
@@ -365,9 +446,9 @@ services/
 
 `ws_notify` 用 `asyncio.Lock` 保护内部 `dict`，但 `send_json` 涉及 IO，持锁时间应尽量短（仅复制连接列表后释放锁再推送）。**不要**在持锁时调 `await ws.send_json(...)`，会导致其他 `register` / `unregister` 阻塞。
 
-### `main_agent` 未就位
+### `main_agent` 已就位
 
-`main_agent` 依赖 `context_manager` / `mcp_manager` / `tool_registry` / `multimodal.image_handler` / `tools.task_tools` 等未移植模块，当前**未接入路由**且不能被直接 import。`services/__init__.py` 不再聚合导出 MainAgent，调用方按需显式 import 单个模块。待后续移植这些依赖后补齐。
+`main_agent` 已完整移植（Task 5）并接入 `routers/chat.py`；依赖 `context_manager` / `mcp_manager` / `tool_registry` / `multimodal.image_handler` / `tools.task_tools` 均已就位。`services/__init__.py` 不聚合导出 `MainAgent`，调用方按需显式 import 单个模块（如 `from app.services.main_agent import get_main_agent`）。MCP 包为可选依赖（未在 `pyproject.toml` 声明 `mcp`），缺失时 `mcp_manager` 以降级模式运行。
 
 ## 下一步该读什么
 

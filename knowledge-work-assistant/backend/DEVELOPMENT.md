@@ -2,17 +2,29 @@
 
 > 一句话定位：本目录是 KWA 的 Python 3.12 + FastAPI 后端，监听 8788 端口，提供图谱 CRUD、节点延伸、Study 测验、Work 风口/报告/提问、浏览器插件对接、流式 LLM 触发等 API；用 SQLAlchemy 2.0 异步 ORM + aiosqlite 操作 SQLite（含 FTS5 全文检索），uv 管理依赖。
 
+## 与 web-ai-chat-collector 的关系（软件 + 插件一体化）
+
+本目录是 KWA 软件侧的后端，与插件侧 [web-ai-chat-collector](../../web-ai-chat-collector/DEVELOPMENT.md) 的对接关系如下：
+
+- **接收推送**：[app/routers/plugin.py](./app/routers/plugin.py) 的 `POST /api/plugin/conversations` 端点接收 collector 二次开发后通过 [plugin-sdk/kwa-push.js](../plugin-sdk/kwa-push.js) 推送的对话，落库为 `Observation`（`source='plugin'`）。详见 [app/routers/DEVELOPMENT.md](./app/routers/DEVELOPMENT.md) 的 `plugin.py` 章节。
+- **平台白名单对齐**：`routers/plugin.py` 的 `SUPPORTED_PLATFORMS = ['chatgpt','claude','gemini','deepseek','qwen','doubao','kimi','fudan','custom']` 与 collector 实际采集的 5 平台（`deepseek/qianwen/fudan/doubao/kimi`）取交集；`qianwen` 与 `qwen` 视为同义，collector 推送时统一用 `qwen`。
+- **对话格式契约**：collector 推送的 `conversation_markdown` 使用 `## 用户` / `## 助手` 分段的 Markdown，本后端 [app/services/graph_agent.py](./app/services/graph_agent.py) 据此解析角色与内容。
+- **LLM 厂商清单独立维护**：本后端 [app/services/model_config.py](./app/services/model_config.py) 加载 `model_config.json`，与 collector 的 [models.json](../../web-ai-chat-collector/models.json) 是**两份独立清单**；同步新增厂商时需两侧各改一处（详见工作区根 [DEVELOPMENT.md](../../DEVELOPMENT.md) 的"任务 1"）。
+- **鉴权风险**：`POST /api/plugin/conversations` 当前**不做 token / Origin / 签名校验**，仅适用于本机 loopback（`127.0.0.1:8788`）；部署到公网 / 局域网需自行加反代鉴权。
+
+跨子工程任务（启用推送、同步 LLM Provider、并行开发联调等）请参考工作区根 [DEVELOPMENT.md](../../DEVELOPMENT.md) 的"常见跨子工程任务"章节。
+
 ## 模块职责
 
 `backend/` 的代码全部在 `app/` 包内，根目录只放配置与脚本：
 
 - **`app/`**：FastAPI 应用主包，详见 [app/DEVELOPMENT.md](./app/DEVELOPMENT.md)。
-  - `app/main.py`：应用入口（lifespan + CORS + 13 个 router 挂载）
+  - `app/main.py`：应用入口（lifespan + CORS + 14 个 router 挂载；新增 `chat.py` 提供多轮对话能力，详见 [app/routers/DEVELOPMENT.md](./app/routers/DEVELOPMENT.md) 的 `chat.py` 章节）
   - `app/config.py`：pydantic-settings 配置
   - `app/db.py`：异步引擎 + FTS5 虚拟表 + 触发器
   - `app/models/`：ORM + Pydantic schema + 节点类型枚举，详见 [app/models/DEVELOPMENT.md](./app/models/DEVELOPMENT.md)
-  - `app/routers/`：13 个 FastAPI router，详见 [app/routers/DEVELOPMENT.md](./app/routers/DEVELOPMENT.md)
-  - `app/services/`：16 个业务 service，详见 [app/services/DEVELOPMENT.md](./app/services/DEVELOPMENT.md)
+  - `app/routers/`：14 个 FastAPI router，详见 [app/routers/DEVELOPMENT.md](./app/routers/DEVELOPMENT.md)
+  - `app/services/`：21+ 个业务 service + `tools/` / `multimodal/` / `prompts/` 子包，详见 [app/services/DEVELOPMENT.md](./app/services/DEVELOPMENT.md)
 - **`.env.example`**：环境变量模板（`cp .env.example .env` 后按需修改）
 - **`.python-version`**：3.12（uv 自动按此版本建虚拟环境）
 - **`pyproject.toml`**：依赖声明（uv 管理），含 ruff / pytest 配置
@@ -65,7 +77,7 @@ uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8788
 ### 常用命令
 
 ```bash
-# 跑测试（当前测试较少，主要靠种子脚本自检）
+# 跑测试（已有 e2e 测试套件覆盖插件推送链路，见 tests/e2e/）
 uv run pytest
 
 # Lint
@@ -324,9 +336,11 @@ uv run python -m app.main
 1. `_REGISTRY.load()`：加载 `model_config.json`，失败回退到 `_FALLBACK_REGISTRY` 硬编码。
 2. `await init_db()`：创建所有表 + FTS5 虚拟表 + 触发器 + 确保 `data/` / `data/files/` / `data/sessions/` 目录存在。
 3. `await migrate_node_columns(engine)`：幂等迁移 nodes 表 5 个智能推荐列。
-4. `init_graph_agent()`：初始化全局 GraphAgent 单例（无状态，仅确保模块加载与启动日志）。
+4. `await migrate_session_columns(engine)`：幂等迁移 `sessions` 表 `mode` / `graph_id` 两列（Task 8 chat 路由用），与 `migrate_node_columns` 同模式。
+5. `try: init_main_agent(); init_writer_agent(...) except Exception: logging.warning(...)`：初始化 MainAgent / WriterAgent 单例；LLM 未配置或调不通时**降级跳过**（仅记 warning，不阻断启动）。
+6. `init_graph_agent()`：初始化全局 GraphAgent 单例（无状态，仅确保模块加载与启动日志）。
 
-**顺序不能乱**：`init_db` 必须在 `migrate_node_columns` 之前（否则 nodes 表不存在）；`_REGISTRY.load` 必须在 `init_graph_agent` 之前（否则 graph_agent 用空注册表）。
+**顺序不能乱**：`init_db` 必须在 `migrate_node_columns` / `migrate_session_columns` 之前（否则对应表不存在）；`_REGISTRY.load` 必须在 `init_main_agent` / `init_writer_agent` / `init_graph_agent` 之前（否则依赖 `model_config` 的 agent 用空注册表）。
 
 ### 32 位十六进制 ID 不能含连字符
 

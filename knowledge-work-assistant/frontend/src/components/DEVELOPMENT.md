@@ -2,6 +2,18 @@
 
 > 一句话定位：本目录是 KWA 前端的 React 组件层，14 个 `.tsx` 文件按业务域拆分（布局 / 导航 / 图谱列表 / 工具栏 / 设置 / 对话 / Toast / 提醒），以及一个 `graph/` 子目录集中放图谱相关组件（GraphView / NodeDetailCard / QuizPanel 等）。本文件描述顶层组件，`graph/` 子目录细节请见 [graph/DEVELOPMENT.md](./graph/DEVELOPMENT.md)。
 
+## 与 web-ai-chat-collector 的关系（软件 + 插件一体化）
+
+本目录是 KWA 前端组件层，与插件侧 [web-ai-chat-collector](../../../web-ai-chat-collector/DEVELOPMENT.md) 的关系如下：
+
+- **`PluginIntegrationSection.tsx` 展示推送状态**：设置页的"插件对接"分区，调 `api.getPluginRecent` 展示 collector 最近推送的对话列表 + 调 `api.getPluginContract` 展示接口契约 + 复制推送 URL 按钮；用户在此查看 collector 对接状态。
+- **`PendingNodes.tsx` 消费推送数据**：[graph/PendingNodes.tsx](./graph/PendingNodes.tsx) 展示 `GET /api/observations?processed=false` 返回的未处理对话（含 collector 推送的 `source='plugin'` 记录），用户点击"抽取"后调 `POST /api/graphs/{id}/nodes/batch` 将候选节点入图。
+- **`Toast.tsx` 响应推送事件**：collector 推送成功后，后端广播 `plugin.conversation_received` WebSocket 事件，[App.tsx](../App.tsx) 收到后调 `store.pushToast` 弹 Toast 提示用户"收到新对话"。
+- **两套独立 UI**：本目录的图谱 UI（GraphView / NodeDetailCard / QuizPanel 等）与 collector 的悬浮球 UI（[content/ui/](../../../web-ai-chat-collector/content/ui/DEVELOPMENT.md)）是**两套完全独立的 UI**，互不依赖、互不通信；本目录组件不注入 collector 页面，collector 悬浮球也不出现在 KWA 窗口。
+- **`SettingsPanel.tsx` 配置 LLM 凭据**：用户在此配置的 LLM `base_url` / `api_key` / `model` 写入 KWA 后端 `settings` 表（加密存储）；与 collector 的 `chrome.storage.local.llmSettings` **完全独立**，共享 LLM 凭据时需在两侧各填一次。
+
+跨子工程任务（启用推送、UI 风格统一、并行开发联调等）请参考工作区根 [DEVELOPMENT.md](../../../DEVELOPMENT.md) 的"常见跨子工程任务"章节。
+
 ## 模块职责
 
 ```
@@ -20,18 +32,20 @@ components/
 │   ├── WorkInput.tsx                 #   Work 模式抽取入口浮层（Task 13）
 │   └── graphUtils.ts                 #   图谱纯函数工具（截断 / 换行 / 边路径 / 坐标转换）
 │
-├── ChatHome.tsx                      # 对话主页（Work 模式对话入口 + 历史瀑布流）
-├── ChatPanel.tsx                     # 对话面板（activeNav='chat' 时显示）
+├── ChatExpandedOverlay.tsx           # 对话首页大卡浮层（FLIP 动画 + createPortal + 无缝切图谱）
+├── ChatHome.tsx                      # 对话首页瀑布流主体组件（交互增强版）：study/work 双模式推荐卡片瀑布流 + 居中输入框 + sending 过渡；4 项交互增强：卡片飞入（随机 delay/duration）、滚轮覆盖（瀑布流上移盖住输入框 + 输入框渐进模糊）、点击展开（setChatExpandedNodeId 触发顶层 ChatExpandedOverlay）、sending 过渡（仅 work）；props: `{ mode: 'study'|'work', onAsk?: (q: string) => void }`
+├── ChatPanel.tsx                     # 多轮对话面板（Task 9 / Task 10，Study/Work 统一，activeNav='chat' 时显示）
 ├── ContentToolbar.tsx                # 内容区顶栏：视图切换 / 重新布局 / 撤销延伸 / 开始测验 / Work 入口
 ├── GraphList.tsx                     # 左侧图谱列表：新建 / 重命名 / 删除 / 选中
 ├── Icon.tsx                          # 内联 SVG 图标组件（统一图标尺寸与 stroke）
 ├── ModeSwitch.tsx                    # Study / Work 模式切换开关
 ├── PluginIntegrationSection.tsx      # 设置页「插件对接」分区（最近推送 + 契约展示）
-├── RecommendationCard.tsx            # 推荐项卡片（study 复习 / work 提醒）
-├── ReminderBanner.tsx                # 顶部提醒横幅（到期 / 临近提醒）
+├── RecommendationCard.tsx            # 推荐项卡片（forwardRef）：暴露 article DOM 供父组件做 FLIP First 测量；新增 props `enterDelay?` / `enterDuration?` / `isDimmed?`；study 模式底部显示'上次复习时间 + 错误率徽标'，work 模式显示'提醒时间 + 星标图标'；样式类扩展 rec-card--entering / rec-card--dimmed
+├── ReminderBanner.tsx                # 受控组件：仅 `count: number` + `onClick: () => void` 两个 props；count <= 0 返回 null；移除了关闭按钮和跳转节点逻辑；内联 BellIcon
 ├── SettingsPanel.tsx                 # 设置面板：LLM 配置 + 请求队列 + 插件对接分区
 ├── SideNav.tsx                       # 最左 56px 竖排导航：对话 / 图谱 / 设置
-└── Toast.tsx                         # 全局 Toast（成功 / 警告 / 错误）
+├── Toast.tsx                         # 全局 Toast（成功 / 警告 / 错误）
+└── ToolConfirmDialog.tsx             # 高风险工具调用确认对话框（倒计时 + 同意/拒绝）
 ```
 
 ## 关键文件
@@ -42,14 +56,16 @@ components/
 | [ModeSwitch.tsx](./ModeSwitch.tsx) | 模式切换 | 顶部右上角 toggle 开关；订阅 `store.mode`，点击调 `setMode`（自动重载新模式图谱列表 + 清空当前选中）；study 显示墨绿色，work 显示琥珀色 |
 | [GraphList.tsx](./GraphList.tsx) | 图谱列表 | 左侧栏：图谱列表（订阅 `store.graphs`）+ 新建按钮（弹 inline 输入框）+ 重命名（inline 编辑）+ 删除（ConfirmDialog 二次确认）+ 选中（调 `selectGraph` → `loadFullGraph`） |
 | [ContentToolbar.tsx](./ContentToolbar.tsx) | 内容区顶栏 | 视图切换（graph / card，订阅 `store.view`）；重新布局（调 `props.onRelayout` → `graphViewRef.relayout()`）；撤销延伸（仅 `extensionBatchId` 存在时可见，调 `revokeExtend`）；开始测验（study 模式，调 `setQuizPanelOpen(true)`）；Work 模式入口（抽取 / 风口 / 报告 / 提问，调对应 `setWorkActivePanel`） |
-| [ChatPanel.tsx](./ChatPanel.tsx) | 对话面板 | `activeNav='chat'` 时显示；Work 模式：内嵌对话（输入框 + 历史消息流，可预设回复）；Study 模式：提示"对话功能在 Work 模式下可用" |
-| [ChatHome.tsx](./ChatHome.tsx) | 对话主页 | Work 模式对话入口 + 历史瀑布流；空消息时居中显示输入框，发送后输入框移到底部并隐藏卡片 |
+| [ChatExpandedOverlay.tsx](./ChatExpandedOverlay.tsx) | 大卡浮层 | FLIP 飞入动画 + `createPortal` 渲染到 `document.body` + 无缝切换到图谱视图（`setSelectedNode` + `setActiveNav('graph')` + `graphViewRef.focusNodeAtCenter`）；props: `{ graphViewRef: React.RefObject<GraphViewHandle | null> }` |
+| [ChatHome.tsx](./ChatHome.tsx) | 对话首页 | 对话首页瀑布流主体组件（交互增强版）：study/work 双模式推荐卡片瀑布流 + 居中输入框 + sending 过渡；4 项交互增强：卡片飞入（随机 delay/duration）、滚轮覆盖（瀑布流上移盖住输入框 + 输入框渐进模糊）、点击展开（`setChatExpandedNodeId` 触发顶层 `ChatExpandedOverlay`）、sending 过渡（仅 work）；props: `{ mode: 'study'|'work', onAsk?: (q: string) => void }` |
+| [ChatPanel.tsx](./ChatPanel.tsx) | 对话面板 | 多轮对话面板（Task 9 / Task 10）：Study/Work 双模式统一多轮对话；`chatMessages.length === 0` 时渲染 `<ChatHome mode={mode} onAsk={handleAsk} />`，否则渲染 `<ChatConversationView />`；顶层渲染 `pendingToolConfirmation && <ToolConfirmDialog />`；ChatConversationView 含消息列表 + 底部输入框 + header 工具栏（返回首页按钮 / 流式取消按钮）；Work 模式独有的 PlanBuildToggle 子组件；ChatMessageItem 区分 user/assistant 消息，assistant 流式占位态显示三点打字动画，工具调用过程渲染为 ChatToolCallItem 列表 |
 | [SettingsPanel.tsx](./SettingsPanel.tsx) | 设置面板 | `activeNav='settings'` 时显示；LLM 配置（base_url / api_key / model / context_window，调 `api.updateLlmConfig`）；请求队列（活跃列表 + 取消按钮，调 `api.cancelLlmRequest`）；插件对接分区（懒加载 `PluginIntegrationSection`） |
 | [PluginIntegrationSection.tsx](./PluginIntegrationSection.tsx) | 插件对接分区 | 最近推送对话列表（调 `api.getPluginRecent`）+ 接口契约展示（调 `api.getPluginContract`）+ 复制推送 URL 按钮 |
-| [RecommendationCard.tsx](./RecommendationCard.tsx) | 推荐项卡片 | 单条推荐项：标题 + 类型标签 + 推荐理由 + 置信度徽标 + 跳转按钮；点击调 `selectGraph` + `setSelectedNode` 跳到对应节点 |
-| [ReminderBanner.tsx](./ReminderBanner.tsx) | 提醒横幅 | 顶部黄色横幅：到期 / 临近提醒；点击跳转到对应节点；关闭按钮清除当前提示 |
+| [RecommendationCard.tsx](./RecommendationCard.tsx) | 推荐项卡片 | `forwardRef` 实现，暴露 article DOM 供父组件做 FLIP First 测量；新增 props `enterDelay?` / `enterDuration?` / `isDimmed?`；study 模式底部显示"上次复习时间 + 错误率徽标"，work 模式显示"提醒时间 + 星标图标"；样式类扩展 `rec-card--entering` / `rec-card--dimmed` |
+| [ReminderBanner.tsx](./ReminderBanner.tsx) | 提醒横幅 | 受控组件：仅 `count: number` + `onClick: () => void` 两个 props；`count <= 0` 返回 `null`；移除了关闭按钮和跳转节点逻辑；内联 BellIcon |
 | [Icon.tsx](./Icon.tsx) | 图标组件 | 内联 SVG 图标（chat / graph / settings / close / edit / delete / send / 等）；统一 `size` / `color` / `strokeWidth` props；不依赖图标库（避免 bundle 体积） |
-| [Toast.tsx](./Toast.tsx) | 全局提示 | 订阅 `store.toast`；类型：info（蓝）/ success（绿）/ warning（黄）/ error（红）；3s 后自动消失（调 `clearToast`）；多条堆叠（按 id 顺序） |
+| [Toast.tsx](./Toast.tsx) | 全局提示 | 订阅 `store.toast`；类型：info（蓝）/ success（绿）/ warning（黄）/ error（红）；3s 后自动消失（调 `clearToast`）；单条覆盖（后到的覆盖前条） |
+| [ToolConfirmDialog.tsx](./ToolConfirmDialog.tsx) | 工具确认对话框 | 高风险工具调用确认对话框；显示工具名（`TOOL_NAME_LABEL` 中文映射）+ 参数摘要（`summarizeArgs`）+ 风险等级；同意 → `confirmToolCall`；拒绝 + 可选原因 → `rejectToolCall`；倒计时（`timeout` 字段，<=10s 标红 `is-urgent`）；props: `{ confirmation: ToolConfirmation }` |
 
 ## 开发工作流
 
