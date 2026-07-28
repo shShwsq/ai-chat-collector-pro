@@ -41,6 +41,9 @@ from app.services.graph_agent import init_graph_agent
 from app.services.main_agent import init_main_agent
 from app.services.model_config import _REGISTRY
 from app.services.writer_agent import init_writer_agent
+# 新手引导种子图谱（首次启动自动创建）
+from app.services.onboarding_seed import seed_onboarding_if_empty
+from app.services.graph_store import graph_store
 
 
 @asynccontextmanager
@@ -59,6 +62,8 @@ async def lifespan(_app: FastAPI):
     await migrate_node_columns(engine)
     # 迁移 sessions 表新增列（Task 8 chat 路由用：mode / graph_id，幂等）
     await migrate_session_columns(engine)
+    # 首次启动：数据库无图谱时自动创建新手引导图谱（study + work 各一个）
+    await seed_onboarding_if_empty(graph_store)
     # 初始化全局 GraphAgent 单例（无状态，仅确保模块加载与启动日志）
     init_graph_agent()
     # 初始化全局 MainAgent + WriterAgent 单例（Task 8）

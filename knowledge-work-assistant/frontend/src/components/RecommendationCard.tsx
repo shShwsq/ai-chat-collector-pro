@@ -33,10 +33,16 @@ export interface RecommendationCardProps {
   mode: 'study' | 'work'
   /** 卡片点击回调（父组件用于触发展开为大卡）。 */
   onClick: () => void
-  /** mount 时飞入动画延迟（ms）。不传则不播飞入动画。 */
+  /** mount 时飞入动画延迟（ms）。 */
   enterDelay?: number
   /** mount 时飞入动画时长（ms）。 */
   enterDuration?: number
+  /** mount 时飞入起始 X 偏移（px），增加横向无序感。 */
+  enterX?: number
+  /** mount 时飞入起始 Y 偏移（px），增加纵向无序感。 */
+  enterY?: number
+  /** mount 时飞入起始旋转角度（deg），增加倾斜无序感。 */
+  enterRot?: number
   /** 其他卡片展开为大卡时，本卡加高斯模糊 + 半透明。 */
   isDimmed?: boolean
 }
@@ -72,7 +78,7 @@ function StarIcon({ size = 14 }: { size?: number }) {
 
 export const RecommendationCard = forwardRef<HTMLElement, RecommendationCardProps>(
   function RecommendationCard(
-    { item, mode, onClick, enterDelay, enterDuration, isDimmed },
+    { item, mode, onClick, enterDelay, enterDuration, enterX, enterY, enterRot, isDimmed },
     ref,
   ) {
   const { node, reason, is_overdue, is_upcoming, error_rate, days_since_review } = item
@@ -88,12 +94,15 @@ export const RecommendationCard = forwardRef<HTMLElement, RecommendationCardProp
     .filter(Boolean)
     .join(' ')
 
-  // 飞入动画内联变量：延迟与时长（仅当 enterDelay 传入时生效）
+  // 飞入动画内联变量：延迟 / 时长 / 起始位置 / 旋转（仅当 enterDelay 传入时生效）
   const enterStyle =
     enterDelay != null
       ? ({
           '--rec-delay': `${enterDelay}ms`,
           '--rec-dur': `${enterDuration ?? 500}ms`,
+          '--rec-x': `${enterX ?? 0}px`,
+          '--rec-ty': `${enterY ?? 80}px`,
+          '--rec-rot': `${enterRot ?? 0}deg`,
         } as React.CSSProperties)
       : undefined
 

@@ -1,233 +1,345 @@
 /**
- * 对话首页"点击卡片飞到中央展开为大卡"的顶层浮层。
+ * 大卡浮层：卡片点击后「飞出来」展开的全屏浮层。
  *
- * 为什么放在 App 顶层而不是 ChatHome 内：
- * - 大卡浮层需要在 ``activeNav`` 从 'chat' 切到 'graph'（无缝衔接图谱）时仍存活，
- *   而 ChatHome 会随 ChatPanel 卸载而消失——本地 state 会丢失。
- * - 把浮层提到 App 顶层、读全局 ``chatExpandedNodeId``，可跨视图存活，
- *   实现"大卡在中央 → 切图谱视图 → 大卡淡出露出图谱 NodeDetailCard"的无缝衔接。
+ * 动画：FLIP (First → Last → Invert → Play)
+ * - 点击卡片时记录原位置 (First)
+ * - 大卡最终在屏幕中央 (Last)
+ * - 初始 transform 把大卡放回原位置 (Invert)
+ * - 下一帧移除 transform，卡片"飞"到中央 (Play)
  *
- * FLIP 飞入动画：
- * 1. ``chatExpandedNodeId`` 变为非空时，查询 ChatHome DOM 中带 ``data-rec-node-id`` 的卡片，
- *    记录其 ``getBoundingClientRect()`` 作为 First。
- * 2. 浮层中央大卡渲染后（Last = 居中位置），用 CSS 变量 ``--flip-x/y/scale`` 把大卡
- *    "倒回"到 First 位置（Invert）。
- * 3. 下一帧加 ``is-playing`` 类，transform 过渡到 ``translate(0,0) scale(1)``（Play）。
- * 4. 收回（backdrop 点击 / 关闭按钮）：去掉 ``is-playing``，大卡反向飞回 First 位置，
- *    过渡结束后 ``setChatExpandedNodeId(null)`` 卸载。
- *
- * 无缝切图谱（onRequestGraphSwitch / onEdit / onDelete）：
- * - 加 ``is-transitioning`` 类：backdrop 淡出、大卡准备淡出
- * - ``setSelectedNode(nodeId)`` + ``setActiveNav('graph')`` + ``focusNodeAtCenter(nodeId)``
- * - 双 rAF 后（等图谱视图与 NodeDetailCard 渲染好）大卡 opacity 淡出
- * - 淡出完成 → ``setChatExpandedNodeId(null)`` 卸载浮层
+ * 关闭时反向飞回原位。
  */
 
 import { useLayoutEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 
 import { useAppStore } from '../store/useAppStore'
-import type { Node } from '../lib/types'
-import type { GraphViewHandle } from './graph/GraphView'
-import { NodeDetailCard } from './graph/NodeDetailCard'
+import type { Node, RecommendationItem } from '../lib/types'
 
-export interface ChatExpandedOverlayProps {
-  /** 图谱视图 ref，用于无缝切换时把目标节点平移到视口中央。 */
-  graphViewRef: React.RefObject<GraphViewHandle | null>
+interface ChatExpandedOverlayProps {
+  graphViewRef?: React.RefObject<unknown> | null
 }
 
-interface OriginRect {
-  left: number
-  top: number
-  width: number
-  height: number
-}
-
-export function ChatExpandedOverlay({ graphViewRef }: ChatExpandedOverlayProps) {
-  const expandedId = useAppStore((s) => s.chatExpandedNodeId)
-  const setExpandedId = useAppStore((s) => s.setChatExpandedNodeId)
-  const fullGraph = useAppStore((s) => s.fullGraph)
-  const mode = useAppStore((s) => s.mode)
-  const setSelectedNode = useAppStore((s) => s.setSelectedNode)
+export function ChatExpandedOverlay(_props: ChatExpandedOverlayProps) {
+  const chatExpandedNodeId = useAppStore((s) => s.chatExpandedNodeId)
+  const setChatExpandedNodeId = useAppStore((s) => s.setChatExpandedNodeId)
   const setActiveNav = useAppStore((s) => s.setActiveNav)
+  const setSelectedNode = useAppStore((s) => s.setSelectedNode)
+  const fullGraph = useAppStore((s) => s.fullGraph)
+  const recommendations = useAppStore((s) => s.recommendations)
+  const mode = useAppStore((s) => s.mode)
 
-  const overlayRef = useRef<HTMLDivElement>(null)
+  // DOM refs
+  const originRef = useRef<{ left: number; top: number; width: number; height: number } | null>(null)
   const cardRef = useRef<HTMLDivElement>(null)
-  const originRef = useRef<OriginRect | null>(null)
 
-  /** 控制 opacity 淡入淡出（浮层开/关）。 */
-  const [isOpen, setIsOpen] = useState(false)
-  /** 控制 FLIP Play（大卡从原位飞到中央）。 */
+  // 动画状态
   const [isPlaying, setIsPlaying] = useState(false)
-  /** 控制无缝切图谱时大卡与 backdrop 的淡出。 */
+  const [isClosing, setIsClosing] = useState(false)
   const [isTransitioning, setIsTransitioning] = useState(false)
-  /** FLIP 初始变换 CSS 变量（Invert 阶段）。
-   *  用 ``React.CSSProperties`` 的索引签名扩展自定义 CSS 变量，
-   *  避免 TS 严格模式拒绝 ``--flip-x`` 等非标准属性。 */
-  const [flipVars, setFlipVars] = useState<
-    | {
-        '--flip-x': string
-        '--flip-y': string
-        '--flip-scale': string
-        [key: string]: string
-      }
-    | null
-  >(null)
+  const [contentVisible, setContentVisible] = useState(false)
 
-  const node =
-    expandedId && fullGraph
-      ? (fullGraph.nodes.find((n) => n.id === expandedId) ?? null)
-      : null
+  const isOpen = chatExpandedNodeId !== null
 
-  // ===== 开：捕获 First rect + 算 Invert 变量 =====
+  // 找到当前展开的推荐项
+  const recItem: RecommendationItem | undefined = isOpen
+    ? recommendations.find((r: RecommendationItem) => r.node.id === chatExpandedNodeId)
+    : undefined
+  const node: Node | undefined = recItem?.node ?? fullGraph?.nodes.find((n: Node) => n.id === chatExpandedNodeId)
+  const reason = recItem?.reason
+  const isOverdue = recItem?.is_overdue
+  const isUpcoming = recItem?.is_upcoming
+  const daysSinceReview = recItem?.days_since_review
+  const errorRate = recItem?.error_rate
+
   useLayoutEffect(() => {
-    if (!expandedId) {
-      // 关闭：重置所有状态
-      setIsOpen(false)
+    if (!isOpen) {
       setIsPlaying(false)
+      setIsClosing(false)
       setIsTransitioning(false)
-      setFlipVars(null)
-      originRef.current = null
+      setContentVisible(false)
       return
     }
 
-    // 查 ChatHome 中带 data-rec-node-id 的原卡片，记 First
-    const originEl = document.querySelector(
-      `[data-rec-node-id="${CSS.escape(expandedId)}"]`,
+    // 找到原卡片 DOM
+    const originEl = document.querySelector<HTMLElement>(
+      `[data-rec-node-id="${chatExpandedNodeId}"]`,
     )
     if (originEl) {
-      const r = originEl.getBoundingClientRect()
+      const rect = originEl.getBoundingClientRect()
       originRef.current = {
-        left: r.left,
-        top: r.top,
-        width: r.width,
-        height: r.height,
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
       }
     } else {
-      originRef.current = null
+      // 找不到原卡时从屏幕外飞入
+      originRef.current = {
+        left: window.innerWidth / 2 - 80,
+        top: window.innerHeight + 100,
+        width: 160,
+        height: 200,
+      }
     }
 
-    // 先把浮层显示出来（opacity 淡入），但大卡仍位于中央（尚未设 flip 变量）
-    setIsTransitioning(false)
-    setIsOpen(true)
-    setIsPlaying(false)
-    setFlipVars(null)
-  }, [expandedId])
-
-  // ===== 算 Invert 变量 + 触发 Play =====
-  // 直接操作 DOM 设置 CSS 变量（不走 React state），避免 setFlipVars 与
-  // setIsPlaying 被 React 18 concurrent mode 批处理到同一帧，导致 Invert
-  // transform 未被浏览器绘制、CSS transition 无起点、动画不播放。
-  // 配合 force reflow 确保浏览器已将 Invert transform 应用到渲染层，
-  // 下一帧再添加 is-playing 类触发 Play，transition 才能正确插值。
-  useLayoutEffect(() => {
-    if (!isOpen || !originRef.current || !cardRef.current) {
-      // 无原卡片 rect：直接 Play（仅淡入+缩放，无 FLIP 位移）
-      if (isOpen) {
-        const raf = requestAnimationFrame(() =>
-          requestAnimationFrame(() => setIsPlaying(true)),
-        )
-        return () => cancelAnimationFrame(raf)
-      }
+    if (!cardRef.current || !originRef.current) {
+      requestAnimationFrame(() => {
+        setIsPlaying(true)
+        setTimeout(() => setContentVisible(true), 200)
+      })
       return
     }
+
     const card = cardRef.current
-    // Last：大卡当前居中位置
-    const cardRect = card.getBoundingClientRect()
-    const first = originRef.current
-    // Invert：把大卡从中央位移到 First 位置，并缩放到 First 尺寸
-    const dx = first.left - cardRect.left
-    const dy = first.top - cardRect.top
-    const scale =
-      cardRect.width > 0 ? first.width / cardRect.width : 1
-    // 直接写 DOM style 的 CSS 变量，立即生效（无需等 React 重渲染）
-    card.style.setProperty('--flip-x', `${dx}px`)
-    card.style.setProperty('--flip-y', `${dy}px`)
-    card.style.setProperty('--flip-scale', `${scale}`)
-    // force reflow：强制浏览器将当前样式（Invert transform）刷到渲染层，
-    // 否则后续 is-playing 的 transform 变更可能被合并，transition 不触发。
-    void card.offsetWidth
-    // 下一帧 Play：transform 过渡到 translate(0,0) scale(1)
-    const raf = requestAnimationFrame(() =>
-      requestAnimationFrame(() => setIsPlaying(true)),
-    )
-    return () => cancelAnimationFrame(raf)
+    // 先重置到初始状态
+    setIsPlaying(false)
+    setContentVisible(false)
+
+    requestAnimationFrame(() => {
+      const cardRect = card.getBoundingClientRect()
+      const first = originRef.current!
+      const dx = first.left - cardRect.left
+      const dy = first.top - cardRect.top
+      const scale = cardRect.width > 0 ? first.width / cardRect.width : 0.8
+
+      card.style.setProperty('--flip-x', `${dx}px`)
+      card.style.setProperty('--flip-y', `${dy}px`)
+      card.style.setProperty('--flip-scale', `${scale * 0.85}`)
+      card.style.setProperty('--flip-rot', '-6deg')
+      void card.offsetWidth // 触发 reflow
+
+      requestAnimationFrame(() => {
+        setIsPlaying(true)
+        card.style.setProperty('--flip-rot', '0deg')
+        // 内容延迟淡入
+        setTimeout(() => setContentVisible(true), 150)
+      })
+    })
+  }, [isOpen, chatExpandedNodeId])
+
+  const handleClose = () => {
+    if (!cardRef.current) {
+      setChatExpandedNodeId(null)
+      return
+    }
+
+    setIsPlaying(false)
+    setIsClosing(true)
+    setContentVisible(false)
+    const card = cardRef.current
+
+    if (originRef.current) {
+      const cardRect = card.getBoundingClientRect()
+      const first = originRef.current
+      const dx = first.left - cardRect.left
+      const dy = first.top - cardRect.top
+      const scale = cardRect.width > 0 ? first.width / cardRect.width : 0.8
+      card.style.setProperty('--flip-x', `${dx}px`)
+      card.style.setProperty('--flip-y', `${dy}px`)
+      card.style.setProperty('--flip-scale', `${scale * 0.85}`)
+      card.style.setProperty('--flip-rot', '5deg')
+    }
+
+    window.setTimeout(() => {
+      setChatExpandedNodeId(null)
+    }, 400)
+  }
+
+  const handleExtend = () => {
+    if (!chatExpandedNodeId) return
+    setIsTransitioning(true)
+    setContentVisible(false)
+    window.setTimeout(() => {
+      // 切换到图谱视图并选中该节点
+      setSelectedNode(chatExpandedNodeId)
+      setActiveNav('graph')
+      setChatExpandedNodeId(null)
+    }, 280)
+  }
+
+  const handleBackdropClick = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) handleClose()
+  }
+
+  // ESC 键关闭
+  useLayoutEffect(() => {
+    if (!isOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') handleClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen])
 
-  // ===== 关闭：反向 FLIP 飞回原位，结束后卸载 =====
-  const handleClose = () => {
-    if (!originRef.current) {
-      // 无原位：直接卸载
-      setExpandedId(null)
-      return
-    }
-    // 去掉 is-playing → transform 回到 flip 变量（原位）
-    setIsPlaying(false)
-    // 等过渡结束再卸载（与 CSS transform 420ms 对齐，留点余量）
-    window.setTimeout(() => {
-      setExpandedId(null)
-    }, 440)
-  }
+  if (!isOpen || !node) return null
 
-  // ===== 无缝切图谱 =====
-  const handleSwitchToGraph = (nodeId: string) => {
-    if (isTransitioning) return
-    setIsTransitioning(true)
-    setSelectedNode(nodeId)
-    setActiveNav('graph')
-    // 让目标节点平移到视口中央（图谱视图渲染后调用）。
-    // 用 setTimeout 而非双 rAF：React 18 concurrent mode 下 rAF 回调可能
-    // 因重渲染批次被延迟或丢弃，导致 setExpandedId(null) 永不执行（浮层不卸载）。
-    // setTimeout 更可靠地等到 GraphView 挂载完成。
-    window.setTimeout(() => {
-      graphViewRef.current?.focusNodeAtCenter(nodeId)
-    }, 60)
-    // 等 GraphView 的 NodeDetailCard 渲染好后再淡出大卡。
-    // is-transitioning 已让大卡 opacity 淡出（250ms），280ms 后卸载浮层。
-    window.setTimeout(() => {
-      setExpandedId(null)
-    }, 340)
+  // 获取标签样式
+  const getStatusBadge = () => {
+    if (isOverdue) return { cls: 'badge--overdue', text: '已到期' }
+    if (isUpcoming) return { cls: 'badge--soon', text: '即将到期' }
+    if (errorRate !== undefined && errorRate > 0.4) return { cls: 'badge--error', text: '高错误率' }
+    return null
   }
+  const badge = getStatusBadge()
 
-  if (!expandedId || !node) return null
+  // 类型标签映射（学习模式 + 工作模式）
+  const typeLabels: Record<string, string> = {
+    // 学习模式
+    concept: '概念', method: '方法', person: '人物',
+    book: '书籍', problem: '问题', event: '事件',
+    general: '通用',
+    // 工作模式
+    work_task: '任务', work_todo: '待办', work_meeting: '会议',
+    work_note: '笔记', work_project: '项目',
+    COMMITMENT: '承诺', RISK: '风险', EVENT: '事件',
+    KEY_PERSON: '关键人物', THREAD: '线索', EXPECTATION: '期望',
+    DECISION: '决策', REVIEW: '复盘',
+  }
+  // 格式化类型显示：优先使用中文映射；未映射的做简单美化（下划线→空格，首字母大写）
+  const formatTypeLabel = (t: string | undefined): string => {
+    if (!t) return '节点'
+    if (typeLabels[t]) return typeLabels[t]
+    return t.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+  }
+  const typeLabel = formatTypeLabel(node.type)
 
   const overlayCls = [
-    'chat-expanded-overlay',
-    isOpen ? 'is-open' : '',
+    'expanded-overlay',
     isPlaying ? 'is-playing' : '',
+    isClosing ? 'is-closing' : '',
     isTransitioning ? 'is-transitioning' : '',
   ]
     .filter(Boolean)
     .join(' ')
 
-  return createPortal(
-    <div ref={overlayRef} className={overlayCls}>
-      <div
-        className="chat-expanded-overlay__backdrop"
-        onClick={handleClose}
-        aria-hidden="true"
-      />
-      <div
-        ref={cardRef}
-        className="chat-expanded-overlay__card"
-        style={(flipVars as React.CSSProperties) ?? undefined}
-      >
-        <NodeDetailCard
-          node={node}
-          graphType={mode}
-          pinned
-          position={{ left: 0, top: 0, width: 0, maxHeight: 9999 /* 由外层 .chat-expanded-overlay__card max-height: 80vh 兜底 */ }}
-          onCardMouseEnter={() => {}}
-          onCardMouseLeave={() => {}}
-          onClose={handleClose}
-          onEdit={(n: Node) => handleSwitchToGraph(n.id)}
-          onDelete={(n: Node) => handleSwitchToGraph(n.id)}
-          onRequestGraphSwitch={(id) => handleSwitchToGraph(id)}
-        />
+  return (
+    <div
+      className={overlayCls}
+      onClick={handleBackdropClick}
+    >
+      <div className="expanded-overlay__backdrop" />
+      <div className="expanded-overlay__card" ref={cardRef}>
+        {/* 关闭按钮 */}
+        <button
+          type="button"
+          className="expanded-overlay__close"
+          onClick={handleClose}
+          aria-label="关闭"
+        >
+          ×
+        </button>
+
+        {/* 卡片头部 */}
+        <div className={`expanded-card__header${contentVisible ? ' is-visible' : ''}`}>
+          <div className="expanded-card__top-row">
+            <span className="expanded-card__type">{typeLabel}</span>
+            {badge && (
+              <span className={`expanded-card__badge ${badge.cls}`}>{badge.text}</span>
+            )}
+          </div>
+          <h2 className="expanded-card__title">{node.title || '（无标题）'}</h2>
+        </div>
+
+        {/* 卡片内容区 */}
+        <div className={`expanded-card__body${contentVisible ? ' is-visible' : ''}`}>
+          {/* 概括/摘要 */}
+          {(node.summary || reason) && (
+            <section className="expanded-card__section">
+              <h3 className="expanded-card__section-title">
+                {node.summary ? '内容概括' : '推荐理由'}
+              </h3>
+              <p className="expanded-card__summary">
+                {node.summary || reason}
+              </p>
+            </section>
+          )}
+
+          {/* 元信息 */}
+          <section className="expanded-card__section">
+            <h3 className="expanded-card__section-title">信息</h3>
+            <div className="expanded-card__meta">
+              {daysSinceReview !== null && daysSinceReview !== undefined && (
+                <div className="expanded-card__meta-item">
+                  <span className="expanded-card__meta-label">上次复习</span>
+                  <span className="expanded-card__meta-value">
+                    {daysSinceReview === 0 ? '今天' : `${daysSinceReview} 天前`}
+                  </span>
+                </div>
+              )}
+              {errorRate !== undefined && (
+                <div className="expanded-card__meta-item">
+                  <span className="expanded-card__meta-label">错误率</span>
+                  <span className="expanded-card__meta-value">
+                    {Math.round(errorRate * 100)}%
+                  </span>
+                </div>
+              )}
+              {mode === 'work' && node.remind_at && (
+                <div className="expanded-card__meta-item">
+                  <span className="expanded-card__meta-label">提醒时间</span>
+                  <span className="expanded-card__meta-value">
+                    {new Date(node.remind_at).toLocaleString('zh-CN', {
+                      month: '2-digit', day: '2-digit',
+                      hour: '2-digit', minute: '2-digit',
+                    })}
+                  </span>
+                </div>
+              )}
+              {node.created_at && (
+                <div className="expanded-card__meta-item">
+                  <span className="expanded-card__meta-label">创建时间</span>
+                  <span className="expanded-card__meta-value">
+                    {new Date(node.created_at).toLocaleDateString('zh-CN')}
+                  </span>
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* 详情内容（如果节点有详细字段） */}
+          {node.detail_payload && Object.keys(node.detail_payload).length > 0 && (
+            <section className="expanded-card__section">
+              <h3 className="expanded-card__section-title">详细内容</h3>
+              <div className="expanded-card__details">
+                {Object.entries(node.detail_payload)
+                  .filter(([k]) => !k.startsWith('_') && k !== 'extensions')
+                  .slice(0, 6)
+                  .map(([key, val]) => (
+                    <div key={key} className="expanded-card__detail-row">
+                      <span className="expanded-card__detail-key">{key}</span>
+                      <span className="expanded-card__detail-val">
+                        {typeof val === 'string' ? val : JSON.stringify(val)}
+                      </span>
+                    </div>
+                  ))}
+              </div>
+            </section>
+          )}
+        </div>
+
+        {/* 操作按钮区 */}
+        <div className={`expanded-card__footer${contentVisible ? ' is-visible' : ''}`}>
+          <button
+            type="button"
+            className="expanded-card__btn expanded-card__btn--ghost"
+            onClick={handleClose}
+          >
+            关闭
+          </button>
+          <button
+            type="button"
+            className="expanded-card__btn expanded-card__btn--primary"
+            onClick={handleExtend}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 8v8M8 12h8" />
+            </svg>
+            延伸拓展
+          </button>
+        </div>
       </div>
-    </div>,
-    document.body,
+    </div>
   )
 }
-
-export default ChatExpandedOverlay

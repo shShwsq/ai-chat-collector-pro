@@ -96,9 +96,9 @@
 
 .app-header__title {
   margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  letter-spacing: 0.2px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
   color: var(--text);
 }
 
@@ -5316,7 +5316,15 @@
   display: flex;
   flex-direction: column;
   background: var(--bg);
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* 隐藏滚动条但保持可滚动 */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.chat-panel::-webkit-scrollbar {
+  display: none;
 }
 
 /* Study 模式：居中提示卡片 */
@@ -6472,47 +6480,103 @@
  * ============================================================================ */
 
 .chat-home {
-  flex: 1;
-  min-width: 0;
-  /* 改 flex → grid：四行结构（banner / 上半空间 / 输入框 / 下半空间）
-     让输入框（第 3 行）天然位于视口垂直中心。 */
-  display: grid;
-  grid-template-rows: auto 1fr auto 1fr;
-  padding: 16px 20px 24px;
-  gap: 16px;
-  overflow: hidden;
+  /* flex column 让 waterfall 撑满剩余空间，推底部模糊到最底 */
+  width: 100%;
+  min-height: 100%;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 20px;
   background: var(--bg);
 }
 
-/* 输入框容器：显式放在 grid 第 3 行（上下各一个 1fr 行等分剩余空间，
-   使输入框落在视口垂直中心）；水平由 margin: 0 auto + max-width 居中。 */
+/* 输入框容器：水平居中 */
+/* 输入框上方占位：让输入框初始位于视口中间偏下 */
+.chat-home__input-spacer {
+  height: 42vh;
+  flex-shrink: 0;
+}
+
+/* 输入框容器：sticky 固定在视口中间偏下，不随瀑布流滚走 */
 .chat-home__input-wrap {
+  position: sticky;
+  top: 42vh;
+  z-index: 1;
   width: 100%;
   max-width: 600px;
-  grid-row: 3;
   margin: 0 auto;
+  padding-bottom: 24px;
+  /* 滚动时渐变高斯模糊，--input-blur 由 JS 注入 */
+  filter: blur(var(--input-blur, 0px));
 }
 
 .chat-home__input {
-  width: 100%;
-  padding: 12px 20px;
-  font-size: 14px;
+  flex: 1;
+  min-width: 0;
+  padding: 14px 24px;
+  font-size: 14.5px;
   font-family: inherit;
   color: var(--text);
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 999px;
+  border: 1.5px solid var(--border);
+  border-radius: 999px 0 0 999px;
   outline: none;
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  transition:
+    border-color 200ms ease,
+    box-shadow 200ms ease,
+    transform 150ms ease;
 }
 
 .chat-home__input::placeholder {
   color: var(--text-tertiary);
 }
 
+.chat-home__input:hover {
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
 .chat-home__input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.12), 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+
+/* 输入行：输入框 + 发送按钮横向排列 */
+.chat-home__input-row {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  border-radius: 999px;
+}
+
+.chat-home__input-row .chat-home__input {
+  box-shadow: none;
+}
+
+/* 发送按钮 */
+.chat-home__send-btn {
+  flex-shrink: 0;
+  padding: 0 24px;
+  font-size: 14px;
+  font-family: inherit;
+  font-weight: 500;
+  color: #fff;
+  background: var(--accent);
+  border: 1.5px solid var(--accent);
+  border-left: none;
+  border-radius: 0 999px 999px 0;
+  cursor: pointer;
+  transition: opacity 200ms ease, background 200ms ease;
+}
+
+.chat-home__send-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.chat-home__send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Study 模式下「在图谱视图中搜索」快捷按钮：小尺寸、轻量提示风格 */
@@ -6541,26 +6605,18 @@
 }
 
 /* 瀑布流容器：多列自适应 grid（auto-fill + minmax 根据屏幕宽度自动排布列数）。
- * 限高 45vh + 内部滚动：让输入框保持垂直居中，卡片在下方占用下半屏一部分，
- * 多余卡片在瀑布流内部滚动，不挤占输入框位置。
- * grid-row: 4 + align-self: start：贴在下半空间顶部（输入框正下方），
- * 滚轮覆盖时上移盖住输入框。 */
+ * 自然流式布局，不设内部滚动，让整个chat-panel滚动，从最底到最顶都可滑动。 */
 .chat-home__waterfall {
-  flex: 0 1 auto;
-  min-height: 0;
-  max-height: 45vh;
-  overflow-y: auto;
   /* 多列自适应：260px 最小列宽，根据容器宽度自动排 2~4 列 */
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 14px;
+  gap: 16px;
   width: 100%;
-  max-width: 1200px;
+  max-width: 1280px;
   margin: 0 auto;
-  padding: 4px 4px;
-  /* 放在第 4 行，贴顶（紧邻输入框下方），滚轮覆盖时上移盖住输入框 */
-  grid-row: 4;
-  align-self: start;
+  padding: 8px 4px 20px;
+  /* flex:1 撑满剩余空间，推底部模糊到视口最底 */
+  flex: 1;
 }
 
 /* 瀑布流直接子元素（卡片外层包裹 div / 空状态）撑满容器宽度，
@@ -6589,30 +6645,49 @@
   border-color: var(--danger-border);
 }
 
-/* ----- 推荐卡片 ----- */
+/* ----- 推荐卡片（现代简洁风格，hover有微妙抬升效果）----- */
 .rec-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  /* 撑满外层包裹 div（width:100%），即瀑布流 max-width 360px */
   width: 100%;
-  padding: 24px 22px 20px;
+  padding: 0;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: 14px;
   cursor: pointer;
-  /* 竖向长方形：min-height 440px > 卡片宽度 360px，让卡片高 > 宽。
-     内容用 space-between 分布：head 顶部 / reason 中部撑开 / meta 底部。 */
-  min-height: 440px;
-  justify-content: space-between;
-  transition: transform var(--transition-fast),
-    box-shadow var(--transition-fast), border-color var(--transition-fast),
-    background var(--transition-fast);
+  min-height: 200px;
+  justify-content: flex-start;
+  overflow: hidden;
+  transition:
+    transform 250ms cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 250ms cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 200ms ease;
+  position: relative;
+}
+
+.rec-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.03) 0%, rgba(139, 92, 246, 0.02) 100%);
+  opacity: 0;
+  transition: opacity 200ms ease;
+  pointer-events: none;
 }
 
 .rec-card:hover {
-  border-color: var(--text-tertiary);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+  border-color: rgba(59, 130, 246, 0.3);
+  box-shadow:
+    0 12px 28px rgba(0, 0, 0, 0.08),
+    0 4px 12px rgba(59, 130, 246, 0.06);
+  transform: translateY(-4px);
+}
+
+.rec-card:hover::before {
+  opacity: 1;
+}
+
+.rec-card:active {
   transform: translateY(-2px);
 }
 
@@ -6624,11 +6699,12 @@
 /* 到期卡片：左边框红色 + 浅红背景 */
 .rec-card--overdue {
   border-left: 3px solid var(--danger);
-  background: var(--danger-soft);
+  background: linear-gradient(to right, #fef2f2, var(--surface));
 }
 
 .rec-card--overdue:hover {
-  background: #fee9e9;
+  background: linear-gradient(to right, #fee9e9, var(--surface));
+  border-color: rgba(220, 38, 38, 0.3);
 }
 
 /* 临近卡片：左边框橙色 */
@@ -6636,26 +6712,33 @@
   border-left: 3px solid #f59e0b;
 }
 
-/* 同时命中 overdue + upcoming 时，到期优先（red 覆盖 orange） */
+/* 同时命中 overdue + upcoming 时，到期优先 */
 .rec-card--overdue.rec-card--upcoming {
   border-left-color: var(--danger);
 }
 
-/* 卡片头部：标题 + 类型标签 */
+/* 卡片头部 */
 .rec-card__head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
+  padding: 14px 16px 10px;
+  position: relative;
 }
 
+.rec-card--overdue .rec-card__head {
+  /* 使用渐变背景保持现代感 */
+}
+
+/* 标题 */
 .rec-card__title {
   flex: 1;
   min-width: 0;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text);
-  line-height: 1.4;
+  line-height: 1.45;
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
@@ -6664,22 +6747,26 @@
   word-break: break-word;
 }
 
+/* 类型标签 */
 .rec-card__tag {
   flex-shrink: 0;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  background: var(--border-soft);
-  padding: 2px 8px;
-  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--accent);
+  background: rgba(59, 130, 246, 0.1);
+  padding: 3px 9px;
+  border-radius: 6px;
   white-space: nowrap;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 
-/* 推荐理由：灰色小字 */
+/* 推荐理由 */
 .rec-card__reason {
   margin: 0;
-  font-size: 12px;
-  line-height: 1.55;
+  padding: 2px 16px 8px;
+  font-size: 12.5px;
+  line-height: 1.6;
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -6687,20 +6774,23 @@
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   word-break: break-word;
+  flex: 1;
 }
 
-/* 底部信息行：flex，两端对齐 */
+/* 底部信息行 */
 .rec-card__meta {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-top: 2px;
+  margin-top: auto;
+  padding: 8px 16px 14px;
 }
 
 .rec-card__meta-text {
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--text-tertiary);
+  font-weight: 500;
 }
 
 .rec-card__meta-text.is-overdue {
@@ -6708,23 +6798,23 @@
   font-weight: 600;
 }
 
-/* 错误率徽标：默认灰色，>50% 红色 */
+/* 错误率徽标 */
 .rec-card__error-badge {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 999px;
+  padding: 3px 8px;
+  border-radius: 6px;
   color: var(--text-secondary);
   background: var(--border-soft);
 }
 
 .rec-card__error-badge.is-high {
   color: #fff;
-  background: var(--danger);
+  background: linear-gradient(135deg, #ef4444, #dc2626);
 }
 
-/* 星标图标：跟随强调色 */
+/* 星标图标 */
 .rec-card__star {
   flex-shrink: 0;
   display: inline-flex;
@@ -6747,11 +6837,11 @@
 
 @keyframes rec-card-fly-in {
   from {
-    transform: translateY(80px) scale(0.96);
+    transform: translate(var(--rec-x, 0px), var(--rec-ty, 80px)) scale(0.94) rotate(var(--rec-rot, 0deg));
     opacity: 0;
   }
   to {
-    transform: translateY(0) scale(1);
+    transform: translate(0, 0) scale(1) rotate(0deg);
     opacity: 1;
   }
 }
@@ -6773,116 +6863,397 @@
   pointer-events: none;
 }
 
-/* chat-home 状态：用 CSS 变量 --cover 驱动覆盖量与模糊强度 */
+/* chat-home 状态：简化交互，移除滚轮覆盖逻辑 */
 .chat-home {
   /* 默认无覆盖 */
   --cover: 0;
-  /* 输入框区域高度，由 JS 测量后注入，用于瀑布流上移量 */
+  /* 输入框区域高度，由 JS 测量后注入 */
   --input-h: 0px;
 }
 
 .chat-home__input-wrap {
-  /* 覆盖时渐进模糊 + 轻微透明；sending 时下移到底部 */
+  /* sending 时下移到底部；filter 不加过渡以响应滚动即时更新 */
   transition: transform 450ms var(--ease-snap),
-    filter 120ms linear, opacity 120ms linear;
-  /* 显式初始 transform：让 none → translateY(...) 的过渡可插值，
-     否则 CSS transition 会因 none 不可插值而不触发，sending 下移失效。 */
+    opacity 200ms ease;
+  /* 显式初始 transform：让 none → translateY(...) 的过渡可插值 */
   transform: translateY(0);
-  filter: blur(calc(var(--cover) * 10px));
-  opacity: calc(1 - var(--cover) * 0.35);
   will-change: transform, filter;
 }
 
 /* sending：输入框下移到底部。--slide-y 由 JS 测量视口高度后注入 */
 .chat-home--sending .chat-home__input-wrap {
   transform: translateY(var(--slide-y, 100vh));
+  opacity: 0;
 }
 
 .chat-home__waterfall {
-  /* 覆盖时整片上移盖住输入框；逐帧 wheel 用短过渡平滑 */
-  transition: transform 120ms linear;
-  transform: translateY(calc(var(--cover) * -1 * var(--input-h)));
-  will-change: transform;
+  /* z-index 高于输入框，卡片滑上时覆盖输入框 */
+  position: relative;
+  z-index: 2;
+  will-change: transform, opacity;
 }
 
-/* sending 阶段瀑布流让出空间 */
+/* sending 阶段瀑布流淡出 */
 .chat-home--sending .chat-home__waterfall {
   opacity: 0;
-  transition: opacity 300ms var(--ease-snap);
+  transform: translateY(40px);
+  transition: opacity 350ms var(--ease-snap), transform 400ms var(--ease-snap);
+  pointer-events: none;
+}
+
+/* 底部渐变高斯模糊：sticky 钉在视口底部，mask 让模糊渐变过渡 */
+.chat-home__bottom-blur {
+  position: sticky;
+  bottom: 0;
+  height: 72px;
+  margin-top: -72px;
+  background: linear-gradient(to top, var(--bg) 10%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  /* mask 让 backdrop-filter 也渐变，避免硬边 */
+  mask-image: linear-gradient(to top, black 20%, transparent);
+  -webkit-mask-image: linear-gradient(to top, black 20%, transparent);
+  z-index: 3;
   pointer-events: none;
 }
 
 /* ============================================================
-   大卡浮层（ChatExpandedOverlay）：fixed 中央定位 + backdrop
+   卡片飞出浮层（expanded-overlay）：fixed 中央定位 + FLIP动画
    ============================================================ */
 
-.chat-expanded-overlay {
+.expanded-overlay {
   position: fixed;
   inset: 0;
   z-index: 1100;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 24px;
   pointer-events: none;
-  /* 由 JS 控制 opacity 淡入淡出 */
   opacity: 0;
-  transition: opacity 250ms var(--ease-snap);
+  transition: opacity 200ms ease;
 }
 
-.chat-expanded-overlay.is-open {
+.expanded-overlay.is-playing {
   opacity: 1;
   pointer-events: auto;
 }
 
-.chat-expanded-overlay__backdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.28);
-  backdrop-filter: blur(2px);
-  /* 切图谱时淡出背景 */
-  transition: opacity 200ms var(--ease-snap);
-}
-
-.chat-expanded-overlay.is-transitioning .chat-expanded-overlay__backdrop {
+.expanded-overlay.is-transitioning {
   opacity: 0;
 }
 
-.chat-expanded-overlay__card {
+.expanded-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.expanded-overlay__card {
   position: relative;
   width: min(560px, 92vw);
-  max-height: 80vh;
-  background: var(--surface);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22),
-    0 8px 24px rgba(0, 0, 0, 0.12);
+  max-height: 85vh;
+  background: var(--surface, #fff);
+  border-radius: 20px;
+  box-shadow:
+    0 40px 100px rgba(0, 0, 0, 0.25),
+    0 16px 40px rgba(0, 0, 0, 0.12),
+    0 0 0 1px rgba(255, 255, 255, 0.1) inset;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  /* FLIP：初始用 transform 放回原卡片位置，下一帧过渡到中央 */
-  transform: translate(var(--flip-x, 0), var(--flip-y, 0))
-    scale(var(--flip-scale, 1));
-  transform-origin: top left;
-  transition: transform 420ms var(--ease-snap);
+  transform:
+    translate(var(--flip-x, 0), var(--flip-y, 0))
+    scale(var(--flip-scale, 0.8))
+    rotate(var(--flip-rot, -6deg));
+  transform-origin: center center;
+  transition:
+    transform 520ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 520ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.chat-expanded-overlay.is-playing .chat-expanded-overlay__card {
-  transform: translate(0, 0) scale(1);
+.expanded-overlay.is-playing .expanded-overlay__card {
+  transform: translate(0, 0) scale(1) rotate(0deg);
+  box-shadow:
+    0 40px 100px rgba(0, 0, 0, 0.3),
+    0 16px 40px rgba(0, 0, 0, 0.15);
 }
 
-/* 切图谱时大卡淡出（背景已切到图谱视图） */
-.chat-expanded-overlay.is-transitioning .chat-expanded-overlay__card {
-  opacity: 0;
-  transition: opacity 250ms var(--ease-snap);
+.expanded-overlay.is-closing .expanded-overlay__card {
+  transition-duration: 380ms;
 }
 
-/* 大卡内嵌 NodeDetailCard 时去掉其默认绝对定位，改为流式填充 */
-.chat-expanded-overlay__card .node-detail-card {
-  position: static !important;
-  transform: none !important;
-  max-height: 80vh;
-  width: 100%;
+.expanded-overlay__close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--text-secondary, #64748b);
+  background: var(--surface-hover, rgba(0,0,0,0.04));
   border: none;
-  box-shadow: none;
+  border-radius: 50%;
+  cursor: pointer;
+  z-index: 10;
+  transition: background 150ms ease, color 150ms ease, transform 150ms ease;
+  font-family: inherit;
+}
+
+.expanded-overlay__close:hover {
+  background: rgba(0, 0, 0, 0.08);
+  color: var(--text, #1e293b);
+  transform: scale(1.1);
+}
+
+/* ===== 卡片头部 ===== */
+.expanded-card__header {
+  padding: 28px 28px 20px;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.06) 0%, rgba(139, 92, 246, 0.04) 100%);
+  border-bottom: 1px solid var(--border, #e2e8f0);
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity 300ms ease, transform 300ms ease;
+}
+
+.expanded-card__header.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.expanded-card__top-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.expanded-card__type {
+  display: inline-block;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent, #3b82f6);
+  background: rgba(59, 130, 246, 0.1);
+  border-radius: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.expanded-card__badge {
+  display: inline-block;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+}
+
+.expanded-card__badge.badge--overdue {
+  color: #dc2626;
+  background: #fef2f2;
+}
+
+.expanded-card__badge.badge--soon {
+  color: #d97706;
+  background: #fffbeb;
+}
+
+.expanded-card__badge.badge--error {
+  color: #7c3aed;
+  background: #f5f3ff;
+}
+
+.expanded-card__title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--text, #1e293b);
+}
+
+/* ===== 卡片内容区（可滚动） ===== */
+.expanded-card__body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 20px 28px;
+  opacity: 0;
+  transform: translateY(12px);
+  transition: opacity 350ms ease 80ms, transform 350ms ease 80ms;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0,0,0,0.15) transparent;
+}
+
+.expanded-card__body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.expanded-card__body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.expanded-card__body::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 3px;
+}
+
+.expanded-card__body::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.expanded-card__body.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.expanded-card__section + .expanded-card__section {
+  margin-top: 24px;
+}
+
+.expanded-card__section-title {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary, #64748b);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.expanded-card__summary {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.75;
+  color: var(--text, #334155);
+}
+
+/* ===== 元信息网格 ===== */
+.expanded-card__meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.expanded-card__meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  background: var(--bg, #f8fafc);
+  border-radius: 10px;
+}
+
+.expanded-card__meta-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary, #94a3b8);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.expanded-card__meta-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text, #1e293b);
+}
+
+/* ===== 详情字段 ===== */
+.expanded-card__details {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.expanded-card__detail-row {
+  display: flex;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border, #f1f5f9);
+}
+
+.expanded-card__detail-row:last-child {
+  border-bottom: none;
+}
+
+.expanded-card__detail-key {
+  flex-shrink: 0;
+  min-width: 80px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary, #64748b);
+  text-transform: capitalize;
+}
+
+.expanded-card__detail-val {
+  flex: 1;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text, #334155);
+  word-break: break-word;
+}
+
+/* ===== 操作按钮区 ===== */
+.expanded-card__footer {
+  flex-shrink: 0;
+  display: flex;
+  gap: 10px;
+  padding: 16px 28px 24px;
+  border-top: 1px solid var(--border, #f1f5f9);
+  background: var(--surface, #fff);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 300ms ease 160ms, transform 300ms ease 160ms;
+}
+
+.expanded-card__footer.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.expanded-card__btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 11px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 150ms ease;
+  font-family: inherit;
+}
+
+.expanded-card__btn--ghost {
+  color: var(--text-secondary, #64748b);
+  background: transparent;
+  border: 1px solid var(--border, #e2e8f0);
+}
+
+.expanded-card__btn--ghost:hover {
+  background: var(--hover, #f1f5f9);
+  color: var(--text, #1e293b);
+}
+
+.expanded-card__btn--primary {
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent, #3b82f6) 0%, #8b5cf6 100%);
+  border: none;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.expanded-card__btn--primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
+}
+
+.expanded-card__btn--primary:active {
+  transform: translateY(0);
 }
 
 /* ----- 提醒横幅 ----- */
