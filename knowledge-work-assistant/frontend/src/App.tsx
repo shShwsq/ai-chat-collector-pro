@@ -51,6 +51,7 @@ import type { HealthResponse } from './lib/types'
  */
 export default function App() {
   const mode = useAppStore((s) => s.mode)
+  const theme = useAppStore((s) => s.theme)
   const view = useAppStore((s) => s.view)
   const currentGraphId = useAppStore((s) => s.currentGraphId)
   const fullGraph = useAppStore((s) => s.fullGraph)
@@ -160,6 +161,12 @@ export default function App() {
             case 'chat_tool_call_confirmation':
               store.handleChatToolConfirmation(event)
               break
+            case 'chat_thinking':
+              store.handleChatThinking(event)
+              break
+            case 'chat_content_replace':
+              store.handleChatContentReplace(event)
+              break
             default:
               // welcome / pong / echo 等不处理
               break
@@ -186,7 +193,7 @@ export default function App() {
   }, [])
 
   return (
-    <div className="app-shell" data-mode={mode}>
+    <div className="app-shell" data-mode={mode} data-theme={theme}>
       <header className="app-header">
         <div className="app-header__left">
           <h1 className="app-header__title">知识工作助手</h1>

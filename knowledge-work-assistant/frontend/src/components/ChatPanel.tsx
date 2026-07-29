@@ -1,25 +1,22 @@
 /**
- * 对话面板（Task 9 / Task 10 重构：多轮对话版）。
+ * 对话面板（Task 9 / Task 10 重构 + 本土化适配）。
  *
  * 设计要点：
+ * - **三栏布局**：左侧会话列表（240px）/ 中间消息区 / 底部输入区。
+ *   会话列表显示历史对话，点击切换；选中态高亮，悬停显示删除按钮。
  * - **统一多轮对话**：Study / Work 模式都调用 ``store.sendMessage`` 触发后端
  *   ``POST /api/chat/sessions/{id}/stream``，复用同一份 ``chatMessages`` 状态。
- *   区别仅在于：Work 模式在 header 提供 Plan/Build 切换按钮；Study 模式无。
- * - **首页瀑布流占位**：无消息时渲染 ``<ChatHome mode={mode} onAsk={handleAsk} />``
- *   作为视觉占位；首条消息发出后切换到对话视图。Study 模式同样支持多轮
- *   （之前只有瀑布流首页，Task 10 新增对话能力）。
- * - **工具调用过程展示**：assistant 消息的 ``tool_calls`` 数组渲染为
- *   ``ChatToolCallItem`` 列表，pending 时显示「正在查询图谱节点…」状态，
+ * - **首页瀑布流占位**：无消息时渲染 ``<ChatHome mode={mode} onAsk={handleAsk} />``。
+ * - **工具调用过程展示**：assistant 消息的 ``tool_calls`` 渲染为
+ *   ``ChatToolCallItem`` 列表，pending 时显示「正在查询…」状态，
  *   done 后折叠为简短结果摘要。
- * - **Plan/Build 切换**：Work 模式 header 右侧的 ``PlanBuildToggle`` 按钮，
- *   调 ``store.setPlanMode`` 切换；Plan 模式下高风险工具会被后端直接拒绝。
+ * - **思维链独立折叠**：assistant 消息的 ``thinking`` 字段在气泡上方折叠展示，
+ *   不混入正文；点击「思考过程」展开/收起。
+ * - **Plan/Go 切换**：底部输入框右下角发送按钮旁的 ``PlanGoToggle`` 按钮，
+ *   Work 模式下显示；Build 前端改名为「Go」（更友好）。
  * - **高风险确认对话框**：当 ``store.pendingToolConfirmation`` 非 null 时
- *   渲染 ``ToolConfirmDialog`` 浮层，用户同意/拒绝后调对应 store 动作。
+ *   渲染 ``ToolConfirmDialog`` 浮层。
  * - **流式取消**：流式进行中显示「取消」按钮，调 ``store.cancelChat``。
- *
- * 旧版基于 ``qaMessages`` / ``askWorkQuestionStream`` 的逻辑已废弃，由
- * 新的 ``chatMessages`` / ``sendMessage`` 替代，但保留 ``qaMessages`` 用于
- * QAPanel 浮层（右侧抽屉式问答，Task 16）的旧路径，不删除以维持兼容。
  */
 
 import { useEffect, useRef, useState } from 'react'
@@ -44,12 +41,10 @@ export function ChatPanel() {
 
   return (
     <div className="chat-panel chat-panel--multi">
-      {/* 高风险确认对话框：pendingToolConfirmation 非 null 时浮层显示 */}
       {pendingToolConfirmation && (
         <ToolConfirmDialog confirmation={pendingToolConfirmation} />
       )}
 
-      {/* 无消息：渲染 ChatHome 首页瀑布流作为占位 */}
       {chatMessages.length === 0 ? (
         <ChatHome mode={mode} onAsk={handleAsk} />
       ) : (
@@ -60,7 +55,7 @@ export function ChatPanel() {
 }
 
 // ============================================================================
-// 对话视图（消息列表 + 底部输入框 + header 工具栏）
+// 对话视图：左侧会话列表 + 右侧消息区 + 底部输入区
 // ============================================================================
 
 function ChatConversationView() {
@@ -76,10 +71,8 @@ function ChatConversationView() {
   const sendMessage = useAppStore((s) => s.sendMessage)
 
   const [input, setInput] = useState('')
-  // 消息列表底部锚点，用于自动滚动
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
-  // 新消息或流式 token 累积时自动滚动到底部
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [chatMessages, chatAsking, chatStreamingActive])
@@ -104,138 +97,211 @@ function ChatConversationView() {
 
   return (
     <div className="chat-panel__conv">
-      <header className="chat-panel__header">
-        <div className="chat-panel__title-row">
-          <h2 className="chat-panel__title">{sessionTitle}</h2>
-          <div className="chat-panel__actions">
-            {/* Work 模式独有：Plan/Build 切换按钮 */}
-            {mode === 'work' && (
-              <PlanBuildToggle
-                planMode={planMode}
-                onToggle={() => setPlanMode(!planMode)}
-                disabled={chatAsking}
-              />
-            )}
-            {/* 流式进行中：显示取消按钮 */}
-            {chatStreamingActive ? (
+      {/* 左侧会话列表侧边栏 */}
+      <ChatSessionSidebar />
+
+      {/* 右侧主区：消息列表 + 底部输入区 */}
+      <div className="chat-panel__main">
+        <header className="chat-panel__header">
+          <div className="chat-panel__title-row">
+            <h2 className="chat-panel__title">{sessionTitle}</h2>
+            <div className="chat-panel__actions">
+              {chatStreamingActive ? (
+                <button
+                  type="button"
+                  className="chat-panel__cancel-btn"
+                  onClick={cancelChat}
+                  title="取消当前流式生成"
+                >
+                  取消
+                </button>
+              ) : null}
               <button
                 type="button"
-                className="chat-panel__cancel-btn"
-                onClick={cancelChat}
-                title="取消当前流式生成"
+                className="chat-panel__back-btn"
+                onClick={clearChat}
+                disabled={chatAsking}
+                title="清空当前选择并返回首页"
               >
-                取消
+                返回首页
               </button>
-            ) : null}
-            {/* 返回首页：清空当前会话选择回到瀑布流首页 */}
-            <button
-              type="button"
-              className="chat-panel__back-btn"
-              onClick={clearChat}
-              disabled={chatAsking}
-              title="清空当前选择并返回首页"
-            >
-              返回首页
-            </button>
+            </div>
           </div>
+          <p className="chat-panel__subtitle">
+            {mode === 'study'
+              ? '与学习助手多轮对话，可触发测验 / 节点查询 / 抽取等能力。'
+              : planMode
+                ? 'Plan 模式：只读分析，高风险操作将被拒绝。'
+                : 'Go 模式：可与图谱交互，高风险操作需确认。'}
+          </p>
+        </header>
+
+        <div className="chat-panel__messages">
+          <ul className="chat-panel__message-list">
+            {chatMessages.map((m, i) => (
+              <ChatMessageItem
+                key={m.id ?? i}
+                message={m}
+                streaming={
+                  chatStreamingActive &&
+                  i === chatMessages.length - 1 &&
+                  m.role === 'assistant'
+                }
+              />
+            ))}
+          </ul>
+          <div ref={messagesEndRef} />
         </div>
-        <p className="chat-panel__subtitle">
-          {mode === 'study'
-            ? '与学习助手多轮对话，可触发测验 / 节点查询 / 抽取等能力。'
-            : planMode
-              ? 'Plan 模式：只读分析，高风险操作将被拒绝。'
-              : 'Build 模式：可与图谱交互，高风险操作需确认。'}
-        </p>
-      </header>
 
-      {/* 消息区（可滚动） */}
-      <div className="chat-panel__messages">
-        <ul className="chat-panel__message-list">
-          {chatMessages.map((m, i) => (
-            <ChatMessageItem
-              key={m.id ?? i}
-              message={m}
-              streaming={
-                chatStreamingActive &&
-                i === chatMessages.length - 1 &&
-                m.role === 'assistant'
+        {/* 底部输入区：长方形输入框 + 左下角+按钮 + 右下角发送 + Plan/Go 切换 */}
+        <footer className="chat-input-bar">
+          <div className="chat-input-bar__inner">
+            <textarea
+              className="chat-input-bar__textarea"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={
+                mode === 'study'
+                  ? '向学习助手提问，回车发送，Shift+Enter 换行…'
+                  : '向工作助手提问，回车发送，Shift+Enter 换行…'
               }
+              rows={2}
+              disabled={chatAsking}
             />
-          ))}
-        </ul>
-        <div ref={messagesEndRef} />
+            <div className="chat-input-bar__toolbar">
+              {/* 左下角：+ 按钮组（上传文件 / 调用 skills） */}
+              <div className="chat-input-bar__left-actions">
+                <ChatPlusButton />
+              </div>
+              {/* 右下角：Plan/Go 切换（仅 Work 模式） + 发送按钮 */}
+              <div className="chat-input-bar__right-actions">
+                {mode === 'work' && (
+                  <PlanGoToggle
+                    planMode={planMode}
+                    onToggle={() => setPlanMode(!planMode)}
+                    disabled={chatAsking}
+                  />
+                )}
+                <button
+                  type="button"
+                  className="chat-input-bar__send-btn"
+                  onClick={handleSend}
+                  disabled={chatAsking || !input.trim()}
+                  title={
+                    !input.trim()
+                      ? '请输入问题'
+                      : '发送提问（Enter）'
+                  }
+                  aria-label="发送"
+                >
+                  {chatAsking ? (
+                    <span className="chat-input-bar__send-spinner" />
+                  ) : (
+                    <SendIcon />
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </footer>
       </div>
-
-      {/* 底部输入区 */}
-      <footer className="chat-panel__input-footer">
-        <textarea
-          className="chat-panel__input"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="输入你的问题，回车发送，Shift+Enter 换行…"
-          rows={2}
-          disabled={chatAsking}
-        />
-        <button
-          type="button"
-          className="chat-panel__send-btn"
-          onClick={handleSend}
-          disabled={chatAsking || !input.trim()}
-          title={
-            !input.trim() ? '请输入问题' : '发送提问（Enter）'
-          }
-        >
-          {chatAsking ? '回答中…' : '提问'}
-        </button>
-      </footer>
     </div>
   )
 }
 
 // ============================================================================
-// Plan / Build 模式切换按钮（Work 模式独有）
+// 左侧会话列表侧边栏
 // ============================================================================
 
-interface PlanBuildToggleProps {
-  planMode: boolean
-  onToggle: () => void
-  disabled?: boolean
-}
+function ChatSessionSidebar() {
+  const chatSessions = useAppStore((s) => s.chatSessions)
+  const currentChatSession = useAppStore((s) => s.currentChatSession)
+  const selectChatSession = useAppStore((s) => s.selectChatSession)
+  const createChatSession = useAppStore((s) => s.createChatSession)
+  const loadChatSessions = useAppStore((s) => s.loadChatSessions)
+  const chatAsking = useAppStore((s) => s.chatAsking)
 
-function PlanBuildToggle({ planMode, onToggle, disabled }: PlanBuildToggleProps) {
+  const handleNewSession = async () => {
+    if (chatAsking) return
+    await createChatSession()
+  }
+
+  const handleSelect = (sessionId: string) => {
+    if (chatAsking) return
+    const target = chatSessions.find((s) => s.id === sessionId)
+    if (target) void selectChatSession(target)
+  }
+
+  // 刷新：重载会话列表 + 当前会话消息 + 强制重置流式状态（解决 UI 卡死）
+  const handleRefresh = async () => {
+    await loadChatSessions()
+    if (currentChatSession) {
+      await selectChatSession(currentChatSession)
+    }
+  }
+
   return (
-    <button
-      type="button"
-      className={`plan-build-toggle${
-        planMode ? ' plan-build-toggle--plan' : ' plan-build-toggle--build'
-      }`}
-      onClick={onToggle}
-      disabled={disabled}
-      title={
-        planMode
-          ? '当前 Plan 模式（只读），点击切到 Build（可写）'
-          : '当前 Build 模式（可写），点击切到 Plan（只读）'
-      }
-      aria-pressed={planMode}
-    >
-      <span className="plan-build-toggle__label plan-build-toggle__label--build">
-        Build
-      </span>
-      <span className="plan-build-toggle__label plan-build-toggle__label--plan">
-        Plan
-      </span>
-    </button>
+    <aside className="chat-sidebar" aria-label="对话记录列表">
+      <header className="chat-sidebar__header">
+        <span className="chat-sidebar__title">对话记录</span>
+        <button
+          type="button"
+          className="chat-sidebar__new-btn"
+          onClick={handleNewSession}
+          disabled={chatAsking}
+          title="新建对话"
+          aria-label="新建对话"
+        >
+          +
+        </button>
+      </header>
+      <div className="chat-sidebar__list">
+        {chatSessions.length === 0 ? (
+          <div className="chat-sidebar__empty">暂无对话记录</div>
+        ) : (
+          chatSessions.map((s) => {
+            const isActive = currentChatSession?.id === s.id
+            return (
+              <button
+                key={s.id}
+                type="button"
+                className={`chat-sidebar__item${
+                  isActive ? ' chat-sidebar__item--active' : ''
+                }`}
+                onClick={() => handleSelect(s.id)}
+                disabled={chatAsking}
+                title={s.title}
+              >
+                <span className="chat-sidebar__item-icon" aria-hidden="true">
+                  {s.mode === 'study' ? '学' : '工'}
+                </span>
+                <span className="chat-sidebar__item-title">{s.title}</span>
+              </button>
+            )
+          })
+        )}
+      </div>
+      <footer className="chat-sidebar__footer">
+        <button
+          type="button"
+          className="chat-sidebar__refresh-btn"
+          onClick={() => void handleRefresh()}
+          title="刷新列表与当前对话"
+        >
+          刷新
+        </button>
+      </footer>
+    </aside>
   )
 }
 
 // ============================================================================
-// 单条消息子组件
+// 单条消息子组件（含思维链折叠 + 工具调用 + 正文）
 // ============================================================================
 
 interface ChatMessageItemProps {
   message: ChatMessage
-  /** 是否为流式进行中的最后一条 assistant 占位消息。 */
   streaming?: boolean
 }
 
@@ -251,10 +317,12 @@ function ChatMessageItem({ message, streaming }: ChatMessageItemProps) {
     )
   }
 
-  // assistant 消息
-  // 流式占位态：content 为空且处于流式中，显示三点打字动画
   const isStreamingPlaceholder = streaming && !message.content
   const toolCalls = message.tool_calls ?? []
+  const thinking = message.thinking?.trim() ?? ''
+
+  // 提取测验卡数据：若 graph_generate_quiz 已完成，渲染交互式测验卡
+  const quizCardProps = extractQuizFromToolCalls(toolCalls)
 
   return (
     <li className="chat-msg chat-msg--assistant">
@@ -263,7 +331,10 @@ function ChatMessageItem({ message, streaming }: ChatMessageItemProps) {
           isStreamingPlaceholder ? ' chat-msg__bubble--loading' : ''
         }`}
       >
-        {/* 工具调用过程展示（先于正文渲染，让用户感知 agent 在做什么） */}
+        {/* 思维链折叠区（在工具调用与正文之上，独立展示） */}
+        {thinking && <ThinkingBlock thinking={thinking} streaming={streaming} />}
+
+        {/* 工具调用过程展示 */}
         {toolCalls.length > 0 && (
           <div className="chat-msg__tool-calls">
             {toolCalls.map((tc, i) => (
@@ -272,7 +343,18 @@ function ChatMessageItem({ message, streaming }: ChatMessageItemProps) {
           </div>
         )}
 
-        {/* 回答正文（流式 token 实时累积） */}
+        {/* 交互式测验卡（替代把题目当 markdown 文本输出） */}
+        {quizCardProps && (
+          <QuizCard
+            quizId={quizCardProps.quizId}
+            quizType={quizCardProps.quizType}
+            payload={quizCardProps.payload}
+            answered={quizCardProps.answered}
+            result={quizCardProps.result}
+          />
+        )}
+
+        {/* 回答正文（测验卡已展示题目时，正文仅保留 agent 的引导语） */}
         {isStreamingPlaceholder ? (
           <span className="chat-typing" aria-label="Agent 正在生成回答">
             <span className="chat-typing__dot" />
@@ -280,14 +362,16 @@ function ChatMessageItem({ message, streaming }: ChatMessageItemProps) {
             <span className="chat-typing__dot" />
           </span>
         ) : (
-          <p className="chat-msg__text">
-            {message.content}
-            {streaming && message.content && (
-              <span className="chat-streaming-cursor" aria-hidden="true">
-                ▋
-              </span>
-            )}
-          </p>
+          message.content && (
+            <p className="chat-msg__text">
+              {message.content}
+              {streaming && message.content && (
+                <span className="chat-streaming-cursor" aria-hidden="true">
+                  ▋
+                </span>
+              )}
+            </p>
+          )
         )}
       </div>
     </li>
@@ -295,11 +379,59 @@ function ChatMessageItem({ message, streaming }: ChatMessageItemProps) {
 }
 
 // ============================================================================
+// 思维链折叠块
+// ============================================================================
+
+interface ThinkingBlockProps {
+  thinking: string
+  streaming?: boolean
+}
+
+function ThinkingBlock({ thinking, streaming }: ThinkingBlockProps) {
+  const [expanded, setExpanded] = useState(false)
+  // 流式中默认展开（让用户看到思考过程），完成后默认折叠
+  const [userToggled, setUserToggled] = useState(false)
+  const isOpen = userToggled ? expanded : streaming
+
+  const handleClick = () => {
+    setUserToggled(true)
+    setExpanded((v) => !v)
+  }
+
+  const preview = thinking.length > 80 ? `${thinking.slice(0, 80)}…` : thinking
+
+  return (
+    <div className={`chat-thinking${isOpen ? ' chat-thinking--open' : ''}`}>
+      <button
+        type="button"
+        className="chat-thinking__toggle"
+        onClick={handleClick}
+        aria-expanded={isOpen}
+        title={isOpen ? '点击折叠思考过程' : '点击展开思考过程'}
+      >
+        <span className="chat-thinking__icon" aria-hidden="true">
+          {isOpen ? '▾' : '▸'}
+        </span>
+        <span className="chat-thinking__label">
+          {streaming ? '思考中…' : '思考过程'}
+        </span>
+        {!isOpen && (
+          <span className="chat-thinking__preview">{preview}</span>
+        )}
+      </button>
+      {isOpen && (
+        <pre className="chat-thinking__content">{thinking}</pre>
+      )}
+    </div>
+  )
+}
+
+// ============================================================================
 // 工具调用过程展示子组件
 // ============================================================================
 
-/** 工具名 → 中文友好动作描述。 */
 const TOOL_ACTION_LABEL: Record<string, string> = {
+  // 基础图谱工具（7 个）
   graph_query_nodes: '查询图谱节点',
   graph_get_node_detail: '获取节点详情',
   graph_get_context: '获取图谱上下文',
@@ -307,15 +439,32 @@ const TOOL_ACTION_LABEL: Record<string, string> = {
   graph_generate_quiz: '生成测验题',
   graph_generate_trends: '生成风口推荐',
   graph_generate_report: '生成工作报告',
+  // 节点行为工具（6 个）
+  graph_extend_node: '延伸节点',
+  graph_touch_node: '标记复习',
+  graph_star_node: '星标节点',
+  graph_unstar_node: '取消星标',
+  graph_set_reminder: '设置提醒',
+  graph_clear_reminder: '清除提醒',
+  // 学习闭环工具（4 个）
+  graph_answer_quiz: '作答测验',
+  graph_list_quiz_history: '测验历史',
+  graph_get_quiz_detail: '测验详情',
+  graph_add_user_fill: '追加留白',
+  // 智能推荐工具（1 个）
+  graph_get_recommendations: '智能推荐',
+  // 工作对象工具（2 个）
+  graph_extract_work_objects: '抽取工作对象',
+  graph_confirm_work_objects: '确认入图',
+  // 观察记录工具（1 个）
+  graph_list_observations: '观察记录',
 }
 
-/** 工具结果简短摘要（取关键字段，避免长 JSON 干扰对话流）。 */
 function summarizeToolResult(
   tool: string,
   result: Record<string, unknown> | undefined,
 ): string {
   if (!result) return ''
-  // 各工具 result 字段不同，提取关键字段
   if (tool === 'graph_query_nodes') {
     const nodes = (result as { nodes?: unknown[] }).nodes
     if (Array.isArray(nodes)) return `命中 ${nodes.length} 个节点`
@@ -333,8 +482,13 @@ function summarizeToolResult(
     if (Array.isArray(created)) return `新建 ${created.length} 个节点`
   }
   if (tool === 'graph_generate_quiz') {
-    const type = (result as { type?: string }).type
-    if (type) return `已生成 ${type} 题`
+    // 新结构：result = {status, quiz_id, quiz: {type, payload: {question, options, ...}}}
+    const quiz = (result as { quiz?: { type?: string } }).quiz
+    const qtype = quiz?.type
+    if (qtype) return `已生成 ${qtype} 题`
+    // 兼容旧结构（无 quiz_id）
+    const oldType = (result as { type?: string }).type
+    if (oldType) return `已生成 ${oldType} 题`
   }
   if (tool === 'graph_generate_trends') {
     const trends = (result as { trends?: unknown[] }).trends
@@ -344,7 +498,74 @@ function summarizeToolResult(
     const period = (result as { period?: string }).period
     if (period) return `${period} 报告已生成`
   }
-  // 兜底：取前 80 字符
+  if (tool === 'graph_extend_node') {
+    const count = (result as { count?: number }).count
+    const existingHit = (result as { existing_hit?: unknown[] }).existing_hit
+    const parts: string[] = []
+    if (typeof count === 'number' && count > 0) parts.push(`新建 ${count} 个节点`)
+    if (Array.isArray(existingHit) && existingHit.length > 0)
+      parts.push(`命中已存在 ${existingHit.length} 个`)
+    if (parts.length) return parts.join('，')
+  }
+  if (tool === 'graph_touch_node') {
+    const reviewCount = (
+      result as { node?: { review_count?: number } }
+    ).node?.review_count
+    if (typeof reviewCount === 'number') return `已标记复习（累计 ${reviewCount} 次）`
+    return '已标记复习'
+  }
+  if (tool === 'graph_star_node') return '已星标'
+  if (tool === 'graph_unstar_node') return '已取消星标'
+  if (tool === 'graph_set_reminder') {
+    const remindAt = (
+      result as { node?: { remind_at?: string } }
+    ).node?.remind_at
+    if (remindAt) return `提醒已设置（${remindAt.slice(0, 16)}）`
+    return '提醒已设置'
+  }
+  if (tool === 'graph_clear_reminder') return '提醒已清除'
+  if (tool === 'graph_answer_quiz') {
+    const correct = (result as { correct?: boolean }).correct
+    const score = (result as { score?: number }).score
+    if (typeof score === 'number') return `得分 ${score}`
+    if (typeof correct === 'boolean') return correct ? '回答正确' : '回答错误'
+  }
+  if (tool === 'graph_list_quiz_history') {
+    const count = (result as { count?: number }).count
+    if (typeof count === 'number') return `共 ${count} 条历史`
+  }
+  if (tool === 'graph_get_quiz_detail') {
+    const qtype = (
+      result as { quiz?: { type?: string } }
+    ).quiz?.type
+    if (qtype) return `${qtype} 题详情`
+  }
+  if (tool === 'graph_add_user_fill') {
+    const fillType = (result as { fill_type?: string }).fill_type
+    if (fillType) return `已追加 ${fillType}`
+    return '已追加留白'
+  }
+  if (tool === 'graph_get_recommendations') {
+    const count = (result as { count?: number }).count
+    if (typeof count === 'number') return `推荐 ${count} 个节点`
+  }
+  if (tool === 'graph_extract_work_objects') {
+    const count = (result as { count?: number }).count
+    if (typeof count === 'number') return `候选 ${count} 个`
+  }
+  if (tool === 'graph_confirm_work_objects') {
+    const createdCount = (result as { created_count?: number }).created_count
+    const edgeCount = (result as { edge_count?: number }).edge_count
+    const parts: string[] = []
+    if (typeof createdCount === 'number') parts.push(`入图 ${createdCount} 个节点`)
+    if (typeof edgeCount === 'number' && edgeCount > 0)
+      parts.push(`${edgeCount} 条边`)
+    if (parts.length) return parts.join('，')
+  }
+  if (tool === 'graph_list_observations') {
+    const count = (result as { count?: number }).count
+    if (typeof count === 'number') return `${count} 条记录`
+  }
   const s = JSON.stringify(result)
   return s.length > 80 ? `${s.slice(0, 80)}…` : s
 }
@@ -383,5 +604,353 @@ function ChatToolCallItem({ toolCall }: ChatToolCallItemProps) {
         </span>
       )}
     </div>
+  )
+}
+
+// ============================================================================
+// 交互式测验卡（graph_generate_quiz 工具调用结果渲染为可点击选项）
+// ============================================================================
+
+interface QuizOption {
+  id: string
+  text: string
+}
+
+interface QuizCardProps {
+  quizId: string
+  quizType: string
+  payload: {
+    question?: string
+    prompt?: string
+    options?: QuizOption[]
+    degraded?: boolean
+    degrade_reason?: string
+  }
+  answered?: boolean
+  result?: Record<string, unknown>
+}
+
+function QuizCard({ quizId, quizType, payload, answered, result }: QuizCardProps) {
+  const [selected, setSelected] = useState<string[]>([])
+  const [feynmanText, setFeynmanText] = useState('')
+  const [submitted, setSubmitted] = useState(answered ?? false)
+  const sendMessage = useAppStore((s) => s.sendMessage)
+  const chatAsking = useAppStore((s) => s.chatAsking)
+
+  // 如果已作答，从 result 恢复判分结果用于回显
+  const correct = (result as { correct?: boolean })?.correct
+  const score = (result as { score?: number })?.score
+  const correctAnswers =
+    (result as { correct_answers?: string[] })?.correct_answers ?? []
+  const explanation = (result as { explanation?: string })?.explanation
+  const feedback = (result as { feedback?: string })?.feedback
+
+  const isChoice = quizType === 'single_choice' || quizType === 'multi_choice'
+  const isFeynman = quizType === 'feynman'
+  const isMulti = quizType === 'multi_choice'
+  const degraded = payload.degraded
+
+  const handleOptionClick = (optionId: string) => {
+    if (submitted || chatAsking) return
+    if (isMulti) {
+      setSelected((prev) =>
+        prev.includes(optionId)
+          ? prev.filter((id) => id !== optionId)
+          : [...prev, optionId],
+      )
+    } else {
+      // 单选题：直接提交
+      setSelected([optionId])
+      void submitAnswer([optionId])
+    }
+  }
+
+  const handleMultiSubmit = () => {
+    if (selected.length === 0 || chatAsking) return
+    void submitAnswer(selected)
+  }
+
+  const handleFeynmanSubmit = () => {
+    const text = feynmanText.trim()
+    if (!text || chatAsking) return
+    void submitAnswer(text)
+  }
+
+  const submitAnswer = async (answer: string[] | string) => {
+    if (submitted) return
+    setSubmitted(true)
+    // 发送结构化消息，让 agent 调用 graph_answer_quiz
+    const answerStr = Array.isArray(answer) ? answer.join(',') : answer
+    const msg = `[quiz_answer] quiz_id=${quizId} answer=${answerStr}`
+    await sendMessage(msg)
+  }
+
+  if (degraded) {
+    return (
+      <div className="quiz-card quiz-card--degraded">
+        <div className="quiz-card__header">
+          <span className="quiz-card__badge">测验</span>
+          <span className="quiz-card__type">
+            {quizType === 'single_choice' ? '单选题' : quizType === 'multi_choice' ? '多选题' : '费曼题'}
+          </span>
+        </div>
+        <p className="quiz-card__degraded">
+          题目生成服务暂不可用（降级模式）。{payload.degrade_reason ?? ''}
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className={`quiz-card${submitted ? ' quiz-card--answered' : ''}`}>
+      <div className="quiz-card__header">
+        <span className="quiz-card__badge">测验</span>
+        <span className="quiz-card__type">
+          {isChoice
+            ? isMulti
+              ? '多选题（点击勾选，再点提交）'
+              : '单选题（点击选项即作答）'
+            : '费曼解释题'}
+        </span>
+      </div>
+
+      {isChoice && (
+        <>
+          <p className="quiz-card__question">{payload.question ?? ''}</p>
+          <div className="quiz-card__options">
+            {(payload.options ?? []).map((opt) => {
+              const isSelected = selected.includes(opt.id)
+              const isCorrect = submitted && correctAnswers.includes(opt.id)
+              const isWrong =
+                submitted &&
+                isSelected &&
+                !correctAnswers.includes(opt.id)
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  className={`quiz-card__option${
+                    isSelected ? ' quiz-card__option--selected' : ''
+                  }${isCorrect ? ' quiz-card__option--correct' : ''}${
+                    isWrong ? ' quiz-card__option--wrong' : ''
+                  }`}
+                  onClick={() => handleOptionClick(opt.id)}
+                  disabled={submitted || chatAsking}
+                >
+                  <span className="quiz-card__option-id">{opt.id}</span>
+                  <span className="quiz-card__option-text">{opt.text}</span>
+                  {isCorrect && <span className="quiz-card__option-mark">✓</span>}
+                  {isWrong && <span className="quiz-card__option-mark">✗</span>}
+                </button>
+              )
+            })}
+          </div>
+          {isMulti && !submitted && (
+            <button
+              type="button"
+              className="quiz-card__submit-btn"
+              onClick={handleMultiSubmit}
+              disabled={selected.length === 0 || chatAsking}
+            >
+              提交答案（已选 {selected.length} 项）
+            </button>
+          )}
+          {submitted && (
+            <div className={`quiz-card__result${correct ? ' quiz-card__result--correct' : ' quiz-card__result--wrong'}`}>
+              <span className="quiz-card__result-icon">
+                {correct ? '✓ 回答正确' : '✗ 回答错误'}
+              </span>
+              {explanation && <p className="quiz-card__explanation">{explanation}</p>}
+            </div>
+          )}
+        </>
+      )}
+
+      {isFeynman && (
+        <>
+          <p className="quiz-card__question">{payload.prompt ?? '请用自己的话解释该知识点'}</p>
+          {!submitted ? (
+            <div className="quiz-card__feynman">
+              <textarea
+                className="quiz-card__feynman-input"
+                value={feynmanText}
+                onChange={(e) => setFeynmanText(e.target.value)}
+                placeholder="在此输入你的解释…"
+                rows={4}
+                disabled={chatAsking}
+              />
+              <button
+                type="button"
+                className="quiz-card__submit-btn"
+                onClick={handleFeynmanSubmit}
+                disabled={!feynmanText.trim() || chatAsking}
+              >
+                提交解释
+              </button>
+            </div>
+          ) : (
+            <div className="quiz-card__result quiz-card__result--feynman">
+              <span className="quiz-card__result-icon">
+                得分 {score ?? '-'}/100
+              </span>
+              {feedback && <p className="quiz-card__explanation">{feedback}</p>}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+/** 从 tool_calls 中提取 graph_generate_quiz 的结果，渲染交互式测验卡。 */
+function extractQuizFromToolCalls(
+  toolCalls: ToolCall[],
+): QuizCardProps | null {
+  for (const tc of toolCalls) {
+    if (tc.tool !== 'graph_generate_quiz') continue
+    if (tc.status !== 'done' || !tc.result) continue
+    const r = tc.result as {
+      status?: string
+      quiz_id?: string
+      quiz?: {
+        id?: string
+        type?: string
+        payload?: Record<string, unknown>
+        answered?: boolean
+        result?: Record<string, unknown>
+      }
+    }
+    if (r.status !== 'ok') continue
+    const quizId = r.quiz_id ?? r.quiz?.id ?? ''
+    if (!quizId) continue
+    const quiz = r.quiz
+    if (!quiz) continue
+    return {
+      quizId,
+      quizType: quiz.type ?? 'single_choice',
+      payload: (quiz.payload ?? {}) as QuizCardProps['payload'],
+      answered: quiz.answered,
+      result: quiz.result as Record<string, unknown> | undefined,
+    }
+  }
+  return null
+}
+
+// ============================================================================
+// Plan / Go 模式切换按钮（Work 模式独有；Build 前端改名为 Go）
+// ============================================================================
+
+interface PlanGoToggleProps {
+  planMode: boolean
+  onToggle: () => void
+  disabled?: boolean
+}
+
+function PlanGoToggle({ planMode, onToggle, disabled }: PlanGoToggleProps) {
+  // planMode=true 显示「Plan」（只读）；planMode=false 显示「Go」（可执行）
+  // 点击切换到对面状态
+  return (
+    <button
+      type="button"
+      className={`plan-go-toggle${
+        planMode ? ' plan-go-toggle--plan' : ' plan-go-toggle--go'
+      }`}
+      onClick={onToggle}
+      disabled={disabled}
+      title={
+        planMode
+          ? '当前 Plan 模式（只读），点击切到 Go（可写）'
+          : '当前 Go 模式（可写），点击切到 Plan（只读）'
+      }
+      aria-pressed={planMode}
+    >
+      {planMode ? 'Plan' : 'Go'}
+    </button>
+  )
+}
+
+// ============================================================================
+// 左下角 + 按钮（上传文件 / 调用 skills）
+// ============================================================================
+
+function ChatPlusButton() {
+  const [open, setOpen] = useState(false)
+  const popRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (popRef.current && !popRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  return (
+    <div className="chat-plus" ref={popRef}>
+      <button
+        type="button"
+        className="chat-plus__btn"
+        onClick={() => setOpen((v) => !v)}
+        title="附件 / Skills"
+        aria-label="附件 / Skills"
+        aria-expanded={open}
+      >
+        +
+      </button>
+      {open && (
+        <div className="chat-plus__menu" role="menu">
+          <button
+            type="button"
+            className="chat-plus__item"
+            onClick={() => {
+              setOpen(false)
+              // 上传文件入口占位（后续接入文件上传组件）
+              alert('文件上传功能即将上线')
+            }}
+          >
+            <span className="chat-plus__item-icon" aria-hidden="true">📎</span>
+            上传文件
+          </button>
+          <button
+            type="button"
+            className="chat-plus__item"
+            onClick={() => {
+              setOpen(false)
+              // Skills 入口占位（后续接入 skills 选择器）
+              alert('Skills 调用功能即将上线')
+            }}
+          >
+            <span className="chat-plus__item-icon" aria-hidden="true">✨</span>
+            调用 Skills
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ============================================================================
+// 发送按钮 SVG 图标
+// ============================================================================
+
+function SendIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <line x1="22" y1="2" x2="11" y2="13" />
+      <polygon points="22 2 15 22 11 13 2 9 22 2" />
+    </svg>
   )
 }

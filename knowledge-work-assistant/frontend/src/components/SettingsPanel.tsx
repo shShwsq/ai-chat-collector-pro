@@ -26,6 +26,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import { useAppStore } from '../store/useAppStore'
 import { PluginIntegrationSection } from './PluginIntegrationSection'
+import { THEMES } from '../lib/themes'
 import type { LlmRequestInfo, LlmRequestStatus } from '../lib/types'
 
 /** 请求队列自动轮询间隔（ms）。 */
@@ -85,6 +86,8 @@ function purposeLabel(p: string): string {
 export function SettingsPanel() {
   return (
     <div className="settings-panel">
+      <AppearanceSection />
+      <WorkConfirmSection />
       <ApiConfigSection />
       <PluginIntegrationSection />
       <RequestQueueSection />
@@ -452,5 +455,89 @@ function RequestRow({
         )}
       </div>
     </li>
+  )
+}
+
+// ============================================================================
+// 外观区：主题切换
+// ============================================================================
+function AppearanceSection() {
+  const theme = useAppStore((s) => s.theme)
+  const setTheme = useAppStore((s) => s.setTheme)
+  return (
+    <section className="settings-section">
+      <header className="settings-section__header">
+        <div>
+          <h2 className="settings-section__title">外观</h2>
+          <p className="settings-section__desc">
+            选择应用的整体配色主题，切换即时生效。
+          </p>
+        </div>
+      </header>
+      <div className="appearance-list">
+        {THEMES.map((item) => {
+          const active = item.id === theme
+          return (
+            <button
+              key={item.id}
+              type="button"
+              className={`appearance-item${active ? ' is-active' : ''}`}
+              onClick={() => setTheme(item.id)}
+              aria-pressed={active}
+            >
+              <span className="appearance-item__swatch" data-theme-swatch={item.id} />
+              <span className="appearance-item__info">
+                <span className="appearance-item__label">{item.label}</span>
+                <span className="appearance-item__desc">{item.description}</span>
+              </span>
+              {active && <span className="appearance-item__check" aria-hidden="true">✓</span>}
+            </button>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+// ============================================================================
+// 工作对象确认模式区
+// ============================================================================
+function WorkConfirmSection() {
+  const workObjectSingleConfirm = useAppStore(
+    (s) => s.workObjectSingleConfirm,
+  )
+  const setWorkObjectSingleConfirm = useAppStore(
+    (s) => s.setWorkObjectSingleConfirm,
+  )
+  return (
+    <section className="settings-section">
+      <header className="settings-section__header">
+        <div>
+          <h2 className="settings-section__title">工作对象确认模式</h2>
+          <p className="settings-section__desc">
+            控制高风险工具「工作对象批量入图」的确认方式。关闭=批量确认
+            （一次同意全部）；开启=逐条确认（每个对象可单独勾选，仅入图勾选项）。
+          </p>
+        </div>
+      </header>
+      <div className="settings-toggle">
+        <label className="settings-toggle__label">
+          <input
+            type="checkbox"
+            className="settings-toggle__checkbox"
+            checked={workObjectSingleConfirm}
+            onChange={(e) => setWorkObjectSingleConfirm(e.target.checked)}
+          />
+          <span className="settings-toggle__text">
+            {workObjectSingleConfirm ? '逐条确认（已开启）' : '批量确认（默认）'}
+          </span>
+        </label>
+        <p className="settings-toggle__hint">
+          {workObjectSingleConfirm
+            ? '开启后，工作对象入图确认框将显示勾选列，可取消不想要的项。'
+            : '当前为批量确认：一次同意即入图全部候选工作对象。开启后可逐条筛选。'}
+        </p>
+      </div>
+    </section>
   )
 }

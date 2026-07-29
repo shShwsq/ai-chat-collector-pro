@@ -56,6 +56,7 @@
 import { create } from 'zustand'
 
 import { api, ApiError } from '../lib/api'
+import { DEFAULT_THEME, isValidTheme, THEME_STORAGE_KEY, type Theme } from '../lib/themes'
 import type {
   AskSource,
   BatchCreateNodesRequest,
@@ -70,6 +71,7 @@ import type {
   ChatMessage,
   ChatSession,
   ChatStreamStartedResponse,
+  ChatThinkingEvent,
   ChatToolCallEvent,
   ChatToolConfirmationEvent,
   ChatToolResultEvent,
@@ -200,6 +202,9 @@ interface AppState {
 
   // 左侧竖排导航：当前激活视图（chat / graph / settings），默认 'graph'
   activeNav: ActiveNav
+
+  // 当前外观主题 id，启动时从 localStorage 恢复
+  theme: Theme
 
   // 「对话」导航项红点角标计数（待处理提醒数量），默认 0 即不显示
   // 后续 Task 8 会写入实际数量
@@ -371,10 +376,15 @@ interface AppState {
   planMode: boolean
   /** 待处理的高风险工具确认请求（非 null 时弹确认对话框）。 */
   pendingToolConfirmation: ToolConfirmation | null
+  /** 工作对象逐条确认开关（false = 批量确认默认；true = 每项可勾选）。
+   *  仅对 graph_confirm_work_objects 工具有效；持久化到 localStorage。 */
+  workObjectSingleConfirm: boolean
 
   // ===== 动作 =====
   /** 切换模式：保存当前模式快照，恢复目标模式快照（若有），加载新模式图谱列表。 */
   setMode: (mode: Mode) => void
+  /** 切换外观主题并持久化到 localStorage。 */
+  setTheme: (theme: Theme) => void
   /** 切换内容区视图类型。 */
   setView: (view: ViewType) => void
   /** 切换左侧竖排导航激活项（chat / graph / settings）。 */
@@ -649,14 +659,17 @@ interface AppState {
   cancelChat: () => Promise<boolean>
   /**
    * 同意高风险工具调用：调 confirmChatToolCall(approved=true) + 清空 pendingToolConfirmation。
+   * modifiedArgs 用于逐条确认场景，回传用户勾选后的 objects 子集。
    * 返回是否成功。
    */
-  confirmToolCall: () => Promise<boolean>
+  confirmToolCall: (modifiedArgs?: Record<string, unknown>) => Promise<boolean>
   /**
    * 拒绝高风险工具调用：调 confirmChatToolCall(approved=false, reason) + 清空 pendingToolConfirmation。
    * 返回是否成功。
    */
   rejectToolCall: (reason?: string) => Promise<boolean>
+  /** 切换工作对象逐条确认开关并持久化到 localStorage。 */
+  setWorkObjectSingleConfirm: (on: boolean) => void
   /** 加载当前会话最新 checkpoint，写入 currentCheckpoint。 */
   loadCheckpoint: () => Promise<void>
   /** 手动触发 writer_agent 生成 checkpoint。返回是否成功。 */
@@ -690,6 +703,16 @@ interface AppState {
    * 触发前端弹确认对话框（ChatPanel 中的 ToolConfirmDialog）。
    */
   handleChatToolConfirmation: (event: ChatToolConfirmationEvent) => void
+  /**
+   * 处理 chat 思维链增量事件：把 reasoning_content 累积到最后一条 assistant
+   * 占位消息的 thinking 字段，前端在气泡上方折叠展示，不混入正文 content。
+   */
+  handleChatThinking: (event: ChatThinkingEvent) => void
+  /**
+   * 处理 chat 正文替换事件：后端剥离测验题内容后，替换前端已显示的正文。
+   * 用于 graph_generate_quiz 等工具调用后，LLM 在正文手写了工具产出物的场景。
+   */
+  handleChatContentReplace: (event: { content: string; type?: string }) => void
   /**
    * 处理 chat 流式完成事件：终结流式状态，用 full_text 兜底最后一条消息。
    */
@@ -729,6 +752,38 @@ function replaceNode(full: FullGraph, updated: Node): FullGraph {
   }
 }
 
+/** 从 localStorage 读取布尔型设置项（隐私模式或禁用时回退默认值）。 */
+function _loadBoolSetting(key: string, defaultValue: boolean): boolean {
+  try {
+    const v = localStorage.getItem(key)
+    if (v === 'true') return true
+    if (v === 'false') return false
+  } catch {
+    // 静默降级
+  }
+  return defaultValue
+}
+
+/** 把布尔型设置项写入 localStorage（隐私模式或禁用时静默降级）。 */
+function _saveBoolSetting(key: string, value: boolean): void {
+  try {
+    localStorage.setItem(key, String(value))
+  } catch {
+    // 静默降级
+  }
+}
+
+/** 从 localStorage 读取已保存的主题，非法或缺失时回退到默认主题。 */
+function loadInitialTheme(): Theme {
+  try {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY)
+    if (isValidTheme(saved)) return saved
+  } catch {
+    // 隐私模式或 localStorage 被禁用：静默降级
+  }
+  return DEFAULT_THEME
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   mode: 'study',
   view: 'graph',
@@ -741,6 +796,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // 左侧竖排导航：默认进入图谱视图
   activeNav: 'graph',
+
+  // 当前外观主题：启动时从 localStorage 恢复（缺失 / 非法则回退默认）
+  theme: loadInitialTheme(),
 
   // 「对话」导航项红点角标计数（默认 0，不显示；后续 Task 8 写入）
   reminderCount: 0,
@@ -838,6 +896,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   // 默认 Build 模式；Work 模式下用户可切到 Plan
   planMode: false,
   pendingToolConfirmation: null,
+  // 工作对象逐条确认（默认关闭=批量）；从 localStorage 读取
+  workObjectSingleConfirm: _loadBoolSetting('kwa.workObjectSingleConfirm', false),
 
   setMode: (mode) => {
     if (mode === get().mode) return
@@ -1023,6 +1083,15 @@ export const useAppStore = create<AppState>((set, get) => ({
         toast: null,
       })
       void get().loadGraphs()
+    }
+  },
+
+  setTheme: (theme) => {
+    set({ theme })
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme)
+    } catch {
+      // 隐私模式或 localStorage 被禁用：静默降级，不抛错
     }
   },
 
@@ -2487,7 +2556,18 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   createChatSession: async (body) => {
     const mode = body?.mode ?? get().mode
-    const graphId = body?.graph_id !== undefined ? body.graph_id : get().currentGraphId
+    let graphId = body?.graph_id !== undefined ? body.graph_id : get().currentGraphId
+    // graph_id 为 null 时，自动查找当前模式的第一个图谱
+    if (!graphId) {
+      try {
+        const graphs = await api.getGraphs(mode)
+        if (graphs && graphs.length > 0) {
+          graphId = graphs[0].id
+        }
+      } catch {
+        // 查找图谱失败时静默降级，graphId 保持 null
+      }
+    }
     set({ error: '' })
     try {
       const session = await api.createChatSession({
@@ -2635,37 +2715,66 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   cancelChat: async () => {
     const requestId = get().chatStreamingRequestId
+    // 无论 requestId 是否存在，都强制重置本地流式状态，避免 UI 卡死
+    const _resetStreamingState = () => {
+      set({
+        chatStreamingActive: false,
+        chatAsking: false,
+        chatStreamingText: '',
+        chatStreamingRequestId: null,
+      })
+    }
     if (!requestId) {
-      get().pushToast('当前无进行中的流式请求', 'info')
-      return false
+      // requestId 缺失但仍处于流式状态时，强制重置并重载消息
+      _resetStreamingState()
+      const session = get().currentChatSession
+      if (session) {
+        try {
+          const messages = await api.getChatMessages(session.id)
+          set({ chatMessages: messages })
+        } catch {
+          // 重载失败时静默降级
+        }
+      }
+      get().pushToast('已强制取消流式状态', 'info')
+      return true
     }
     try {
       const resp: CancelChatResponse = await api.cancelChatStream(requestId)
       if (resp.ok) {
-        // 立即终结本地流式状态（最终 cancelled 事件会再次确认）
-        set({
-          chatStreamingActive: false,
-          chatAsking: false,
-          chatStreamingText: '',
-          chatStreamingRequestId: null,
-        })
+        _resetStreamingState()
+        // 重载消息以获取后端已保存的部分响应
+        const session = get().currentChatSession
+        if (session) {
+          try {
+            const messages = await api.getChatMessages(session.id)
+            set({ chatMessages: messages })
+          } catch {
+            // 重载失败时静默降级
+          }
+        }
         get().pushToast('已取消当前对话', 'info')
+      } else {
+        // API 返回失败时也强制重置，避免 UI 卡死
+        _resetStreamingState()
       }
       return resp.ok
     } catch (e) {
       const msg = errMsg(e)
-      get().pushToast(`取消失败：${msg}`, 'error')
+      // 异常时强制重置，避免 UI 卡死
+      _resetStreamingState()
+      get().pushToast(`取消异常已强制重置：${msg}`, 'error')
       return false
     }
   },
 
-  confirmToolCall: async () => {
+  confirmToolCall: async (modifiedArgs) => {
     const pending = get().pendingToolConfirmation
     if (!pending) return false
     try {
       const resp: ConfirmToolCallResponse = await api.confirmChatToolCall(
         pending.request_id,
-        { approved: true },
+        { approved: true, modified_args: modifiedArgs },
       )
       if (resp.ok) {
         set({ pendingToolConfirmation: null })
@@ -2677,6 +2786,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       get().pushToast(`确认失败：${msg}`, 'error')
       return false
     }
+  },
+
+  setWorkObjectSingleConfirm: (on) => {
+    _saveBoolSetting('kwa.workObjectSingleConfirm', on)
+    set({ workObjectSingleConfirm: on })
   },
 
   rejectToolCall: async (reason) => {
@@ -2839,6 +2953,36 @@ export const useAppStore = create<AppState>((set, get) => ({
       `Agent 想执行高风险操作：${tool}，请确认`,
       'warning',
     )
+  },
+
+  handleChatThinking: (event) => {
+    const { content } = event
+    if (!content) return
+    // 累积到最后一条 assistant 占位消息的 thinking 字段
+    const messages = get().chatMessages
+    if (messages.length === 0) return
+    const last = messages[messages.length - 1]
+    if (last.role !== 'assistant') return
+    const nextThinking = (last.thinking ?? '') + content
+    const updated: ChatMessage = { ...last, thinking: nextThinking }
+    set({
+      chatMessages: [...messages.slice(0, -1), updated],
+    })
+  },
+
+  handleChatContentReplace: (event) => {
+    const { content } = event
+    if (!content) return
+    // 替换最后一条 assistant 消息的正文（后端剥离测验题内容后推送）
+    const messages = get().chatMessages
+    if (messages.length === 0) return
+    const last = messages[messages.length - 1]
+    if (last.role !== 'assistant') return
+    const updated: ChatMessage = { ...last, content }
+    set({
+      chatMessages: [...messages.slice(0, -1), updated],
+      chatStreamingText: content,
+    })
   },
 
   handleChatDone: (event) => {

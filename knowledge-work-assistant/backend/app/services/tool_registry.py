@@ -674,6 +674,37 @@ _DEFAULT_TOOL_DEFS: list[tuple[str, dict[str, Any], list[str]]] = [
 ]
 
 
+#: KWA 不暴露给 main_agent 的步影通用桌面工具集合。
+#:
+#: 这些工具移植自步影项目，针对桌面端 agent 设计（读写本地文件、执行 shell、
+#: 操作剪贴板、截屏、桌面通知、打开应用/URL），但 KWA 是 Web/Electron 应用，
+#: agent 在服务端运行，这些工具在 KWA 场景下无意义且部分有安全风险：
+#:
+#: - ``file_read / file_write / file_list``：服务端不该读写用户本地文件
+#: - ``command_exec``：服务端不该执行 shell
+#: - ``open_app / open_url``：前端职责（前端按需自行实现）
+#: - ``system_notification / screenshot``：前端职责
+#: - ``clipboard_read / clipboard_write``：前端职责
+#: - ``append_note``：KWA 无 notes 模块，handler 已为 no-op
+#:
+#: **不修改 ``_DEFAULT_TOOL_DEFS`` 本身**：保留 schema 定义供 writer_agent
+#: 复用（writer_agent 用独立 ToolRegistry 仅注册 file_read/write/list），
+#: 也可供未来恢复 main_agent 通用工具能力时使用。
+_KWA_SKIP_TOOLS: set[str] = {
+    "file_read",
+    "file_write",
+    "file_list",
+    "command_exec",
+    "open_app",
+    "open_url",
+    "system_notification",
+    "screenshot",
+    "clipboard_read",
+    "clipboard_write",
+    "append_note",
+}
+
+
 def register_default_tools(
     registry: ToolRegistry,
     *,
@@ -684,25 +715,24 @@ def register_default_tools(
     """向注册表注册所有默认本地工具。
 
     KWA 适配版本（相对步影原版）：
-    - 移除 ``web_search`` / ``skill_list`` / ``skill_activate`` / ``checkpoint_search``
-      / ``message_search`` / ``deep_search`` 的注册（依赖未移植模块）。
-    - ``append_note`` 改为 no-op handler（KWA 无 notes 模块）。
-    - 保留 ``file_*`` / ``command_exec`` / ``open_app`` / ``open_url`` /
-      ``system_notification`` / ``screenshot`` / ``clipboard_*`` /
-      ``knowledge_search`` / ``task_*`` 的注册（委托 Task 3 移植的
-      :mod:`app.services.tools` 真实实现）。
-    - Task 7 会在本函数末尾调用 ``register_graph_tools(registry)`` 注册图谱工具。
+    - **本土化裁剪**：跳过 :data:`_KWA_SKIP_TOOLS` 中的 11 个步影通用桌面工具
+      （file_* / command_exec / open_app/url / system_notification / screenshot /
+      clipboard_* / append_note）。这些工具在 KWA Web/Electron 场景下无意义，
+      KWA 的真正业务能力通过 :mod:`app.services.tools.graph_tools` 的图谱工具暴露。
+    - 保留 ``knowledge_search``（KWA knowledge_store 三路检索）+ ``task_*``
+      （会话级任务追踪）+ 全部图谱工具（7 + 13 = 20 个）。
+    - Task 7 在本函数末尾调用 ``register_graph_tools(registry)`` 注册图谱工具。
 
     Args:
         registry: 目标注册表。
-        session_id_getter: 返回当前 session_id 的回调（KWA 适配：append_note 已为
-            no-op，此参数保留供未来恢复 notes 模块时使用）。
+        session_id_getter: 返回当前 session_id 的回调（保留供未来恢复 notes 模块时使用）。
         task_store_getter: 返回当前会话 TaskStore 的回调，用于 task_* 工具绑定会话。
             为 None 时 task_* 使用占位 handler（返回未绑定错误）。
-        llm_client_getter: 返回当前 LLMClient 的回调（KWA 适配：deep_search 已移除，
-            此参数保留供 Task 7 图谱工具未来扩展使用）。
+        llm_client_getter: 返回当前 LLMClient 的回调（保留供未来扩展使用）。
     """
     # 真实实现的本地工具 handler 映射（file_* + system_tools）
+    # 注：file_* / system_tools 已在 _KWA_SKIP_TOOLS 中跳过注册，
+    # real_handlers 仍加载（无害），供未来如需恢复注册时直接复用。
     real_handlers = _load_real_handlers()
 
     # task_* handler：有 getter 时绑定会话，否则用占位
@@ -716,10 +746,10 @@ def register_default_tools(
         task_handlers = make_placeholder_task_handlers()
 
     for name, schema, allowed_modes in _DEFAULT_TOOL_DEFS:
-        if name == "append_note":
-            # KWA 适配：append_note 为 no-op（不依赖 notes 模块）
-            handler = _make_append_note_handler(session_id_getter)
-        elif name == "knowledge_search":
+        # KWA 本土化裁剪：跳过步影通用桌面工具
+        if name in _KWA_SKIP_TOOLS:
+            continue
+        if name == "knowledge_search":
             # knowledge_search 接入 KWA knowledge_store 真实检索
             handler = _knowledge_search_handler
         elif name in task_handlers:

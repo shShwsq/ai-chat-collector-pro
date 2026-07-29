@@ -210,6 +210,19 @@ async def _run_chat_stream(
                 )
                 seq += 1
 
+            elif etype == "thinking":
+                # 思维链增量：独立 WS 事件，前端单独折叠显示
+                await _push_ws(
+                    session_id,
+                    {
+                        "type": "chat_thinking",
+                        "op": "chat",
+                        "session_id": session_id,
+                        "request_id": request_id,
+                        "content": event.get("content", ""),
+                    },
+                )
+
             elif etype == "tool_call":
                 await _push_ws(
                     session_id,
@@ -234,6 +247,22 @@ async def _run_chat_stream(
                         "request_id": request_id,
                         "tool": event.get("tool", ""),
                         "result": event.get("result", {}),
+                    },
+                )
+
+            elif etype == "content_replace":
+                # 后处理剥离测验题内容：替换前端已显示的正文
+                cleaned = event.get("content", "")
+                full_text_parts.clear()
+                full_text_parts.append(cleaned)
+                await _push_ws(
+                    session_id,
+                    {
+                        "type": "chat_content_replace",
+                        "op": "chat",
+                        "session_id": session_id,
+                        "request_id": request_id,
+                        "content": cleaned,
                     },
                 )
 
@@ -377,6 +406,10 @@ class MessageResponse(BaseModel):
     content: str
     attachments: list[str] = []
     created_at: str
+    # 工具调用过程记录（仅 assistant 消息；JSON 字符串，前端 JSON.parse 后使用）
+    tool_calls: list[dict[str, Any]] = []
+    # 思维链内容（仅 assistant 消息；空字符串表示无思维链）
+    thinking: str = ""
 
 
 class ListMessagesResponse(BaseModel):
@@ -423,6 +456,11 @@ class ConfirmRequest(BaseModel):
 
     approved: bool = Field(..., description="是否同意执行")
     reason: str = Field("", description="拒绝原因（approved=false 时有意义）")
+    modified_args: dict[str, Any] | None = Field(
+        None,
+        description="修改后的工具参数（approved=true 时有意义；逐条确认场景下"
+        "仅保留用户勾选的 objects 子集）",
+    )
 
 
 class ConfirmResponse(BaseModel):
@@ -576,6 +614,8 @@ async def list_messages(session_id: str) -> ListMessagesResponse:
                 content=r.content,
                 attachments=json.loads(r.attachments) if r.attachments else [],
                 created_at=r.created_at.isoformat() if r.created_at else "",
+                tool_calls=json.loads(r.tool_calls) if r.tool_calls else [],
+                thinking=r.thinking or "",
             )
             for r in rows
         ],
@@ -818,6 +858,7 @@ async def confirm_tool_call(
         request_id=request_id,
         approved=body.approved,
         reason=body.reason,
+        modified_args=body.modified_args,
     )
     if not ok:
         raise _not_found(
