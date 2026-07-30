@@ -71,7 +71,38 @@ async def init_db() -> None:
     settings.ensure_dirs()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # 开发期轻量迁移：为已有数据库补充新增列（create_all 不会 ALTER 已有表）
+        await _migrate_add_columns(conn)
         await _create_fts5(conn)
+
+
+async def _migrate_add_columns(conn) -> None:
+    """为已有表补充新增列（SQLite ALTER TABLE ADD COLUMN）。
+
+    检查 messages 表是否存在 tool_calls / thinking 列，不存在则添加。
+    幂等：列已存在时跳过。
+    """
+    from sqlalchemy import inspect as sa_inspect
+
+    def _get_columns(sync_conn):
+        insp = sa_inspect(sync_conn)
+        if "messages" not in insp.get_table_names():
+            return []
+        return [c["name"] for c in insp.get_columns("messages")]
+
+    existing = await conn.run_sync(_get_columns)
+    if not existing:
+        return  # messages 表不存在（首次启动由 create_all 创建）
+    if "tool_calls" not in existing:
+        await conn.execute(
+            text("ALTER TABLE messages ADD COLUMN tool_calls TEXT NOT NULL DEFAULT '[]'")
+        )
+        logger.info("迁移：messages 表已添加 tool_calls 列")
+    if "thinking" not in existing:
+        await conn.execute(
+            text("ALTER TABLE messages ADD COLUMN thinking TEXT NOT NULL DEFAULT ''")
+        )
+        logger.info("迁移：messages 表已添加 thinking 列")
 
 
 async def _create_fts5(conn) -> None:

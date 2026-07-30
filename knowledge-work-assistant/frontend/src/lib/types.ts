@@ -53,6 +53,8 @@ export type WsEvent =
   | ChatToolCallEvent
   | ChatToolResultEvent
   | ChatToolConfirmationEvent
+  | ChatThinkingEvent
+  | ChatContentReplaceEvent
 
 /** 流式 LLM 操作类型。 */
 export type GraphAgentOp =
@@ -832,11 +834,18 @@ export interface ChatMessage {
   /** 创建时间 ISO8601。 */
   created_at: string
   /**
-   * 工具调用过程记录（仅 assistant 消息，由前端 WS 事件累积）。
-   * 后端 Message 表不存储此字段，前端根据 chat_tool_call / chat_tool_result
-   * 事件实时填充到最后一条 assistant 消息上。
+   * 工具调用过程记录（仅 assistant 消息）。
+   * 流式对话中由前端 WS 事件（chat_tool_call / chat_tool_result）实时累积；
+   * 重载历史会话时由后端 Message 表持久化的 tool_calls 字段恢复。
    */
   tool_calls?: ToolCall[]
+  /**
+   * 思维链内容（仅 assistant 消息）。
+   * 流式对话中由 chat_thinking WS 事件累积；
+   * 重载历史会话时由后端 Message 表持久化的 thinking 字段恢复。
+   * 前端在气泡上方折叠展示，不与正文 content 混排。
+   */
+  thinking?: string
 }
 
 /** 消息历史响应。 */
@@ -914,6 +923,8 @@ export interface ConfirmToolCallRequest {
   approved: boolean
   /** 拒绝原因（approved=false 时有意义）。 */
   reason?: string
+  /** 修改后的工具参数（approved=true 时有意义；逐条确认场景下仅保留勾选的 objects 子集）。 */
+  modified_args?: Record<string, unknown>
 }
 
 /** 确认响应。 */
@@ -979,6 +990,35 @@ export interface ChatTokenEvent {
   request_id: string
   content: string
   seq: number
+}
+
+/**
+ * chat 思维链增量 WS 事件。
+ *
+ * 由后端 reasoning 模型（如 DeepSeek-R1 / Qwen-QwQ）的 ``reasoning_content``
+ * 字段转发而来。前端在最后一条 assistant 占位消息的 ``thinking`` 字段累积，
+ * 在气泡上方折叠展示，不与正文混排。
+ */
+export interface ChatThinkingEvent {
+  type: 'chat_thinking'
+  op: ChatOp
+  session_id: string
+  request_id: string
+  content: string
+}
+
+/**
+ * chat 正文替换 WS 事件。
+ *
+ * 后端在 function calling 循环结束后，对正文做后处理（如剥离手写的测验题内容），
+ * 通过此事件通知前端替换已显示的流式文本。前端据此更新最后一条 assistant 消息的 content。
+ */
+export interface ChatContentReplaceEvent {
+  type: 'chat_content_replace'
+  op: ChatOp
+  session_id: string
+  request_id: string
+  content: string
 }
 
 /** chat 流式完成 WS 事件。 */

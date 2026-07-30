@@ -97,6 +97,11 @@ class Message(Base):
     content: Mapped[str] = mapped_column(Text, default="")
     # JSON 字符串：附件 file_id 列表，例如 ["<uuid>", "<uuid>"]
     attachments: Mapped[str] = mapped_column(Text, default="[]")
+    # JSON 字符串：assistant 消息的工具调用过程记录（含 tool / args / result / status）
+    # 空数组 "[]" 表示无工具调用；user 消息恒为 "[]"
+    tool_calls: Mapped[str] = mapped_column(Text, default="[]")
+    # 思维链内容（仅 assistant 消息；user 消息恒为空字符串）
+    thinking: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(default=_now, index=True)
 
     session: Mapped[Session] = relationship(back_populates="messages")

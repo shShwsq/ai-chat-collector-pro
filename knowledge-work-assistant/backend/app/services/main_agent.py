@@ -119,15 +119,19 @@ async def request_tool_confirmation(
     前端弹确认对话框。用户通过 ``POST /api/chat/requests/{id}/confirm`` 调用
     :func:`resolve_tool_confirmation` 解析 Future。
 
+    支持逐条确认：用户可在前端对 ``graph_confirm_work_objects`` 的 ``objects``
+    数组进行逐项勾选，同意时通过 ``modified_args`` 回传筛选后的对象子集，
+    工具循环将使用修改后的参数执行。
+
     Args:
         session_id: 会话 ID（WS 推送目标）。
         tool_name: 工具名（如 ``graph_extract_from_observation``）。
-        args: 工具调用参数（供前端展示摘要）。
+        args: 工具调用参数（供前端展示摘要与逐条预览）。
         timeout: 超时秒数（默认 60）。
 
     Returns:
-        ``{"approved": bool, "reason": str}``。超时返回
-        ``{"approved": False, "reason": "用户确认超时，已取消"}``。
+        ``{"approved": bool, "reason": str, "modified_args": dict | None}``。
+        超时返回 ``{"approved": False, "reason": "用户确认超时，已取消"}``。
     """
     request_id = uuid.uuid4().hex
     loop = asyncio.get_event_loop()
@@ -177,13 +181,19 @@ def resolve_tool_confirmation(
     request_id: str,
     approved: bool,
     reason: str = "",
+    modified_args: dict[str, Any] | None = None,
 ) -> bool:
     """解析待确认的工具调用（由 ``POST /api/chat/requests/{id}/confirm`` 调用）。
+
+    支持逐条确认：``modified_args`` 非空时，工具循环将使用修改后的参数执行
+    （如仅入图用户勾选的工作对象子集）。
 
     Args:
         request_id: :func:`request_tool_confirmation` 生成的 request_id。
         approved: 用户是否同意。
         reason: 拒绝原因（approved=False 时有意义）。
+        modified_args: 修改后的工具参数（approved=True 时有意义；如逐条确认
+            后仅保留勾选的 ``objects`` 子集）。
 
     Returns:
         是否成功解析（request_id 不存在 / 已完成时返回 False）。
@@ -191,7 +201,11 @@ def resolve_tool_confirmation(
     future = _pending_confirmations.get(request_id)
     if future is None or future.done():
         return False
-    future.set_result({"approved": approved, "reason": reason})
+    future.set_result({
+        "approved": approved,
+        "reason": reason,
+        "modified_args": modified_args,
+    })
     return True
 
 
@@ -312,6 +326,62 @@ def _parse_attachments(raw: str | None) -> list[str]:
     if not isinstance(data, list):
         return []
     return [str(x) for x in data]
+
+
+# 测验题内容剥离：当调用了 graph_generate_quiz 工具时，LLM 可能在正文中
+# 手写题目与选项（违反系统提示词规则）。此函数检测并剥离这些内容，
+# 替换为简短引导语，确保正文不重复工具产出物。
+_QUIZ_CONTENT_PATTERNS = [
+    r"##\s*📝",           # markdown 标题：## 📝
+    r"##\s*新测验题",
+    r"\*\*题目[:：\*]",   # **题目：
+    r"\*\*A[\.\*]",       # **A.
+    r"^A[\.\s]",          # A. (行首)
+    r"请选择[你的]?",     # 请选择你
+    r"已生成\s+\w+_choice\s+题",  # 已生成 single_choice 题
+    r"已生成\s+feynman\s+题",     # 已生成 feynman 题
+]
+_QUIZ_CONTENT_RE = re.compile(
+    "|".join(f"(?:{p})" for p in _QUIZ_CONTENT_PATTERNS),
+    re.MULTILINE,
+)
+
+
+def _strip_quiz_content(
+    content: str,
+    tool_calls: list[dict[str, Any]] | None,
+) -> str:
+    """当调用了 graph_generate_quiz 工具时，从正文中剥离手写的测验题内容。
+
+    检测 tool_calls 中是否包含 graph_generate_quiz。如果包含且正文中有
+    测验题模式（题目/选项/答案），则截断到第一个测验题模式之前，
+    并追加简短引导语。
+
+    Args:
+        content: assistant 响应正文。
+        tool_calls: 工具调用记录列表。
+
+    Returns:
+        清理后的正文（若无测验题模式或未调用 quiz 工具，原样返回）。
+    """
+    if not content or not tool_calls:
+        return content
+    has_quiz_tool = any(
+        tc.get("tool") == "graph_generate_quiz" for tc in tool_calls
+    )
+    if not has_quiz_tool:
+        return content
+    match = _QUIZ_CONTENT_RE.search(content)
+    if not match:
+        return content
+    # 截断到第一个测验题模式之前，保留前导引导语
+    cleaned = content[: match.start()].rstrip()
+    # 如果截断后内容为空或过短，补充引导语
+    if len(cleaned) < 5:
+        cleaned = "已为你生成一道测验题，点击下方选项作答。"
+    else:
+        cleaned = cleaned + "\n\n已为你生成一道测验题，点击下方选项作答。"
+    return cleaned
 
 
 # ============================================================================
@@ -577,6 +647,9 @@ class MainAgent:
             # 每次调用前重置取消标志
             self._cancel_event.clear()
             assistant_content_parts: list[str] = []
+            # 这两个列表声明在 try 块外，便于异常时也能保存已累积的内容
+            assistant_tool_calls: list[dict[str, Any]] = []
+            assistant_thinking_parts: list[str] = []
 
             try:
                 # 1. 验证会话存在 + 保存用户消息
@@ -626,6 +699,8 @@ class MainAgent:
                 async for event in self._run_function_calling_loop(
                     messages,
                     assistant_content_parts,
+                    assistant_tool_calls,
+                    assistant_thinking_parts,
                     tool_mode=effective_mode,
                     graph_id=effective_graph_id,
                 ):
@@ -633,6 +708,17 @@ class MainAgent:
 
             except Exception as exc:  # noqa: BLE001
                 logger.exception("MainAgent chat_stream 异常: %s", exc)
+                # 异常时也尝试保存已累积的内容（content / thinking / tool_calls
+                # 三个列表在 try 块外声明，这里可访问；_run_function_calling_loop
+                # 内部异常未捕获时会冒泡到这里，需保证部分内容也能落库）。
+                try:
+                    await self._save_assistant_message(
+                        "".join(assistant_content_parts),
+                        assistant_tool_calls,
+                        "".join(assistant_thinking_parts),
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.warning("异常分支保存 assistant 消息失败", exc_info=True)
                 yield {"type": "error", "message": str(exc)}
                 yield {"type": "done"}
             finally:
@@ -704,9 +790,30 @@ class MainAgent:
             await db.commit()
         return True
 
-    async def _save_assistant_message(self, content: str) -> None:
-        """保存 assistant 消息到 DB（内容为空则跳过）。"""
-        if not content or not content.strip():
+    async def _save_assistant_message(
+        self,
+        content: str,
+        tool_calls: list[dict[str, Any]] | None = None,
+        thinking: str = "",
+    ) -> None:
+        """保存 assistant 消息到 DB。
+
+        只要 content / thinking / tool_calls 三者中任一非空即保存，
+        避免以下场景丢失历史：
+        - LLM 仅产出思维链（reasoning_content）而无正文 token（Qwen 等模型）；
+        - LLM 在工具调用阶段被取消，正文为空但已有 thinking + tool_calls 记录；
+        - LLM 返回空内容但携带了工具调用。
+
+        Args:
+            content: assistant 回答正文。
+            tool_calls: 工具调用过程记录（含 tool / args / result / status），
+                持久化为 JSON 字符串，便于前端重载会话时恢复工具调用卡片。
+            thinking: 思维链内容，持久化为纯文本，便于前端重载时恢复折叠展示。
+        """
+        has_content = bool(content and content.strip())
+        has_thinking = bool(thinking and thinking.strip())
+        has_tool_calls = bool(tool_calls)
+        if not (has_content or has_thinking or has_tool_calls):
             return
         now = _now()
         async with AsyncSessionLocal() as db:
@@ -718,6 +825,14 @@ class MainAgent:
                     role="assistant",
                     content=content,
                     attachments="[]",
+                    # default=str 兜底：tool_calls 中的 result 可能包含 ORM 对象
+                    # 携带的 datetime / UUID 等非 JSON 原生类型（例如
+                    # graph_generate_quiz 返回的题目记录含 created_at），
+                    # 避免序列化失败导致整个 assistant 消息无法落库。
+                    tool_calls=json.dumps(
+                        tool_calls or [], ensure_ascii=False, default=str
+                    ),
+                    thinking=thinking or "",
                     created_at=now,
                 )
             )
@@ -988,6 +1103,8 @@ class MainAgent:
         self,
         messages: list[dict[str, Any]],
         assistant_content_parts: list[str],
+        assistant_tool_calls: list[dict[str, Any]],
+        assistant_thinking_parts: list[str],
         *,
         tool_mode: str | None = None,
         graph_id: str | None = None,
@@ -1004,6 +1121,8 @@ class MainAgent:
         Args:
             messages: 对话消息列表（会被工具结果回填修改）。
             assistant_content_parts: 累积的 assistant 内容（跨迭代）。
+            assistant_tool_calls: 累积的工具调用记录（跨迭代，持久化用）。
+            assistant_thinking_parts: 累积的思维链片段（跨迭代，持久化用）。
             tool_mode: 工具模式（plan/build，为 None 时用 ``self.mode``）。
             graph_id: 图谱 ID（高风险拦截 WS 推送时附带）。
         """
@@ -1026,6 +1145,7 @@ class MainAgent:
 
         for _iteration in range(MAX_TOOL_ITERATIONS):
             iteration_tokens: list[str] = []
+            iteration_thinking_parts: list[str] = []
             pending_tool_calls: list[dict[str, Any]] = []
             finish_reason: str | None = None
 
@@ -1047,6 +1167,12 @@ class MainAgent:
                         content = event.get("content", "")
                         iteration_tokens.append(content)
                         yield {"type": "token", "content": content}
+                    elif etype == "thinking":
+                        # 思维链增量：独立产出，不混入正文 token
+                        thinking_content = event.get("content", "")
+                        iteration_thinking_parts.append(thinking_content)
+                        assistant_thinking_parts.append(thinking_content)
+                        yield {"type": "thinking", "content": thinking_content}
                     elif etype == "tool_call":
                         pending_tool_calls.append(event)
                     elif etype == "finish":
@@ -1054,7 +1180,11 @@ class MainAgent:
             except Exception as exc:  # noqa: BLE001
                 partial = "".join(iteration_tokens)
                 assistant_content_parts.append(partial)
-                await self._save_assistant_message("".join(assistant_content_parts))
+                await self._save_assistant_message(
+                    "".join(assistant_content_parts),
+                    assistant_tool_calls,
+                    "".join(assistant_thinking_parts),
+                )
                 yield {"type": "error", "message": str(exc)}
                 yield {"type": "done"}
                 return
@@ -1074,7 +1204,21 @@ class MainAgent:
 
             # ---- 判断是否需要执行工具 ----
             if not pending_tool_calls:
-                await self._save_assistant_message("".join(assistant_content_parts))
+                final_content = "".join(assistant_content_parts)
+                final_thinking = "".join(assistant_thinking_parts)
+                # 后处理：剥离正文中手写的测验题内容（graph_generate_quiz 专属）
+                cleaned_content = _strip_quiz_content(
+                    final_content, assistant_tool_calls
+                )
+                if cleaned_content != final_content:
+                    # 通知前端替换已显示的正文（流式 token 可能已推送过原始内容）
+                    yield {"type": "content_replace", "content": cleaned_content}
+                    final_content = cleaned_content
+                await self._save_assistant_message(
+                    final_content,
+                    assistant_tool_calls,
+                    final_thinking,
+                )
                 yield {"type": "done"}
                 return
 
@@ -1105,6 +1249,13 @@ class MainAgent:
                     "tool": tool_name,
                     "args": args,
                 }
+                # 记录到累积列表（持久化用，status 先标记 pending）
+                assistant_tool_calls.append({
+                    "id": tool_call_id,
+                    "tool": tool_name,
+                    "args": args,
+                    "status": "pending",
+                })
 
                 # ---- 高风险工具拦截（SubTask 5.4）----
                 if tool_name in HIGH_RISK_TOOLS:
@@ -1139,18 +1290,43 @@ class MainAgent:
                     "tool": tool_name,
                     "result": result,
                 }
+                # 更新累积列表中对应工具调用的状态与结果（持久化用）
+                if assistant_tool_calls:
+                    # 找到最后一个同 id 且 pending 的条目更新
+                    for idx in range(len(assistant_tool_calls) - 1, -1, -1):
+                        tc_entry = assistant_tool_calls[idx]
+                        if (
+                            tc_entry.get("id") == tool_call_id
+                            and tc_entry.get("status") == "pending"
+                        ):
+                            status = (
+                                "error"
+                                if isinstance(result, dict)
+                                and result.get("status") == "error"
+                                else "done"
+                            )
+                            tc_entry["status"] = status
+                            tc_entry["result"] = result
+                            break
 
                 # 回填 tool 角色消息
+                # 使用 default=str 兜底：工具结果可能包含 datetime / UUID /
+                # ORM 对象等非 JSON 原生类型，避免序列化失败抛 TypeError 中断
+                # 整个 chat_stream（导致 assistant 消息无法保存）。
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tool_call_id,
-                        "content": json.dumps(result, ensure_ascii=False),
+                        "content": json.dumps(result, ensure_ascii=False, default=str),
                     }
                 )
 
             if self._cancel_event.is_set():
-                await self._save_assistant_message("".join(assistant_content_parts))
+                await self._save_assistant_message(
+                    "".join(assistant_content_parts),
+                    assistant_tool_calls,
+                    "".join(assistant_thinking_parts),
+                )
                 yield {"type": "done"}
                 return
 
@@ -1238,6 +1414,18 @@ class MainAgent:
             }
 
         # 用户同意：执行工具
+        # 逐条确认时，前端可能回传 modified_args（如仅勾选的工作对象子集），
+        # 用修改后的参数执行，实现部分入图。
+        modified_args = confirmation.get("modified_args")
+        effective_args = args
+        if modified_args and isinstance(modified_args, dict):
+            logger.info(
+                "高风险工具 %s 使用 modified_args 执行 session=%s",
+                tool_name,
+                self.session_id,
+            )
+            effective_args = modified_args
+
         logger.info(
             "高风险工具 %s 用户已同意，开始执行 session=%s",
             tool_name,
@@ -1245,8 +1433,10 @@ class MainAgent:
         )
         is_mcp = tool_name.startswith(MCP_PREFIX)
         if is_mcp:
-            return await mcp_manager.call_tool(tool_name, args)
-        return await self.tool_registry.execute(tool_name, args, mode=tool_mode)
+            return await mcp_manager.call_tool(tool_name, effective_args)
+        return await self.tool_registry.execute(
+            tool_name, effective_args, mode=tool_mode
+        )
 
     @staticmethod
     def _build_assistant_tool_call_message(

@@ -182,10 +182,17 @@ class LLMClient:
                     choice = chunk.choices[0]
                     delta = choice.delta
 
-                    # 内容增量（兼容 reasoning 模型：content 为空时取 reasoning_content）
-                    text = delta.content or getattr(delta, "reasoning_content", None) or ""
+                    # 正文内容增量（仅 content 字段）
+                    # reasoning_content（思维链）单独产出为 thinking 事件，
+                    # 不与正文混在一起，便于前端独立折叠展示。
+                    text = delta.content or ""
                     if text:
                         yield {"type": "token", "content": text}
+
+                    # 思维链增量（reasoning 模型如 DeepSeek-R1 / Qwen-QwQ）
+                    reasoning = getattr(delta, "reasoning_content", None)
+                    if reasoning:
+                        yield {"type": "thinking", "content": reasoning}
 
                     # 工具调用 delta 聚合
                     if delta.tool_calls:
@@ -317,12 +324,15 @@ class LLMClient:
                             "arguments": tc.function.arguments if tc.function else "",
                         }
                     )
-            # 兼容 reasoning 模型：OpenAI 兼容服务可能把思考内容放在 reasoning_content
-            content = message.content or getattr(message, "reasoning_content", None) or ""
+            # 非流式响应：content 仅为正文，reasoning_content 单独放到 thinking 字段
+            # （避免思维链污染正文，与流式版本行为对齐）
+            content = message.content or ""
+            thinking = getattr(message, "reasoning_content", None) or ""
             if request_id is not None:
                 await llm_request_registry.update(request_id, "completed")
             return {
                 "content": content,
+                "thinking": thinking,
                 "tool_calls": tool_calls_out,
                 "finish_reason": choice.finish_reason,
             }
