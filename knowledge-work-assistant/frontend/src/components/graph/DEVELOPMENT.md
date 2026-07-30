@@ -28,6 +28,11 @@ graph/
 - **节点尺寸**：与 `graphUtils.ts` 的 `NODE_WIDTH=180` / `NODE_HEIGHT=72` 保持一致；卡片内边距 `CARD_PAD_X=12` / `CARD_PAD_TOP=10`。
 - **力参数**：`forceManyBody` 互斥、`forceLink` 距离、`forceCenter` 居中、`forceCollide` 防重叠；`alphaDecay=0.045` 约 100 帧收敛。
 - **性能策略**：tick 高频回调中通过 `nodeElsRef` / `edgeElsRef` 直接更新 DOM 的 `transform` / `d` 属性，**不触发 React 重渲染**；位置快照存于 `positionsRef` 供低频重渲染读取。
+- **避免 React 与 d3 冲突**（修复：图谱节点/连线在交互后位置跳动的 Bug）：
+  - JSX 中**不写** `<path d={...}>` 与 `<g transform={...}>` 属性（React 每次重渲染会以 JSX 中的过期值覆盖 tick 写入的 DOM 实际值，导致节点/连线跳到旧位置）；
+  - 改为通过 `ref` 回调，在 DOM 元素首次挂载时用 `el.setAttribute('d', d)` / `el.setAttribute('transform', `translate(${x},${y})`)` 设置初始值；
+  - 后续更新完全由 d3 tick handler 通过 `nodeElsRef` / `edgeElsRef` 独占写入，React 不再干涉；
+  - 修改后：点击节点、切换详情卡、关闭面板等 React 重渲染触发时，节点/连线位置不再跳回旧值。
 - **交互**：
   - 节点拖拽：拖拽时设置 `fx/fy` 固定位置，松开后保持。
   - 滚轮缩放：以光标为中心，缩放系数被 `clampScale` 限制在 `[0.2, 3]`。
@@ -50,6 +55,10 @@ graph/
   4. 延伸方向推荐（`generated.extension_directions`，可点击触发单点延伸）
   5. 我的补充留白区（输入框 + 类型选择 + 保存 / 保存并延伸）
 - **详情来源策略**：若 `detail_payload` 已含 `_important_points` 键则直接从缓存构建；否则调用 `store.generateNodeDetail` / `generateNodeDetailStream` 生成并回写。
+- **推荐面板预生成详情的复用**：在 [ChatHome.tsx](../ChatHome.tsx) / 瀑布流推荐项中，`api.getRecommendationItems` 返回的每个 item 已经预生成了 `detail_payload`（含 `_important_points`、`_related_knowledge` 等字段）。当用户点击推荐卡展开大卡 → 点击「在图谱中查看」→ 切换到图谱视图时，**GraphView 侧无需重新生成详情**：
+  1. 切换动作会先调用 `store.syncNodeDetailToGraph(nodeId)`（store action）：在 `store.recommendations` 中查找同 id 的 item，将其 `detail_payload` 合并写入 `store.fullGraph.nodes[nodeId].detail_payload`；
+  2. 随后 NodeDetailCard 通过正常逻辑检测到 `detail_payload._important_points` 存在，直接渲染，跳过调用 `generateNodeDetail` 的 API；
+  3. 兼容性：若 recommendations 中找不到同 id item 或该 item 无 detail_payload，`syncNodeDetailToGraph` 为安全 no-op，不会覆盖已存在的 detail_payload，NodeDetailCard 正常走生成路径。
 - **定位**：由父组件 `GraphView` 计算 `position`（left/top/width/maxHeight），卡片绝对定位、不超出视口、自身可滚动。
 - **props**：除 `node` / `position` 等基础字段外，新增可选 prop `onRequestGraphSwitch?: (nodeId: string) => void`，用于大卡浮层无缝切换到图谱视图；图谱视图内部渲染时该 prop 为 `undefined`，无副作用。
 - **Task 8 延伸接入**：

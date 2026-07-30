@@ -105,6 +105,9 @@ function ApiConfigSection() {
   const llmConfigSaving = useAppStore((s) => s.llmConfigSaving)
   const loadLlmConfig = useAppStore((s) => s.loadLlmConfig)
   const updateLlmConfig = useAppStore((s) => s.updateLlmConfig)
+  const llmTesting = useAppStore((s) => s.llmTesting)
+  const llmTestResult = useAppStore((s) => s.llmTestResult)
+  const testLlmConnection = useAppStore((s) => s.testLlmConnection)
 
   // 本地表单状态：base_url / model 为明文，api_key 仅在用户输入新值时才提交
   const [baseUrl, setBaseUrl] = useState('')
@@ -162,6 +165,22 @@ function ApiConfigSection() {
     if (apiKey.trim()) return true
     return false
   }, [llmConfig, baseUrl, model, apiKey])
+
+  // 测试连接：用当前表单值构造请求（api_key 留空则后端用已保存值）。
+  // 仅当 base_url / model 至少有值时才允许触发。
+  const handleTest = async () => {
+    const patch: {
+      base_url?: string
+      api_key?: string
+      model?: string
+    } = {}
+    if (baseUrl.trim()) patch.base_url = baseUrl.trim()
+    if (model.trim()) patch.model = model.trim()
+    if (apiKey.trim()) patch.api_key = apiKey.trim()
+    await testLlmConnection(patch)
+  }
+
+  const canTest = !!llmConfig && (!!baseUrl.trim() || !!model.trim() || !!apiKey.trim())
 
   return (
     <section className="settings-section">
@@ -267,10 +286,46 @@ function ApiConfigSection() {
             >
               {llmConfigSaving ? '保存中…' : '保存配置'}
             </button>
+            <button
+              type="button"
+              className="settings-form__test-btn"
+              onClick={handleTest}
+              disabled={llmTesting || !canTest}
+              title={
+                !canTest
+                  ? '请先填写 base_url / model / api_key 至少一项'
+                  : llmTesting
+                    ? '正在测试连接…'
+                    : '用当前表单值向后端发送一条 ping 消息验证连通性（无需保存）'
+              }
+            >
+              {llmTesting ? '测试中…' : '测试连接'}
+            </button>
             <span className="settings-form__tip">
               保存后请重启后端进程，或等待后端热加载配置。
             </span>
           </div>
+
+          {llmTestResult && (
+            <div
+              className={`settings-form__test-result${
+                llmTestResult.ok ? ' is-ok' : ' is-fail'
+              }`}
+              role="status"
+            >
+              <span className="settings-form__test-icon">
+                {llmTestResult.ok ? '✓' : '✕'}
+              </span>
+              <span className="settings-form__test-text">
+                {llmTestResult.message}
+                {llmTestResult.ok && llmTestResult.reply && (
+                  <span className="settings-form__test-reply">
+                    {' '}回复：{llmTestResult.reply}
+                  </span>
+                )}
+              </span>
+            </div>
+          )}
         </div>
       )}
     </section>

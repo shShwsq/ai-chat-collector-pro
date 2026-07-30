@@ -772,11 +772,16 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
                   <path
                     key={e.id}
                     ref={(el) => {
-                      if (el) edgeElsRef.current.set(e.id, el)
-                      else edgeElsRef.current.delete(e.id)
+                      if (el) {
+                        edgeElsRef.current.set(e.id, el)
+                        // 设置初始路径；后续 d 由 d3 tick handler 独占更新，
+                        // 避免 React 重渲染覆盖导致连线跳动
+                        el.setAttribute('d', d)
+                      } else {
+                        edgeElsRef.current.delete(e.id)
+                      }
                     }}
                     className={`gv-edge${isHovered ? ' is-hovered' : ''}`}
-                    d={d}
                     onMouseEnter={() => setHoveredEdgeId(e.id)}
                     onMouseLeave={() => setHoveredEdgeId(null)}
                   />
@@ -800,10 +805,15 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
                   <g
                     key={n.id}
                     ref={(el) => {
-                      if (el) nodeElsRef.current.set(n.id, el)
-                      else nodeElsRef.current.delete(n.id)
+                      if (el) {
+                        nodeElsRef.current.set(n.id, el)
+                        // 设置初始位置；后续 transform 由 d3 tick handler 独占更新，
+                        // 避免 React 重渲染时用过期位置覆盖 tick 的 DOM 写入导致节点跳动
+                        el.setAttribute('transform', `translate(${pos.x},${pos.y})`)
+                      } else {
+                        nodeElsRef.current.delete(n.id)
+                      }
                     }}
-                    transform={`translate(${pos.x},${pos.y})`}
                     className={[
                       'gv-node',
                       isGray ? 'is-gray' : '',

@@ -97,9 +97,22 @@ function extractDetailFromCache(n: Node): NodeDetail {
   }
 }
 
-/** 判断节点是否已有生成缓存。 */
+/** 判断节点是否已有生成缓存。
+ *
+ * 后端/手动创建的节点可能已在 detail_payload 中写入模板字段（如 what_is、
+ * why_important），但没有 _important_points 等元数据键。若只看 _important_points，
+ * 这些节点会被误判为"未生成"，导致对话界面有详情而图谱详情卡显示"生成详情"。
+ * 因此同时检查：元数据键 或 任意非下划线非空模板字段。
+ */
 function hasCachedDetail(n: Node): boolean {
-  return Boolean(n.detail_payload?.[DETAIL_KEY_IMPORTANT])
+  const dp = n.detail_payload
+  if (!dp || typeof dp !== 'object' || Object.keys(dp).length === 0) return false
+  if (dp[DETAIL_KEY_IMPORTANT]) return true
+  return Object.entries(dp).some(
+    ([k, v]) =>
+      !k.startsWith('_') && k !== 'extensions' && v != null &&
+      (typeof v === 'string' ? v.trim().length > 0 : true)
+  )
 }
 
 /** 解析 extensions 字段（字符串 / 数组）为延伸方向列表（兜底）。 */
@@ -177,9 +190,19 @@ export function NodeDetailCard({
   onDelete,
   onRequestGraphSwitch,
 }: NodeDetailCardProps) {
-  // 始终从 store 读取最新节点（生成 / 编辑 / 留白后会更新）
-  const latestNode =
-    useAppStore((s) => s.fullGraph?.nodes.find((n) => n.id === node.id)) ?? node
+  // 优先从 store 读取最新节点（生成 / 编辑 / 留白后会更新）。
+  // 若外部传入的 node prop 自带 detail_payload 缓存（如推荐列表中的节点），
+  // 而 fullGraph 中尚未同步，则合并 prop 中的缓存，避免切换视图后详情丢失。
+  const storeNode = useAppStore((s) => s.fullGraph?.nodes.find((n) => n.id === node.id))
+  const latestNode: Node = storeNode
+    ? {
+        ...storeNode,
+        detail_payload:
+          storeNode.detail_payload && Object.keys(storeNode.detail_payload).length > 0
+            ? storeNode.detail_payload
+            : node.detail_payload,
+      }
+    : node
   const generateNodeDetail = useAppStore((s) => s.generateNodeDetail)
   const generateNodeDetailStream = useAppStore((s) => s.generateNodeDetailStream)
   const clearNodeDetailStreaming = useAppStore((s) => s.clearNodeDetailStreaming)

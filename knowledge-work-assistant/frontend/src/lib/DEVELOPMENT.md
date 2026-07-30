@@ -41,7 +41,7 @@ lib/
   - Study 测验：`generateQuiz` / `answerQuiz` / `listQuizzes` / `getQuiz`
   - Work 业务：`extractWorkObjects` / `confirmWorkObjects` / `generateTrends` / `addTrendToGraph` / `generateReport` / `exportReportDocx` / `askWorkQuestion`
   - 推荐 / touch / remind / star：`getRecommendations` / `touchNode` / `setRemind` / `clearRemind` / `setStar`
-  - LLM 配置：`getLlmRequests` / `cancelLlmRequest` / `getLlmConfig` / `updateLlmConfig`
+  - LLM 配置：`getLlmRequests` / `cancelLlmRequest` / `getLlmConfig` / `updateLlmConfig` / **`testLlmConnection(body: LlmTestConnectionRequest) → LlmTestConnectionResponse`**（POST `/llm/test-connection`，保存前即时验证连通性；字段全部可选，后端以传入值优先、否则用已保存配置；永远返回 200 不抛 HTTP 异常）
   - 流式触发：`streamNodeDetail` / `streamAskQuestion` / `streamGenerateReport`
   - 多轮对话 Chat（与 [backend/app/routers/chat.py](../../../backend/app/routers/chat.py) 对齐）：`createChatSession(body: CreateChatSessionRequest) → ChatSession` / `listChatSessions(mode?, graphId?, limit?) → ChatSession[]`（解包 `{ sessions, count }`）/ `getChatMessages(sessionId) → ChatMessage[]`（解包 `{ messages, count }`）/ `startChatStream(sessionId, body: StartChatStreamRequest) → ChatStreamStartedResponse` / `cancelChatStream(requestId) → CancelChatResponse` / `confirmChatToolCall(requestId, body: ConfirmToolCallRequest) → ConfirmToolCallResponse` / `triggerChatCheckpoint(sessionId) → TriggerCheckpointResponse` / `getChatCheckpoint(sessionId) → ChatCheckpoint`
 - **特殊方法 `exportReportDocx`**：不走 `request<T>` 封装，直接 `fetch` 拿 Blob 触发浏览器下载；从 `Content-Disposition` 解析文件名（支持 RFC5987 `filename*=UTF-8''xxx`）。
@@ -86,7 +86,7 @@ lib/
   - Work：`CandidateWorkObject` / `WorkExtractRequest` / `WorkExtractResponse` / `WorkConfirmRequest` / `WorkConfirmResponse` / `Trend` / `TrendsResponse` / `TrendAddResponse` / `ReportPeriod` / `ReportRequest` / `ReportResponse` / `WorkAskRequest` / `WorkAskResponse` / `AskSource`
   - 插件：`PluginConversationRequest` / `PluginConversationResponse` / `PluginHealthResponse` / `PluginRecentConversationItem` / `PluginRecentConversationsResponse`
   - 推荐：`RecommendationItem` / `RecommendationsResponse`
-  - LLM 配置：`LlmConfig` / `LlmConfigUpdate` / `LlmConfigUpdateResponse` / `LlmRequestInfo` / `LlmCancelResponse`
+  - LLM 配置：`LlmConfig` / `LlmConfigUpdate` / `LlmConfigUpdateResponse` / `LlmRequestInfo` / `LlmCancelResponse` / **`LlmTestConnectionRequest`**（`base_url? / api_key? / model?` 全部可选，空则后端用已保存值）/ **`LlmTestConnectionResponse`**（`ok: boolean` + `latency_ms: number` + `model: string` + `base_url: string` + `message: string` + `reply?: string`，永远返回不抛 HTTP 异常）
   - 流式：`StreamStartedResponse`
   - 多轮对话 Chat（约 20 个类型）：
     - 会话：`ChatSession` / `CreateChatSessionRequest` / `ListChatSessionsResponse`

@@ -238,6 +238,185 @@ async def update_llm_config(
 
 
 # ============================================================================
+# 连接测试
+# ============================================================================
+
+
+class LlmTestConnectionRequest(BaseModel):
+    """LLM 连接测试请求（所有字段可选，未传则用已保存配置）。
+
+    用于「测试连接」按钮：用户可在保存前填入新的 base_url / api_key / model，
+    后端用这些临时值构造客户端并发送一条极简消息验证连通性。未传字段回退
+    到 ``settings`` 表已保存的值，便于对已保存配置做连通性复查。
+    """
+
+    base_url: str | None = Field(
+        None, min_length=1, max_length=512, description="测试用 base_url，未传则用已保存值"
+    )
+    api_key: str | None = Field(
+        None, min_length=1, max_length=2048, description="测试用 api_key 明文，未传则用已保存值"
+    )
+    model: str | None = Field(
+        None, min_length=1, max_length=128, description="测试用 model，未传则用已保存值"
+    )
+
+
+class LlmTestConnectionResponse(BaseModel):
+    """LLM 连接测试响应。"""
+
+    ok: bool = Field(..., description="连接是否成功")
+    latency_ms: int = Field(..., description="请求耗时（毫秒）")
+    model: str = Field(..., description="实际测试使用的模型名")
+    base_url: str = Field(..., description="实际测试使用的 base_url")
+    message: str = Field(..., description="结果说明（成功/失败原因）")
+    reply: str = Field("", description="模型回复内容（成功时，截断 200 字）")
+
+
+@router.post("/llm/test-connection", response_model=LlmTestConnectionResponse)
+async def test_llm_connection(
+    body: LlmTestConnectionRequest,
+    session: AsyncSession = Depends(get_session),
+) -> LlmTestConnectionResponse:
+    """测试 LLM 连接是否可用（不抛 HTTP 异常，结果通过 ``ok`` 字段返回）。
+
+    流程：
+    1. 解析有效配置：请求体字段 > ``settings`` 表已保存值 > ``app_settings`` 兜底；
+    2. 任一缺失则返回 ``ok=False`` 并列出缺失项；
+    3. 构造测试用 :class:`LLMClient`（``max_output_tokens=16`` 保证响应快速）；
+    4. 发送极简消息 ``ping``，按返回/异常类型映射为可读 ``message``。
+
+    所有错误（鉴权 / 网络 / 限流 / 服务端）均通过 ``ok=False`` + ``message`` 返回，
+    便于前端在「测试连接」按钮旁统一展示结果，不触发全局错误 Toast。
+    """
+    import time
+
+    from app.services.llm_client import LLMClient
+    from app.services.llm_errors import (
+        LLMAuthError,
+        LLMConnectionError,
+        LLMError,
+        LLMRateLimitError,
+        LLMServerError,
+    )
+
+    # 解析有效配置：请求体 > 已保存 > app_settings 兜底
+    base_url = body.base_url or await get_setting(
+        session, "llm.base_url", app_settings.llm_base_url
+    )
+    api_key = body.api_key or await get_secret(
+        session, "llm.api_key", app_settings.llm_api_key
+    )
+    model = body.model or await get_setting(
+        session, "llm.model", app_settings.llm_model
+    )
+
+    if not base_url or not api_key or not model:
+        missing = [
+            name
+            for name, val in [
+                ("base_url", base_url),
+                ("api_key", api_key),
+                ("model", model),
+            ]
+            if not val
+        ]
+        return LlmTestConnectionResponse(
+            ok=False,
+            latency_ms=0,
+            model=model or "",
+            base_url=base_url or "",
+            message=f"配置不完整，缺少：{', '.join(missing)}",
+        )
+
+    # 构造测试用客户端：max_output_tokens=16 保证响应快速
+    client = LLMClient(
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        max_output_tokens=16,
+        default_temperature=0.0,
+    )
+
+    start = time.monotonic()
+    try:
+        result = await client.chat(
+            messages=[{"role": "user", "content": "ping"}],
+            temperature=0.0,
+        )
+    except LLMAuthError as exc:
+        latency_ms = int((time.monotonic() - start) * 1000)
+        return LlmTestConnectionResponse(
+            ok=False,
+            latency_ms=latency_ms,
+            model=model,
+            base_url=base_url,
+            message=f"鉴权失败：{exc.message}（请检查 API Key）",
+        )
+    except LLMConnectionError as exc:
+        latency_ms = int((time.monotonic() - start) * 1000)
+        return LlmTestConnectionResponse(
+            ok=False,
+            latency_ms=latency_ms,
+            model=model,
+            base_url=base_url,
+            message=f"连接失败：{exc.message}（请检查 base_url 与网络）",
+        )
+    except LLMRateLimitError as exc:
+        latency_ms = int((time.monotonic() - start) * 1000)
+        return LlmTestConnectionResponse(
+            ok=False,
+            latency_ms=latency_ms,
+            model=model,
+            base_url=base_url,
+            message=f"被限流：{exc.message}（请稍后重试）",
+        )
+    except LLMServerError as exc:
+        latency_ms = int((time.monotonic() - start) * 1000)
+        return LlmTestConnectionResponse(
+            ok=False,
+            latency_ms=latency_ms,
+            model=model,
+            base_url=base_url,
+            message=f"服务端错误：{exc.message}",
+        )
+    except LLMError as exc:
+        latency_ms = int((time.monotonic() - start) * 1000)
+        return LlmTestConnectionResponse(
+            ok=False,
+            latency_ms=latency_ms,
+            model=model,
+            base_url=base_url,
+            message=f"LLM 请求失败：{exc.message}",
+        )
+    except Exception as exc:  # noqa: BLE001
+        latency_ms = int((time.monotonic() - start) * 1000)
+        return LlmTestConnectionResponse(
+            ok=False,
+            latency_ms=latency_ms,
+            model=model,
+            base_url=base_url,
+            message=f"未知错误：{exc}",
+        )
+
+    latency_ms = int((time.monotonic() - start) * 1000)
+    reply = (result.get("content") or "").strip()
+    logger.info(
+        "LLM 连接测试成功: model=%s latency_ms=%d reply=%s",
+        model,
+        latency_ms,
+        reply[:60],
+    )
+    return LlmTestConnectionResponse(
+        ok=True,
+        latency_ms=latency_ms,
+        model=model,
+        base_url=base_url,
+        message=f"连接成功（耗时 {latency_ms}ms）",
+        reply=reply[:200],
+    )
+
+
+# ============================================================================
 # 维护：清理过期请求（可选，供前端主动触发或后续接入定时任务）
 # ============================================================================
 

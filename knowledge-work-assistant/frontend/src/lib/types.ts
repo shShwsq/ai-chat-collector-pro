@@ -730,6 +730,32 @@ export interface LlmConfigUpdateResponse {
   message?: string
 }
 
+/** LLM 连接测试请求体（所有字段可选，未传则用后端已保存配置）。 */
+export interface LlmTestConnectionRequest {
+  /** 测试用 base_url，未传则用已保存值。 */
+  base_url?: string
+  /** 测试用 api_key 明文，未传则用已保存值。 */
+  api_key?: string
+  /** 测试用 model，未传则用已保存值。 */
+  model?: string
+}
+
+/** LLM 连接测试响应。 */
+export interface LlmTestConnectionResponse {
+  /** 连接是否成功。 */
+  ok: boolean
+  /** 请求耗时（毫秒）。 */
+  latency_ms: number
+  /** 实际测试使用的模型名。 */
+  model: string
+  /** 实际测试使用的 base_url。 */
+  base_url: string
+  /** 结果说明（成功/失败原因）。 */
+  message: string
+  /** 模型回复内容（成功时，截断 200 字）。 */
+  reply?: string
+}
+
 // ============================================================================
 // 推荐 / touch / remind / star（与 backend/app/routers/recommendations.py 等对齐）
 // ============================================================================

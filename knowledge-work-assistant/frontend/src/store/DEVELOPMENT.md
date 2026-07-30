@@ -65,6 +65,7 @@ store/
 
 - `llmRequests: LlmRequestInfo[]`、`llmRequestsLoading: boolean`、`llmRequestsError: string`、`llmCancellingId: string | null`
 - `llmConfig: LlmConfig | null`、`llmConfigLoading: boolean`、`llmConfigSaving: boolean`
+- **新增（LLM 连接测试：`llmTesting: boolean`、`llmTestResult: LlmTestConnectionResponse | null`（「测试连接」按钮加载态与结果展示）
 
 #### 设置面板：插件对接
 
@@ -113,6 +114,7 @@ store/
 - `deleteNode(nodeId)`：删除节点，本地同步移除 nodes / edges / stats；如删除的是选中节点，清空 selectedNodeId。
 - `appendUserFill(nodeId, fillType, content)`：向节点 user_fill 追加一条内容。
 - `generateNodeDetail(nodeId)`：生成（或复用缓存）节点详情卡内容。
+- **新增 `syncNodeDetailToGraph(nodeId)`**：从 `recommendations` 中查找同 id item 的预生成 `detail_payload`，合并写入 `fullGraph.nodes[nodeId].detail_payload`，用于用户从推荐大卡切换到图谱视图时复用详情、避免重复生成；找不到 item 或无 detail_payload 时为安全 no-op，不覆盖已存在的 detail_payload。
 - `extendNode(nodeId, mode, directionName?)`：基于源节点生成延伸节点；mode='all' 双击触发全部延伸（可撤销），mode='single' 单击方向触发单点延伸（不进 batch）。
 - `revokeExtend()`：撤销上一次全部延伸（删除该批新节点与边）。
 - `flashNodes(ids, autoClear=true)`：触发指定节点闪烁高亮；1.8s 后自动清空（`FLASH_AUTO_CLEAR_MS`）。
@@ -178,6 +180,7 @@ store/
 - `cancelLlmRequest(id)`：取消指定 LLM 请求；成功后立即刷新列表。
 - `loadLlmConfig()`：拉取当前 LLM 配置（api_key 掩码）。
 - `updateLlmConfig(config)`：更新 LLM 配置（仅传需更新字段）；成功后刷新 llmConfig。
+- **新增 `testLlmConnection(config: Partial<LlmTestConnectionRequest>)`**：向后端发 `POST /api/llm/test-connection`；加载态写 `llmTesting=true`，完成后把响应写入 `llmTestResult`；捕获异常后仍写失败结果 `{ ok: false, latency_ms: 0, ... }`，不抛错保证组件不白屏；请求体字段可选，未传则后端使用已保存配置验证。
 
 #### 设置面板：插件对接
 

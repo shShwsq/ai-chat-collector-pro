@@ -78,14 +78,22 @@ services/
 4. **流式方法**：`generate_node_detail_stream` / `answer_question_stream` / `generate_report_stream` 通过 `LLMClient.chat_stream` 逐 token 产出，同时通过 `ws_notify.notify_session` 推送给前端（按 `session_id` 路由）。
 5. **上下文构建**：`_build_context` 将图谱节点 / 边序列化为紧凑文本，作为 LLM 的上下文输入，避免 token 浪费。
 6. **类型推断**：`generate_node_detail` 在 `node_type` 为通用兜底时，利用 `neighbors` 上下文让 LLM 推断更具体的类型，并据此选择模板。
+7. **长对话分块抽取**（修复 Issue #9：graph_agent 长对话静默截断丢失节点）：
+   - 新增常量 `_CONVERSATION_CHUNK_SIZE=6000` / `_CHUNK_OVERLAP=500` / `_MAX_EXISTING_NODES_HINT=50`；
+   - 新工具函数 `_split_conversation(text)`：按字符切分为多块，优先在换行处断开避免割裂句子，块间保留重叠字符以保证跨块节点连续性；短于一块返回单元素列表；
+   - 新工具函数 `_merge_nodes(chunk_results)`：按 `_titles_similar` 归一化标题跨块去重，保留首次出现的版本（前块优先）；
+   - 新内部方法 `_extract_nodes_from_chunk(...)`：单块抽取封装，prompt 注入「已有节点标题（同义归一）」与「分块上下文（当前块序号/总数）」；
+   - 方法 `extract_nodes_from_observation` 升级为顺序逐块抽取 + 末尾合并去重，短对话走单块原路径兼容旧行为。
+8. **同义归一**：抽取前从 `store.list_nodes(graph_id)` 加载当前图谱已有节点标题（最多 `_MAX_EXISTING_NODES_HINT` 个）注入 prompt，要求 LLM 优先复用已有标题，避免产生"乘法"与"乘法运算"这类同义重复节点。
 
 主要方法（部分）：
 - 节点详情：`generate_node_detail` / `generate_node_detail_stream`
 - 节点延伸：`extend_node`（mode='all' / 'single'） / `revoke_extension`
-- 候选抽取：`extract_candidates_from_observation`（Study） / `extract_work_objects_from_observation`（Work）
+- 候选抽取：`extract_nodes_from_observation(observation_id, graph_type) -> dict`（**返回结构变更**：旧版返回 `list[dict]`，新版返回 `{nodes, count, truncated, segment_count, original_length}`；`nodes` 是清洗后的节点列表，`truncated` 标记是否触发分块抽取，`segment_count` 是实际分块数，`original_length` 是原对话字符数。LLM 不可用时 nodes 为空列表，其余字段仍正常返回。调用方需做 `isinstance(result, dict)` 兜底兼容。）
+- Work 候选抽取：`extract_work_objects_from_observation`（Work）
 - 测验：`generate_quiz` / `grade_quiz_answer`
 - Work 业务：`get_trends` / `generate_report` / `generate_report_stream` / `answer_question` / `answer_question_stream`
-- 内部工具：`_get_llm_client` / `_call_llm_json` / `_build_context` / `_stream_llm`
+- 内部工具：`_get_llm_client` / `_call_llm_json` / `_build_context` / `_stream_llm` / `_split_conversation` / `_merge_nodes` / `_extract_nodes_from_chunk`
 
 ### `llm_client.py`：OpenAI 兼容 LLM 客户端
 

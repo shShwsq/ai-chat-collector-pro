@@ -92,8 +92,14 @@ routers/
 ### `extraction.py`（Task 11 Study 对话抽取）
 
 - `GET /api/observations?processed=false&limit=20`：列出观察记录（可按 `processed` 过滤）。
-- `POST /api/graphs/{graph_id}/nodes/extract`：从指定 observation 抽取候选节点（调 `graph_agent.extract_candidates_from_observation`）。
+- `POST /api/graphs/{graph_id}/nodes/extract`：从指定 observation 抽取候选节点（内部调 `graph_agent.extract_nodes_from_observation`）。
 - `POST /api/graphs/{graph_id}/nodes/batch`：批量创建节点 + 边（用户确认候选节点后调用）。
+- `POST /api/graphs/{graph_id}/nodes/extract-and-confirm`：从 observation 抽取 + 自动确认入图（Work 模式同流程）。
+
+**返回结构兼容**：`extract_nodes_from_observation` 在 graph_agent 层升级为**分块抽取**后，返回结构从旧版 `list[dict]` 改为新版 `dict{nodes, count, truncated, segment_count, original_length}`。`extract_nodes` 与 `extract_and_confirm` 两个端点均做了 `isinstance` 兜底：
+- 若 `result` 是 dict → 取 `result.get("nodes", [])` 作为候选列表；
+- 否则（旧路径或降级）→ 直接用 `result or []`。
+新增字段 `truncated`（是否触发分块）/ `segment_count`（分块数）/ `original_length`（原对话字符数）当前未在路由层返回，只写内部日志；如需在前端暴露可后续扩展响应体。
 
 ### `quiz.py`（Task 12 Study 测验）
 
@@ -138,6 +144,14 @@ routers/
 - `POST /api/llm/requests/cleanup`：清理已完成的请求记录。
 - `GET /api/llm/config`：读取当前 LLM 配置（`base_url` / `model` / `context_window` 等，`api_key` 不返回）。
 - `PUT /api/llm/config`：更新 LLM 配置（`api_key` 经 `settings_store.set_secret` 加密存入 `settings` 表）。
+- `POST /api/llm/test-connection`：**新增端点**——保存前验证 LLM 连通性（不抛 HTTP 异常，所有错误通过 `ok=false` 返回）。流程：
+  1. 解析配置优先级：请求体字段 > `settings` 表已保存值 > `app_settings` 兜底；
+  2. 任一缺失返回 `ok=false` + 缺失项列表；
+  3. 构造 `max_output_tokens=16` 的测试客户端发送极简 `ping`；
+  4. 按错误类型映射为可读中文 `message`：鉴权失败（401/403）→ 请检查 API Key；连接失败 → 请检查 base_url 与网络；限流（429）→ 请稍后重试；服务端错误（5xx）→ 服务端错误；
+  5. 成功返回 `ok=true` + `latency_ms`（耗时毫秒）+ `model` / `base_url`（实际使用值）+ `reply`（模型回复截断 200 字）。
+
+**设计要点**：该端点不触发全局错误 Toast，前端在「测试连接」按钮旁以内联结果条展示；请求体字段全部可选（`base_url?` / `api_key?` / `model?`），未传则用后端已保存配置，支持用户在修改表单值后、保存前即时验证。
 
 ### `stream.py`（流式触发路由）
 
@@ -165,12 +179,15 @@ routers/
 **设计要点**：
 1. **会话级 MainAgent 缓存**：模块内维护 `_session_agents: dict[session_id, MainAgent]`，同一会话复用 agent 实例以保留历史与上下文，会话销毁时清理。
 2. **双通道流式**：`POST /api/chat/sessions/{id}/stream` 立即返回 `StreamStartedResponse { request_id }`，实际 token 通过 WebSocket 推送（`op="chat"`），与 `stream.py` 一致；后台 `asyncio.create_task` 跑 `main_agent.run_stream`。
-3. **新增 chat 事件类型**：在 WS `op="chat"` 通道上新增 3 个事件类型：
+3. **WS session_id 与 chat session_id 分离**：`_run_chat_stream` 现显式接收 `ws_session_id`（前端 WebSocket 连接注册时的 session_id）与 `session_id`（chat 会话 DB ID）两个参数；所有 `_push_ws` 调用均改用 `ws_session_id` 推送，修复此前用 chat `session_id` 推送导致前端收不到流式事件的 Bug。
+4. **LLM 配置预检**：流式任务启动前检查 `llm_client.api_key / base_url`，未配置时立即推送 `graph_agent_error`（op="chat"）并标记任务为 failed，避免前端无意义等待 LLM 重试超时。
+5. **错误友好化**：新增 `_friendly_error_message(raw)` 将底层技术错误（连接失败 / 401 鉴权 / 超时 / 429 限流 / 服务端错误）映射为中文可读提示，供前端直接展示。
+6. **新增 chat 事件类型**：在 WS `op="chat"` 通道上新增 3 个事件类型：
    - `chat_tool_call`：Agent 决定调用工具时推送，携带工具名 / 参数 / call_id。
    - `chat_tool_result`：工具执行完成时推送，携带返回值。
    - `chat_tool_call_confirmation`：高风险工具需用户确认时推送，前端展示"确认 / 取消"按钮。
-4. **取消机制**：`POST /api/chat/requests/{id}/cancel` 通过 `llm_request_registry` 持有的 `asyncio.Task` 引用调 `task.cancel()`，终止流式任务。
-5. **高风险工具需确认**：工具声明 `require_confirmation=True` 时，Agent 暂停执行，推送 `chat_tool_call_confirmation` 事件等待用户确认；前端调 `POST /api/chat/requests/{id}/confirm` 续跑，或超时自动取消。
+7. **取消机制**：`POST /api/chat/requests/{id}/cancel` 通过 `llm_request_registry` 持有的 `asyncio.Task` 引用调 `task.cancel()`，终止流式任务。
+8. **高风险工具需确认**：工具声明 `require_confirmation=True` 时，Agent 暂停执行，推送 `chat_tool_call_confirmation` 事件等待用户确认；前端调 `POST /api/chat/requests/{id}/confirm` 续跑，或超时自动取消。
 
 ### `ws.py`（WebSocket 端点）
 
