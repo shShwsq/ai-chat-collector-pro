@@ -82,6 +82,12 @@ _EXTENSION_DIRECTIONS_MAX = 6
 # 标题相似度归一化：用于去重时的小写 + 去空白比较
 _SIMILAR_THRESHOLD = 0.8  # 简单子串包含或归一化相等即视为重复
 
+# 长对话分块抽取参数（避免单次 LLM 调用上下文溢出导致后段节点静默丢失，
+# 修复 Issue #9：graph_agent 长对话静默截断丢失节点）
+_CONVERSATION_CHUNK_SIZE = 6000   # 每块字符数（中文约 3000-4000 token，留出 prompt 余量）
+_CHUNK_OVERLAP = 500              # 块间重叠字符数（保证跨块节点连续性）
+_MAX_EXISTING_NODES_HINT = 50     # 注入 prompt 的已有节点标题上限（用于同义归一）
+
 
 # ============================================================================
 # 工具函数
@@ -136,6 +142,59 @@ def _extract_json_object(text: str) -> str:
     if end < 0 or end <= start:
         return text
     return text[start : end + 1]
+
+
+def _split_conversation(text: str) -> list[str]:
+    """将长对话按 :data:`_CONVERSATION_CHUNK_SIZE` 切分为多块，块间保留
+    :data:`_CHUNK_OVERLAP` 重叠字符以保证跨块节点连续性。
+
+    短于一块则返回单元素列表。按字符切分（中文场景比 token 切分更可控），
+    优先在换行处断开避免割裂句子。空文本返回空列表。
+    """
+    if not text:
+        return []
+    if len(text) <= _CONVERSATION_CHUNK_SIZE:
+        return [text]
+
+    chunks: list[str] = []
+    start = 0
+    n = len(text)
+    while start < n:
+        end = min(start + _CONVERSATION_CHUNK_SIZE, n)
+        # 优先在换行处断开（向前回溯半块找最近的 \n，避免割裂句子）
+        if end < n:
+            look_back_start = start + _CONVERSATION_CHUNK_SIZE // 2
+            nl = text.rfind("\n", look_back_start, end)
+            if nl > look_back_start:
+                end = nl + 1
+        chunks.append(text[start:end])
+        if end >= n:
+            break
+        # 下一块从 end - overlap 开始，保证重叠
+        start = max(0, end - _CHUNK_OVERLAP)
+    return chunks
+
+
+def _merge_nodes(chunk_results: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """合并多个分块的抽取结果，按 :func:`_titles_similar` 去重。
+
+    保留首次出现的版本（前块优先），后续相似标题直接丢弃。这保证跨块重复
+    的同一概念只保留一个节点，与单次抽取的去重语义一致。
+
+    Args:
+        chunk_results: 每个分块抽取出的节点列表（已清洗）。
+
+    Returns:
+        合并去重后的节点列表。
+    """
+    merged: list[dict[str, Any]] = []
+    for chunk in chunk_results:
+        for node in chunk:
+            title = node.get("title", "")
+            if any(_titles_similar(title, m.get("title", "")) for m in merged):
+                continue
+            merged.append(node)
+    return merged
 
 
 # ============================================================================
@@ -363,31 +422,67 @@ class GraphAgent:
 
     async def extract_nodes_from_observation(
         self, observation_id: str, graph_type: str
-    ) -> list[dict[str, Any]]:
+    ) -> dict[str, Any]:
         """从一条 Observation 对话中抽取候选节点。
+
+        对长对话采用**分块抽取 + 合并去重**策略（修复 Issue #9：长对话静默
+        截断丢失节点）：对话按 :data:`_CONVERSATION_CHUNK_SIZE` 切分为多块，
+        每块独立调用 LLM 抽取，最后用 :func:`_titles_similar` 跨块去重合并。
+        短对话（<= 一块）走单次调用原路径，行为与历史版本一致。
+
+        同义归一：抽取前从 :meth:`store.list_nodes` 加载当前图谱已有节点标题
+        （最多 :data:`_MAX_EXISTING_NODES_HINT` 个）注入 prompt，要求 LLM 优先
+        复用已有标题，避免产出"乘法"与"乘法运算"这类同义重复节点。
 
         Args:
             observation_id: 观察记录 ID。
             graph_type: 图谱模式（``study`` / ``work``），决定抽取目标与子类型枚举。
 
         Returns:
-            ``[{title, summary, type, detail_payload, confidence, source_reason}]``
-            列表。LLM 不可用或解析失败时返回空列表。
+            ``{nodes, count, truncated, segment_count, original_length}``。
+
+            - ``nodes``: ``[{title, summary, type, detail_payload, confidence,
+              source_reason}]`` 清洗后节点列表。
+            - ``count``: 节点数量。
+            - ``truncated``: 是否触发分块抽取（即原对话长度超过单块上限）。
+            - ``segment_count``: 实际分块数（短对话为 1）。
+            - ``original_length``: 原对话字符数。
+
+            LLM 不可用或解析失败时 ``nodes`` 为空列表，其余字段仍正常返回。
         """
         observation = await self.store.get_observation(observation_id)
         if observation is None:
             logger.warning("GraphAgent: 观察记录不存在: %s", observation_id)
-            return []
+            return {
+                "nodes": [],
+                "count": 0,
+                "truncated": False,
+                "segment_count": 0,
+                "original_length": 0,
+            }
 
         conversation = observation.get("conversation_markdown", "") or ""
+        original_length = len(conversation)
         if not conversation.strip():
             logger.warning("GraphAgent: 观察记录对话内容为空: %s", observation_id)
-            return []
+            return {
+                "nodes": [],
+                "count": 0,
+                "truncated": False,
+                "segment_count": 0,
+                "original_length": original_length,
+            }
 
         client = await self._get_llm_client()
         if client is None:
             logger.warning("GraphAgent: LLM 不可用，extract_nodes 返回空列表")
-            return []
+            return {
+                "nodes": [],
+                "count": 0,
+                "truncated": False,
+                "segment_count": 0,
+                "original_length": original_length,
+            }
 
         # 子类型枚举与提示
         if graph_type == GRAPH_TYPE_STUDY:
@@ -397,6 +492,92 @@ class GraphAgent:
             sub_types = list(WORK_OBJECTS)
             type_desc = "工作对象（如线索/关键人/承诺/期望/事件/决策/风险等）"
 
+        # 同义归一：加载当前图谱已有节点标题（前 50 个）注入 prompt
+        existing_titles: list[str] = []
+        graph_id = observation.get("graph_id")
+        if graph_id:
+            try:
+                existing_nodes = await self.store.list_nodes(graph_id)
+                existing_titles = [
+                    n.get("title", "")
+                    for n in existing_nodes[:_MAX_EXISTING_NODES_HINT]
+                    if n.get("title")
+                ]
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "GraphAgent: 加载已有节点失败 graph=%s: %s", graph_id, exc
+                )
+                existing_titles = []
+
+        # 分块：短对话返回单元素列表，长对话切分为多块
+        chunks = _split_conversation(conversation)
+        truncated = len(chunks) > 1
+        if not chunks:
+            return {
+                "nodes": [],
+                "count": 0,
+                "truncated": False,
+                "segment_count": 0,
+                "original_length": original_length,
+            }
+
+        # 逐块抽取（顺序调用，避免并发打满 LLM 配额）
+        chunk_results: list[list[dict[str, Any]]] = []
+        for idx, chunk_text in enumerate(chunks):
+            cleaned = await self._extract_nodes_from_chunk(
+                client=client,
+                chunk_text=chunk_text,
+                graph_type=graph_type,
+                sub_types=sub_types,
+                type_desc=type_desc,
+                existing_titles=existing_titles,
+                observation_id=observation_id,
+                chunk_index=idx,
+                chunk_total=len(chunks),
+            )
+            chunk_results.append(cleaned)
+
+        # 合并去重
+        if len(chunk_results) == 1:
+            nodes = chunk_results[0]
+        else:
+            nodes = _merge_nodes(chunk_results)
+            logger.info(
+                "GraphAgent: 长对话分块抽取完成 obs=%s chunks=%d raw=%d merged=%d",
+                observation_id,
+                len(chunks),
+                sum(len(c) for c in chunk_results),
+                len(nodes),
+            )
+
+        return {
+            "nodes": nodes,
+            "count": len(nodes),
+            "truncated": truncated,
+            "segment_count": len(chunks),
+            "original_length": original_length,
+        }
+
+    async def _extract_nodes_from_chunk(
+        self,
+        *,
+        client: LLMClient,
+        chunk_text: str,
+        graph_type: str,
+        sub_types: list[str],
+        type_desc: str,
+        existing_titles: list[str],
+        observation_id: str,
+        chunk_index: int,
+        chunk_total: int,
+    ) -> list[dict[str, Any]]:
+        """对单块对话文本调用 LLM 抽取节点并清洗。
+
+        抽取 prompt 注入已有节点标题（同义归一提示）与分块上下文（当前块序号），
+        让 LLM 在长对话后段也能识别出前段已抽过的同义概念。
+
+        LLM 调用失败或 JSON 解析失败时返回空列表（降级，不抛异常）。
+        """
         system_prompt = (
             "你是一个严格的「知识图谱节点抽取器」。从用户提供的对话原文中识别出"
             f"值得记录的{type_desc}，每个节点输出为一个 JSON 对象。\n\n"
@@ -416,18 +597,34 @@ class GraphAgent:
             f"5. type 必须是以下枚举之一：{sub_types}\n"
         )
 
-        # 截断超长对话，避免上下文溢出
-        truncated = conversation[:8000]
-        if len(conversation) > 8000:
-            truncated += "\n...(对话已截断)"
+        # 同义归一提示：若图谱中已有节点标题，要求 LLM 优先复用
+        if existing_titles:
+            system_prompt += (
+                "6. 图谱中已有以下节点标题，若对话中出现的概念与其中某条同义或"
+                "指代同一对象，请直接复用该标题（不要产出同义重复节点）：\n"
+                f"{existing_titles}\n"
+            )
 
-        user_prompt = (
-            f"图谱模式：{graph_type}\n"
-            f"子类型枚举：{sub_types}\n\n"
-            "对话原文：\n"
-            f"{truncated}\n\n"
-            "请输出 JSON："
-        )
+        # 分块上下文提示：让 LLM 知道这是长对话的第几块
+        if chunk_total > 1:
+            user_prompt = (
+                f"图谱模式：{graph_type}\n"
+                f"子类型枚举：{sub_types}\n\n"
+                f"（这是长对话的第 {chunk_index + 1}/{chunk_total} 块，"
+                "可能包含前一块结尾的重叠内容，请只抽取本块中明确出现的概念，"
+                "不要凭空补全。）\n\n"
+                "对话原文：\n"
+                f"{chunk_text}\n\n"
+                "请输出 JSON："
+            )
+        else:
+            user_prompt = (
+                f"图谱模式：{graph_type}\n"
+                f"子类型枚举：{sub_types}\n\n"
+                "对话原文：\n"
+                f"{chunk_text}\n\n"
+                "请输出 JSON："
+            )
 
         result = await self._call_llm_json(
             client,
@@ -439,6 +636,8 @@ class GraphAgent:
                 meta={
                     "observation_id": observation_id,
                     "graph_type": graph_type,
+                    "chunk_index": chunk_index,
+                    "chunk_total": chunk_total,
                 },
             ),
         )

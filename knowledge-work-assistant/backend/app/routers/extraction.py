@@ -179,8 +179,12 @@ async def extract_nodes(
 
     graph_type = graph.get("type", "study")
     try:
-        candidates = await agent.extract_nodes_from_observation(
+        result = await agent.extract_nodes_from_observation(
             observation_id, graph_type
+        )
+        # 新版本返回 dict；做一次 isinstance 兜底以防降级路径返回 list
+        candidates = (
+            result.get("nodes", []) if isinstance(result, dict) else (result or [])
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("extract: agent 抽取异常: %s", exc)
@@ -310,8 +314,12 @@ async def extract_and_confirm(
 
     graph_type = graph.get("type", "study")
     try:
-        candidates = await agent.extract_nodes_from_observation(
+        result = await agent.extract_nodes_from_observation(
             observation_id, graph_type
+        )
+        # 新版本返回 dict；做一次 isinstance 兜底以防降级路径返回 list
+        candidates = (
+            result.get("nodes", []) if isinstance(result, dict) else (result or [])
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("extract-and-confirm: agent 抽取异常: %s", exc)

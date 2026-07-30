@@ -168,6 +168,7 @@ async def _get_or_create_session_agent(session: SessionRow) -> MainAgent:
 async def _run_chat_stream(
     agent: MainAgent,
     session_id: str,
+    ws_session_id: str,
     request_id: str,
     user_message: str,
     plan_mode: bool,
@@ -178,12 +179,36 @@ async def _run_chat_stream(
 
     所有 token / tool_call / done / error 事件通过 :func:`ws_notify.notify_session`
     推送给前端。token 序号由本地维护（``seq`` 字段）。
+
+    Args:
+        session_id: chat 会话 ID（用于 DB 操作与日志）。
+        ws_session_id: 前端 WebSocket 连接注册时的 session_id，WS 事件
+            必须推送到此 ID 才能被前端接收（与 chat session_id 不同）。
     """
     full_text_parts: list[str] = []
     seq = 0
 
     # 标记 LLM 请求为 running
     await llm_request_registry.update(request_id, "running")
+
+    # 预检：LLM 未配置（api_key / base_url 为空）时立即推送错误，避免等待重试
+    llm = getattr(agent, "llm_client", None)
+    if llm is not None and (not llm.api_key or not llm.base_url):
+        message = "LLM 服务未配置，请在设置面板中填入 baseURL / apiKey / model 后重试。"
+        await _push_ws(
+            ws_session_id,
+            {
+                "type": "graph_agent_error",
+                "op": "chat",
+                "session_id": session_id,
+                "request_id": request_id,
+                "message": message,
+            },
+        )
+        await llm_request_registry.update(request_id, "failed", error=message)
+        _chat_tasks.pop(request_id, None)
+        _request_sessions.pop(request_id, None)
+        return
 
     try:
         async for event in agent.chat_stream(
@@ -198,7 +223,7 @@ async def _run_chat_stream(
                 content = event.get("content", "")
                 full_text_parts.append(content)
                 await _push_ws(
-                    session_id,
+                    ws_session_id,
                     {
                         "type": "graph_agent_token",
                         "op": "chat",
@@ -213,7 +238,7 @@ async def _run_chat_stream(
             elif etype == "thinking":
                 # 思维链增量：独立 WS 事件，前端单独折叠显示
                 await _push_ws(
-                    session_id,
+                    ws_session_id,
                     {
                         "type": "chat_thinking",
                         "op": "chat",
@@ -225,7 +250,7 @@ async def _run_chat_stream(
 
             elif etype == "tool_call":
                 await _push_ws(
-                    session_id,
+                    ws_session_id,
                     {
                         "type": "chat_tool_call",
                         "op": "chat",
@@ -239,7 +264,7 @@ async def _run_chat_stream(
 
             elif etype == "tool_result":
                 await _push_ws(
-                    session_id,
+                    ws_session_id,
                     {
                         "type": "chat_tool_result",
                         "op": "chat",
@@ -256,7 +281,7 @@ async def _run_chat_stream(
                 full_text_parts.clear()
                 full_text_parts.append(cleaned)
                 await _push_ws(
-                    session_id,
+                    ws_session_id,
                     {
                         "type": "chat_content_replace",
                         "op": "chat",
@@ -276,9 +301,9 @@ async def _run_chat_stream(
                 )
 
             elif etype == "error":
-                message = event.get("message", "未知错误")
+                message = _friendly_error_message(event.get("message", "未知错误"))
                 await _push_ws(
-                    session_id,
+                    ws_session_id,
                     {
                         "type": "graph_agent_error",
                         "op": "chat",
@@ -297,7 +322,7 @@ async def _run_chat_stream(
                 full_text = "".join(full_text_parts)
                 if cancelled:
                     await _push_ws(
-                        session_id,
+                        ws_session_id,
                         {
                             "type": "graph_agent_cancelled",
                             "op": "chat",
@@ -309,7 +334,7 @@ async def _run_chat_stream(
                     await llm_request_registry.update(request_id, "cancelled")
                 else:
                     await _push_ws(
-                        session_id,
+                        ws_session_id,
                         {
                             "type": "graph_agent_done",
                             "op": "chat",
@@ -325,7 +350,7 @@ async def _run_chat_stream(
         # 任务被外部取消（cancel 端点触发 StopCommand 或 asyncio.Task.cancel）
         full_text = "".join(full_text_parts)
         await _push_ws(
-            session_id,
+            ws_session_id,
             {
                 "type": "graph_agent_cancelled",
                 "op": "chat",
@@ -339,14 +364,15 @@ async def _run_chat_stream(
 
     except Exception as exc:  # noqa: BLE001
         logger.exception("chat_stream 后台任务异常 session=%s: %s", session_id, exc)
+        message = _friendly_error_message(str(exc))
         await _push_ws(
-            session_id,
+            ws_session_id,
             {
                 "type": "graph_agent_error",
                 "op": "chat",
                 "session_id": session_id,
                 "request_id": request_id,
-                "message": f"后台任务异常: {exc}",
+                "message": message,
             },
         )
         await llm_request_registry.update(request_id, "failed", error=str(exc))
@@ -354,6 +380,26 @@ async def _run_chat_stream(
     finally:
         _chat_tasks.pop(request_id, None)
         _request_sessions.pop(request_id, None)
+
+
+def _friendly_error_message(raw: str) -> str:
+    """将 LLM 异常技术信息转为用户可读的提示。
+
+    LLM 未上线 / 未配置时，底层错误包含连接失败 / 鉴权失败等关键字，
+    这里统一映射为前端友好的中文提示，便于用户理解并采取行动。
+    """
+    if not raw:
+        return "LLM 服务不可用，请检查设置中的配置。"
+    lower = raw.lower()
+    if "连接失败" in raw or "connection" in lower or "connect" in lower or "refused" in lower:
+        return "LLM 服务未上线或地址不可达，请在设置中检查 baseURL 并确认服务已启动。"
+    if "鉴权失败" in raw or "auth" in lower or "401" in raw or "api key" in lower:
+        return "LLM 鉴权失败，请在设置中检查 API Key 是否正确。"
+    if "超时" in raw or "timeout" in lower:
+        return "LLM 请求超时，服务可能过载或未启动，请稍后重试或检查服务状态。"
+    if "限流" in raw or "rate" in lower or "429" in raw:
+        return "LLM 服务限流，请稍后重试。"
+    return raw
 
 
 async def _push_ws(session_id: str, event: dict[str, Any]) -> None:
@@ -666,10 +712,12 @@ async def stream_chat(
     )
 
     # 启动后台流式任务
+    # body.session_id 是前端 WebSocket 连接的 session_id，WS 事件必须推送到此 ID
     task = asyncio.create_task(
         _run_chat_stream(
             agent=agent,
             session_id=session_id,
+            ws_session_id=body.session_id,
             request_id=request_id,
             user_message=body.content,
             plan_mode=effective_plan_mode,

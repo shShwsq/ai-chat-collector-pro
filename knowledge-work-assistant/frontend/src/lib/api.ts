@@ -47,6 +47,8 @@ import type {
   LlmConfigUpdate,
   LlmConfigUpdateResponse,
   LlmRequestInfo,
+  LlmTestConnectionRequest,
+  LlmTestConnectionResponse,
   Mode,
   Node,
   NodeCreate,
@@ -547,6 +549,17 @@ export const api = {
   updateLlmConfig: (body: LlmConfigUpdate) =>
     request<LlmConfigUpdateResponse>('/llm/config', {
       method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+  /**
+   * 测试 LLM 连接是否可用。
+   * 请求体字段均可选，未传则用后端已保存配置；用于保存前验证配置正确性。
+   * 后端发送一条极简 ping 消息，返回 ok/latency_ms/message。
+   * 该端点不抛 HTTP 异常，所有错误通过 ok=false 返回。
+   */
+  testLlmConnection: (body: LlmTestConnectionRequest) =>
+    request<LlmTestConnectionResponse>('/llm/test-connection', {
+      method: 'POST',
       body: JSON.stringify(body),
     }),
 

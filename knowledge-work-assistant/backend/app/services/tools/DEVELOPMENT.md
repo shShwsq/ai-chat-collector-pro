@@ -91,6 +91,22 @@ tools/
    - Work 模式 Plan：仅暴露 6 个只读工具（`READONLY_GRAPH_TOOLS`）
 5. **落库由 `GraphAgent` 内部负责**：本模块只做参数透传与结果包装，不直接操作 DB。
 
+**`graph_extract_from_observation` 返回结构扩展**：配合 graph_agent 的**分块抽取**升级，该 handler 的成功返回结构新增 3 个元数据字段（与 graph_agent 返回一致）：
+```python
+{
+    "status": "ok",
+    "observation_id": "...",
+    "graph_type": "study|work",
+    "nodes": [...],           # 不变：清洗后的节点列表
+    "count": N,                # 不变：len(nodes)
+    # ===== 以下 3 个字段为新增 =====
+    "truncated": bool,         # 是否触发分块抽取（原对话超过单块 6000 字符）
+    "segment_count": int,      # 实际分块数（短对话为 1）
+    "original_length": int,    # 原对话字符数（用于调试/统计）
+}
+```
+兼容性：handler 内部对 graph_agent 的返回做 `isinstance(result, dict)` 判断——新版（dict）解析新增字段，旧版或降级路径（list）默认 `truncated=false`、`segment_count=1 if nodes else 0`、`original_length=0`。LLM 不可用或抽取失败时 `nodes=[]`，其余字段仍有合理默认值。
+
 ## 工具 handler 签名约定
 
 所有 handler 统一签名：

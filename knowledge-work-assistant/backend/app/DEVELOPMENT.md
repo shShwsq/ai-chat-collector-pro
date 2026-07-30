@@ -68,7 +68,7 @@ shutdown 当前无额外资源需释放；后续接入 MCP / 后台任务时在�
 | `work.py` | `/api` | `/api/graphs/{id}/work/extract|confirm|trends|report|ask` |
 | `recommendations.py` | `/api` | `/api/graphs/{id}/recommendations?mode=study|work` |
 | `plugin.py` | `/api/plugin`（router 自带 `/plugin` 前缀，叠加 `/api` 后为 `/api/plugin/*`） | `POST /api/plugin/conversations`、`GET /api/plugin/contract|health|conversations/recent` |
-| `llm_admin.py` | `/api` | `/api/llm/requests`、`/api/llm/requests/{id}/cancel`、`/api/llm/config` |
+| `llm_admin.py` | `/api` | `/api/llm/requests`、`/api/llm/requests/{id}/cancel`、`/api/llm/config`、`/api/llm/test-connection`（保存前验证 LLM 连通性，返回 ok/latency/message/reply，不抛 HTTP 异常） |
 | `stream.py` | `/api` | `/api/graphs/{id}/nodes/{nid}/detail-stream`、`/api/graphs/{id}/work/ask-stream|report-stream` |
 | `chat.py` | `/api` | `/api/chat/sessions`、`/api/chat/sessions/{id}/messages\|stream\|checkpoint`、`/api/chat/requests/{id}/cancel\|confirm` |
 | `ws.py` | （无前缀） | `WS /ws?session_id=<uuid32>` |

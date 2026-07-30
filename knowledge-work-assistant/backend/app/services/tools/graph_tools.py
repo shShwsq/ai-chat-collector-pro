@@ -214,10 +214,17 @@ async def graph_extract_from_observation(args: dict[str, Any]) -> dict[str, Any]
         graph_type: 图谱模式（``study`` / ``work``，决定抽取目标与子类型枚举）。
 
     Returns:
-        ``{"status": "ok", "observation_id", "nodes": [...], "count": N}``；
-        LLM 不可用或解析失败返回空 nodes 列表。
+        ``{"status": "ok", "observation_id", "graph_type", "nodes": [...],
+        "count": N, "truncated": bool, "segment_count": int,
+        "original_length": int}``；LLM 不可用或解析失败返回空 nodes 列表。
 
-    委托 :meth:`graph_agent.GraphAgent.extract_nodes_from_observation`。
+        - ``truncated``: 是否触发分块抽取（长对话）。
+        - ``segment_count``: 实际分块数（短对话为 1）。
+        - ``original_length``: 原对话字符数。
+
+    委托 :meth:`graph_agent.GraphAgent.extract_nodes_from_observation`，
+    透传其返回的 ``truncated`` / ``segment_count`` / ``original_length``
+    元数据字段，便于 agent 与前端识别长对话分块抽取场景。
 
     .. note::
         本工具被列入 :data:`HIGH_RISK_TOOLS`，调用前由
@@ -239,7 +246,7 @@ async def graph_extract_from_observation(args: dict[str, Any]) -> dict[str, Any]
     try:
         from app.services.graph_agent import graph_agent
 
-        nodes = await graph_agent.extract_nodes_from_observation(
+        result = await graph_agent.extract_nodes_from_observation(
             observation_id, graph_type
         )
     except Exception as exc:  # noqa: BLE001
@@ -251,12 +258,27 @@ async def graph_extract_from_observation(args: dict[str, Any]) -> dict[str, Any]
         )
         return {"status": "error", "message": f"从观察抽取节点失败: {exc}"}
 
+    # 兼容 dict 返回（新版本）与 list 返回（旧版本，理论上已不存在）
+    if isinstance(result, dict):
+        nodes = result.get("nodes", []) or []
+        truncated = bool(result.get("truncated", False))
+        segment_count = int(result.get("segment_count", 1) or 1)
+        original_length = int(result.get("original_length", 0) or 0)
+    else:
+        nodes = result or []
+        truncated = False
+        segment_count = 1 if nodes else 0
+        original_length = 0
+
     return {
         "status": "ok",
         "observation_id": observation_id,
         "graph_type": graph_type,
         "nodes": nodes,
         "count": len(nodes),
+        "truncated": truncated,
+        "segment_count": segment_count,
+        "original_length": original_length,
     }
 
 

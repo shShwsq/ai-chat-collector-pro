@@ -11,7 +11,8 @@ tests/
 └── e2e/
     ├── __init__.py                  # 空（仅标识为 Python 包）
     ├── test_plugin_webhook.py       # 浏览器插件 webhook 端点单元测试（8 个用例）
-    └── test_plugin_ws_broadcast.py  # WS 广播 + 完整链路 e2e 测试（2 个用例）
+    ├── test_plugin_ws_broadcast.py  # WS 广播 + 完整链路 e2e 测试（2 个用例）
+    └── test_extract_long_conversation.py  # graph_agent 长对话分块抽取 + 同义归一验证（5 个用例）
 ```
 
 **测试栈**：
@@ -127,6 +128,23 @@ _ASYNC_SESSION_IMPORTERS = (
 | 1 | `test_ws_broadcast_on_push` | 建立 WS 连接 → POST 推送 → WS 收到 `{type: 'plugin.conversation_received', payload: {observation_id, platform, title, timestamp}}` 事件 |
 | 2 | `test_e2e_full_pipeline` | 模拟采集器 patch 的完整对话 Markdown → 调 webhook → 验证落库（`observations` 表字段正确）→ 验证 WS 广播 → **HTTP 响应 / 数据库 / WS 广播三者 `observation_id` 一致** |
 
+### `test_extract_long_conversation.py`（5 个用例）
+
+覆盖 `graph_agent.GraphAgent.extract_nodes_from_observation` 的分块抽取升级（修复 Issue #9：长对话静默截断丢失节点）。测试**不依赖 tmp_db / async_client**，直接对 `GraphAgent(store=MagicMock())` 做单元级验证，monkeypatch `_get_llm_client` 与 `_call_llm_json` 模拟 LLM 行为：
+
+| # | 用例名 | 验证点 |
+|---|--------|--------|
+| 1 | `test_long_conversation_chunked_and_merged` | 12000 字符长对话触发 `truncated=True` + `segment_count>=2`；两块返回的"乘法"与"乘法运算"同义去重为 1 个；已有节点标题注入 prompt；分块上下文（第 N/总数）注入 prompt |
+| 2 | `test_short_conversation_single_chunk` | 短对话（< 6000 字符）走原路径：`truncated=False`、`segment_count=1`、LLM 只被调用一次 |
+| 3 | `test_llm_unavailable_degrades_gracefully` | LLM 不可用时返回空 `nodes` + 完整 `count=0/truncated=False/segment_count=0/original_length` 字段 |
+| 4 | `test_observation_not_found_degrades` | observation 不存在时降级返回全零 dict，不抛异常 |
+| 5 | `test_empty_conversation_degrades` | 对话内容为空（空白 / 换行）时返回空 `nodes` 且 `segment_count=0` |
+
+**技术要点**：
+- `monkeypatch.setattr(agent, "_get_llm_client", AsyncMock(return_value=sentinel_client))` 拦截 LLM 客户端获取；
+- `monkeypatch.setattr(agent, "_call_llm_json", fake_call_llm_json)` 用闭包 `call_log` 记录 prompt，断言"已有节点A"、"第 2/"等分块提示确实注入；
+- 同时 monkeypatch `ga_module.llm_request_registry.register` 为 `AsyncMock` 避免真实注册。
+
 ## WS 测试技术要点
 
 ### `ASGIWebSocketTransport` vs `ASGITransport`
@@ -212,6 +230,7 @@ async with aconnect_ws(...) as ws:
 | `uv run pytest` | 跑全部测试 |
 | `uv run pytest tests/e2e/test_plugin_webhook.py -v` | 跑 webhook 测试，详细输出 |
 | `uv run pytest tests/e2e/test_plugin_ws_broadcast.py -v` | 跑 WS 广播测试，详细输出 |
+| `uv run pytest tests/e2e/test_extract_long_conversation.py -v` | 跑 graph_agent 长对话分块抽取测试（纯单元级，无需 DB / LLM 真实调用） |
 | `uv run pytest -k "dedup or health"` | 按关键字筛选跑（用例名含 `dedup` 或 `health`） |
 | `uv run pytest -x` | 第一个失败就停止 |
 | `uv run pytest --tb=short` | 失败时显示简短 traceback |

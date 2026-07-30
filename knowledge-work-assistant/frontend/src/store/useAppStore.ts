@@ -89,6 +89,8 @@ import type {
   LlmConfig,
   LlmConfigUpdate,
   LlmRequestInfo,
+  LlmTestConnectionRequest,
+  LlmTestConnectionResponse,
   Mode,
   Node,
   NodeDetailResponse,
@@ -309,6 +311,10 @@ interface AppState {
   llmConfigLoading: boolean
   /** LLM 配置保存中标记。 */
   llmConfigSaving: boolean
+  /** LLM 连接测试中标记（「测试连接」按钮加载态）。 */
+  llmTesting: boolean
+  /** 最近一次 LLM 连接测试结果，null = 未测试。 */
+  llmTestResult: LlmTestConnectionResponse | null
 
   // 设置面板：插件对接分区（懒加载，进入插件分区时拉取）
   /** 最近推送的对话记录列表（按 created_at 倒序）。 */
@@ -419,6 +425,12 @@ interface AppState {
   ) => Promise<boolean>
   /** 生成（或复用缓存）节点详情卡内容，更新 fullGraph 中的节点并返回详情。 */
   generateNodeDetail: (nodeId: string) => Promise<NodeDetailResponse | null>
+  /**
+   * 将 recommendations 中某节点的 detail_payload 同步到 fullGraph 的对应节点。
+   * 用于从对话大卡切换到图谱视图时，把推荐列表预生成的详情带到图谱中，
+   * 避免图谱 NodeDetailCard 因 fullGraph 无缓存而重新生成（LLM 不可用时降级为空）。
+   */
+  syncNodeDetailToGraph: (nodeId: string) => void
   /** 清空错误状态。 */
   clearError: () => void
 
@@ -556,6 +568,8 @@ interface AppState {
   loadLlmConfig: () => Promise<void>
   /** 更新 LLM 配置（仅传需更新字段）；成功后刷新 llmConfig。返回是否成功。 */
   updateLlmConfig: (config: LlmConfigUpdate) => Promise<boolean>
+  /** 测试 LLM 连接（用传入的临时配置或已保存配置）；结果写入 llmTestResult。返回是否成功。 */
+  testLlmConnection: (config: LlmTestConnectionRequest) => Promise<boolean>
 
   // 设置面板：插件对接分区
   /** 拉取最近推送的对话记录（默认 20 条），写入 pluginRecent。 */
@@ -858,6 +872,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   llmConfig: null,
   llmConfigLoading: false,
   llmConfigSaving: false,
+  llmTesting: false,
+  llmTestResult: null,
 
   // 设置面板：插件对接分区（懒加载，进入分区时拉取）
   pluginRecent: [],
@@ -1343,6 +1359,23 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ error: errMsg(e) })
       return null
     }
+  },
+
+  syncNodeDetailToGraph: (nodeId) => {
+    const full = get().fullGraph
+    if (!full) return
+    const graphNode = full.nodes.find((n) => n.id === nodeId)
+    if (!graphNode) return
+    // 已有缓存则无需同步
+    if (graphNode.detail_payload && Object.keys(graphNode.detail_payload).length > 0) return
+    // 从 recommendations 中查找同 id 节点，取其 detail_payload
+    const recItem = get().recommendations.find((r) => r.node.id === nodeId)
+    if (!recItem?.node?.detail_payload) return
+    const updated: Node = {
+      ...graphNode,
+      detail_payload: { ...recItem.node.detail_payload },
+    }
+    set({ fullGraph: replaceNode(full, updated) })
   },
 
   clearError: () => set({ error: '' }),
@@ -2158,6 +2191,29 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ llmConfigSaving: false })
       const msg = errMsg(e)
       get().pushToast(`保存配置失败：${msg}`, 'error')
+      return false
+    }
+  },
+
+  testLlmConnection: async (config) => {
+    set({ llmTesting: true })
+    try {
+      const resp = await api.testLlmConnection(config)
+      set({ llmTestResult: resp, llmTesting: false })
+      return resp.ok
+    } catch (e) {
+      const msg = errMsg(e)
+      // 网络错误等：构造一个失败结果，便于面板内联展示
+      set({
+        llmTesting: false,
+        llmTestResult: {
+          ok: false,
+          latency_ms: 0,
+          model: '',
+          base_url: '',
+          message: `请求失败：${msg}`,
+        },
+      })
       return false
     }
   },
