@@ -19,12 +19,26 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Any
 
 from fastapi import WebSocket
 
 logger = logging.getLogger(__name__)
+
+
+def _dumps_event(event: dict[str, Any]) -> str:
+    """将事件预序列化为 JSON 字符串。
+
+    使用 ``default=str`` 兜底，把 datetime / UUID / ORM 对象等非 JSON 原生
+    类型转为字符串，避免 ``ws.send_json`` 内部 ``json.dumps`` 抛 TypeError
+    被静默吞掉（典型场景：``graph_generate_quiz`` 返回的 quiz 记录含
+    ``created_at`` datetime 字段，导致 ``chat_tool_result`` 事件无法送达
+    前端，测验卡需刷新才显示）。与持久化层（main_agent 落库 tool_calls）
+    的 ``default=str`` 策略保持一致。
+    """
+    return json.dumps(event, ensure_ascii=False, default=str)
 
 # session_id -> 活跃 WebSocket 连接集合（多端登录时可能有多个）
 _connections: dict[str, set[WebSocket]] = {}
@@ -75,10 +89,14 @@ async def notify_session(session_id: str, event: dict[str, Any]) -> int:
     if not sockets:
         return 0
 
+    # 预序列化一次：避免 datetime / UUID 等非 JSON 原生类型导致 send_json
+    # 抛 TypeError 被静默吞掉（如 graph_generate_quiz 的 quiz.created_at）。
+    payload = _dumps_event(event)
+
     count = 0
     for ws in sockets:
         try:
-            await ws.send_json(event)
+            await ws.send_text(payload)
             count += 1
         except Exception as exc:  # noqa: BLE001
             # 连接已关闭 / 发送失败：静默忽略，不阻断其他连接
@@ -112,10 +130,12 @@ async def broadcast(event: dict[str, Any]) -> int:
     if not all_sockets:
         return 0
 
+    payload = _dumps_event(event)
+
     count = 0
     for ws in all_sockets:
         try:
-            await ws.send_json(event)
+            await ws.send_text(payload)
             count += 1
         except Exception as exc:  # noqa: BLE001
             logger.debug(
