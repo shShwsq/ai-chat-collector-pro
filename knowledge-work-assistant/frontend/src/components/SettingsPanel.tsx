@@ -188,8 +188,8 @@ function ApiConfigSection() {
         <div>
           <h2 className="settings-section__title">LLM API 配置</h2>
           <p className="settings-section__desc">
-            配置后端调用大语言模型的服务地址、模型名与 API Key。变更保存后通常
-            需重启后端进程才能完全生效。
+            配置后端调用大语言模型的服务地址、模型名与 API Key。保存后新配置
+            将在下一次 LLM 调用时自动生效，无需重启后端。
           </p>
         </div>
         <button
@@ -281,7 +281,7 @@ function ApiConfigSection() {
                   ? '没有需要保存的变更'
                   : llmConfigSaving
                     ? '正在保存…'
-                    : '保存配置（部分变更需重启后端生效）'
+                    : '保存配置（新配置将在下次 LLM 调用时生效）'
               }
             >
               {llmConfigSaving ? '保存中…' : '保存配置'}

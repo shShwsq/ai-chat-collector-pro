@@ -10,6 +10,8 @@
  * 这些函数不依赖 React，便于在 tick 高频回调中直接复用。
  */
 
+import type { FullGraph } from '../../lib/types'
+
 /** 节点小卡片尺寸（与 GraphView / CardView 保持一致）。 */
 export const NODE_WIDTH = 180
 export const NODE_HEIGHT = 72
@@ -140,4 +142,22 @@ export function screenToSvg(
 /** 限制缩放系数范围。 */
 export function clampScale(k: number, min = 0.2, max = 3): number {
   return Math.min(max, Math.max(min, k))
+}
+
+/**
+ * 判断两图谱结构是否相同（节点 id 集合与边端点集合一致）。
+ * 结构相同时仅字段（detail_payload/title/summary 等）变化，
+ * GraphView 不应重建 d3-force simulation，避免整图受力重排抽动。
+ */
+export function isSameGraphStructure(a: FullGraph, b: FullGraph): boolean {
+  if (a.nodes.length !== b.nodes.length || a.edges.length !== b.edges.length) return false
+  const aNodeIds = new Set(a.nodes.map((n) => n.id))
+  const bNodeIds = new Set(b.nodes.map((n) => n.id))
+  if (aNodeIds.size !== bNodeIds.size) return false
+  for (const id of aNodeIds) if (!bNodeIds.has(id)) return false
+  const aEdgeKeys = new Set(a.edges.map((e) => `${e.src_id}->${e.dst_id}`))
+  const bEdgeKeys = new Set(b.edges.map((e) => `${e.src_id}->${e.dst_id}`))
+  if (aEdgeKeys.size !== bEdgeKeys.size) return false
+  for (const k of aEdgeKeys) if (!bEdgeKeys.has(k)) return false
+  return true
 }

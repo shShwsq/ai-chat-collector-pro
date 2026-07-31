@@ -205,9 +205,7 @@ function ChatConversationView() {
               disabled={chatAsking}
             />
             <div className="chat-input-bar__toolbar">
-              <div className="chat-input-bar__left-actions" aria-hidden="true" />
-              {/* 右下角：Plan/Go 切换（仅 Work 模式） + 发送按钮 */}
-              <div className="chat-input-bar__right-actions">
+              <div className="chat-input-bar__left-actions">
                 {mode === 'work' && (
                   <PlanGoToggle
                     planMode={planMode}
@@ -215,26 +213,27 @@ function ChatConversationView() {
                     disabled={chatAsking}
                   />
                 )}
-                <button
-                  type="button"
-                  className="chat-input-bar__send-btn"
-                  onClick={handleSend}
-                  disabled={chatAsking || !input.trim()}
-                  title={
-                    !input.trim()
-                      ? '请输入问题'
-                      : '发送提问（Enter）'
-                  }
-                  aria-label="发送"
-                >
-                  {chatAsking ? (
-                    <span className="chat-input-bar__send-spinner" />
-                  ) : (
-                    <SendIcon />
-                  )}
-                </button>
               </div>
             </div>
+            {/* 右下角发送按钮（悬浮在输入框内） */}
+            <button
+              type="button"
+              className="chat-input-bar__send-btn"
+              onClick={handleSend}
+              disabled={chatAsking || !input.trim()}
+              title={
+                !input.trim()
+                  ? '请输入问题'
+                  : '发送提问（Enter）'
+              }
+              aria-label="发送"
+            >
+              {chatAsking ? (
+                <span className="chat-input-bar__send-spinner" />
+              ) : (
+                <SendIcon />
+              )}
+            </button>
           </div>
         </footer>
       </div>

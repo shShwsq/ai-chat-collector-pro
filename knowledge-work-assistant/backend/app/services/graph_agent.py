@@ -1434,21 +1434,28 @@ class GraphAgent:
         if quiz_type == "feynman":
             return {
                 "type": "feynman",
-                "prompt": f"请用自己的话解释 {title}" if title else "（题目生成服务暂不可用）",
+                "prompt": f"请用自己的话解释 {title}" if title else "（题目生成服务暂不可用，请稍后重试）",
                 "node_id": primary.get("id", ""),
                 "reference_points": [],
                 "degraded": True,
-                "degrade_reason": "LLM 不可用",
+                "degrade_reason": "LLM 服务暂不可用，当前为占位题。配置好 LLM 后重新生成即可获得正常题目。",
             }
+        # 选择题降级：提供4个占位选项，正确答案为A（明确告知用户这是占位题）
+        node_title = title or "当前知识点"
         return {
             "type": quiz_type,
-            "question": f"关于「{title}」的题目（题目生成服务暂不可用）" if title else "（题目生成服务暂不可用）",
-            "options": [],
-            "correct_answers": [],
-            "explanation": "",
+            "question": f"【占位题】关于「{node_title}」，以下哪项描述正确？（LLM 服务暂不可用，请配置后重试）",
+            "options": [
+                {"id": "A", "text": f"这是关于{node_title}的占位选项（服务恢复后可重新生成）"},
+                {"id": "B", "text": "占位选项 B"},
+                {"id": "C", "text": "占位选项 C"},
+                {"id": "D", "text": "占位选项 D"},
+            ],
+            "correct_answers": ["A"],
+            "explanation": "本题为 LLM 服务不可用时的降级占位题，答案固定为 A。请检查 LLM 配置后重新生成测验题。",
             "node_id": primary.get("id", ""),
             "degraded": True,
-            "degrade_reason": "LLM 不可用",
+            "degrade_reason": "LLM 服务暂不可用，当前为占位题。配置好 LLM 后重新生成即可获得正常题目。",
         }
 
     # ------------------------------------------------------------------

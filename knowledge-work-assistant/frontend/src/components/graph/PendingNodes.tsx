@@ -31,6 +31,7 @@ import { Icon } from '../Icon'
 import type { IconName } from '../Icon'
 import { useAppStore } from '../../store/useAppStore'
 import type { CandidateNode, Observation } from '../../lib/types'
+import { formatShortTime } from '../../lib/date'
 
 /** 平台显示名映射（与 web-AI-chat-collector 来源对齐）。 */
 const PLATFORM_LABEL: Record<string, string> = {
@@ -70,22 +71,6 @@ function previewText(md: string, max = 120): string {
   return t.length > max ? t.slice(0, max) + '…' : t
 }
 
-/** 格式化 ISO 时间为简短的本地展示。 */
-function formatTime(iso: string | null): string {
-  if (!iso) return '未知时间'
-  try {
-    const d = new Date(iso)
-    if (Number.isNaN(d.getTime())) return '未知时间'
-    const mm = String(d.getMonth() + 1).padStart(2, '0')
-    const dd = String(d.getDate()).padStart(2, '0')
-    const hh = String(d.getHours()).padStart(2, '0')
-    const mi = String(d.getMinutes()).padStart(2, '0')
-    return `${mm}/${dd} ${hh}:${mi}`
-  } catch {
-    return '未知时间'
-  }
-}
-
 /** 置信度对应等级与颜色类名。 */
 function confidenceLevel(c: number): { label: string; cls: string } {
   if (c >= 0.8) return { label: '高', cls: 'is-high' }
@@ -106,6 +91,7 @@ export function PendingNodes() {
   const clearCandidates = useAppStore((s) => s.clearCandidates)
   const batchCreateNodes = useAppStore((s) => s.batchCreateNodes)
   const currentGraphId = useAppStore((s) => s.currentGraphId)
+  const pushToast = useAppStore((s) => s.pushToast)
 
   // 候选项选中态：key = 候选索引（基于 candidateNodes 数组位置），
   // 因 CandidateNode 没有 id 字段（未入图），用索引作为稳定 key。
@@ -114,6 +100,9 @@ export function PendingNodes() {
   // 编辑中的候选索引与临时标题
   const [editingIdx, setEditingIdx] = useState<number | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
+  // 批量抽取全部进行中
+  const [batchExtracting, setBatchExtracting] = useState(false)
+  const [batchExtractProgress, setBatchExtractProgress] = useState({ current: 0, total: 0 })
 
   // 候选列表变化时默认全选
   useEffect(() => {
@@ -149,8 +138,62 @@ export function PendingNodes() {
   }
 
   const handleExtract = (obsId: string) => {
-    if (extracting || batchCreating) return
+    if (extracting || batchCreating || batchExtracting) return
     void extractCandidates(obsId)
+  }
+
+  /** 批量抽取全部未处理对话：顺序抽取并自动全选入图。 */
+  const handleBatchExtractAll = async () => {
+    if (extracting || batchCreating || batchExtracting) return
+    if (pendingObservations.length === 0) {
+      pushToast('暂无待抽取对话', 'warning')
+      return
+    }
+    if (!currentGraphId) {
+      pushToast('请先选中一个图谱', 'warning')
+      return
+    }
+    setBatchExtracting(true)
+    let successCount = 0
+    let failCount = 0
+    let totalNodes = 0
+    try {
+      for (let i = 0; i < pendingObservations.length; i++) {
+        const obs = pendingObservations[i]
+        setBatchExtractProgress({ current: i + 1, total: pendingObservations.length })
+        const ok = await extractCandidates(obs.id)
+        if (!ok) {
+          failCount++
+          continue
+        }
+        // 获取最新 candidateNodes（需要等store更新）
+        await new Promise((r) => setTimeout(r, 100))
+        // 全选入图
+        const state = useAppStore.getState()
+        const cands = state.candidateNodes
+        if (cands.length > 0) {
+          const resp = await batchCreateNodes(cands, obs.id)
+          if (resp) {
+            successCount++
+            totalNodes += resp.created_count
+          } else {
+            failCount++
+          }
+        } else {
+          successCount++
+        }
+        clearCandidates()
+      }
+      pushToast(
+        `批量抽取完成：成功 ${successCount} 条，失败 ${failCount} 条，共入图 ${totalNodes} 个节点`,
+        failCount > 0 ? 'warning' : 'success',
+      )
+    } finally {
+      setBatchExtracting(false)
+      setBatchExtractProgress({ current: 0, total: 0 })
+      clearCandidates()
+      void loadPendingObservations()
+    }
   }
 
   const startEditTitle = (idx: number) => {
@@ -241,20 +284,33 @@ export function PendingNodes() {
                   {pendingObservations.length}
                 </span>
               </h3>
-              <button
-                type="button"
-                className="pending-section__refresh"
-                onClick={() => void loadPendingObservations()}
-                disabled={extracting || batchCreating}
-                title="刷新列表"
-              >
-                刷新
-              </button>
+              <div className="pending-section__actions">
+                <button
+                  type="button"
+                  className="pending-section__batch-btn"
+                  onClick={() => void handleBatchExtractAll()}
+                  disabled={extracting || batchCreating || batchExtracting || pendingObservations.length === 0}
+                  title="自动依次抽取所有对话并将候选节点加入图谱"
+                >
+                  {batchExtracting
+                    ? `批量抽取中 ${batchExtractProgress.current}/${batchExtractProgress.total}…`
+                    : '批量抽取全部'}
+                </button>
+                <button
+                  type="button"
+                  className="pending-section__refresh"
+                  onClick={() => void loadPendingObservations()}
+                  disabled={extracting || batchCreating || batchExtracting}
+                  title="刷新列表"
+                >
+                  刷新
+                </button>
+              </div>
             </div>
 
             {pendingObservations.length === 0 ? (
               <div className="pending-empty">
-                {extracting
+                {extracting || batchExtracting
                   ? '正在抽取候选节点…'
                   : '暂无待抽取对话。可通过插件接口推送，或等待浏览器插件采集后再次刷新。'}
               </div>
@@ -265,7 +321,7 @@ export function PendingNodes() {
                     key={obs.id}
                     obs={obs}
                     extracting={extractingObsId === obs.id}
-                    disabled={extracting || batchCreating}
+                    disabled={extracting || batchCreating || batchExtracting}
                     onExtract={() => handleExtract(obs.id)}
                   />
                 ))}
@@ -274,7 +330,7 @@ export function PendingNodes() {
           </section>
 
           {/* ② 候选节点确认 */}
-          {candidateNodes.length > 0 && (
+          {candidateNodes.length > 0 && !batchExtracting && (
             <section className="pending-section">
               <div className="pending-section__head">
                 <h3 className="pending-section__title">
@@ -287,7 +343,7 @@ export function PendingNodes() {
                   type="button"
                   className="pending-section__refresh"
                   onClick={toggleAll}
-                  disabled={batchCreating}
+                  disabled={batchCreating || batchExtracting}
                   title={allSelected ? '全不选' : '全选'}
                 >
                   {allSelected ? '全不选' : '全选'}
@@ -309,7 +365,7 @@ export function PendingNodes() {
                           type="checkbox"
                           checked={checked}
                           onChange={() => toggleOne(i)}
-                          disabled={batchCreating}
+                          disabled={batchCreating || batchExtracting}
                         />
                       </label>
                       <div className="cand-item__main">
@@ -366,7 +422,7 @@ export function PendingNodes() {
                   type="button"
                   className="pending-actions__btn pending-actions__btn--ghost"
                   onClick={handleClearCandidates}
-                  disabled={batchCreating}
+                  disabled={batchCreating || batchExtracting}
                 >
                   清空候选
                 </button>
@@ -374,7 +430,7 @@ export function PendingNodes() {
                   type="button"
                   className="pending-actions__btn pending-actions__btn--primary"
                   onClick={() => void handleBatchCreate()}
-                  disabled={batchCreating || noneSelected}
+                  disabled={batchCreating || batchExtracting || noneSelected}
                   title={
                     noneSelected
                       ? '请至少勾选一个候选节点'
@@ -390,10 +446,12 @@ export function PendingNodes() {
           )}
 
           {/* 抽取中且候选为空时显示加载态 */}
-          {extracting && candidateNodes.length === 0 && (
+          {(extracting || batchExtracting) && candidateNodes.length === 0 && (
             <div className="pending-loading">
               <span className="pending-loading__spinner" />
-              正在调用 Agent 抽取候选节点…
+              {batchExtracting
+                ? `批量抽取中（${batchExtractProgress.current}/${batchExtractProgress.total}），请稍候…`
+                : '正在调用 Agent 抽取候选节点…'}
             </div>
           )}
         </div>
@@ -440,7 +498,7 @@ function ObservationItem({
           <span className="obs-item__icon">{platformIcon}</span>
           {platformLabel}
         </span>
-        <span className="obs-item__time">{formatTime(obs.occurred_at)}</span>
+        <span className="obs-item__time">{formatShortTime(obs.occurred_at)}</span>
       </div>
       <p className="obs-item__preview">{memoizedPreview}</p>
       <div className="obs-item__actions">

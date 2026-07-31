@@ -49,6 +49,7 @@ import type {
   QuizOption,
   QuizType,
 } from '../../lib/types'
+import { formatShortTime } from '../../lib/date'
 
 /** 题型显示名映射。 */
 const QUIZ_TYPE_LABEL: Record<QuizType, string> = {
@@ -71,22 +72,6 @@ function understandingLevelMeta(
   if (level === 'good') return { label: '理解到位', cls: 'is-good' }
   if (level === 'partial') return { label: '部分掌握', cls: 'is-partial' }
   return { label: '需加强', cls: 'is-poor' }
-}
-
-/** 格式化 ISO 时间为简短的本地展示。 */
-function formatTime(iso: string | null): string {
-  if (!iso) return '—'
-  try {
-    const d = new Date(iso)
-    if (Number.isNaN(d.getTime())) return '—'
-    const mm = String(d.getMonth() + 1).padStart(2, '0')
-    const dd = String(d.getDate()).padStart(2, '0')
-    const hh = String(d.getHours()).padStart(2, '0')
-    const mi = String(d.getMinutes()).padStart(2, '0')
-    return `${mm}/${dd} ${hh}:${mi}`
-  } catch {
-    return '—'
-  }
 }
 
 /** 从 quiz.payload 中安全读取字符串字段。 */
@@ -149,6 +134,8 @@ export function QuizPanel() {
   const [feynmanText, setFeynmanText] = useState('')
   // 节点范围筛选：true = 全图随机；false = 限定节点
   const [scopeAll, setScopeAll] = useState(true)
+  // 主题关键词（可选，输入后从标题/摘要匹配节点）
+  const [topic, setTopic] = useState('')
   // 历史折叠
   const [historyCollapsed, setHistoryCollapsed] = useState(false)
 
@@ -171,8 +158,24 @@ export function QuizPanel() {
 
   const handleGenerate = async () => {
     if (generatingQuiz) return
-    // 同步 scopeAll → quizNodeIds（null = 全图随机）
-    if (scopeAll) {
+    // 如果填写了主题关键词，从全图节点中筛选标题/摘要包含关键词的节点
+    const topicKw = topic.trim()
+    if (topicKw) {
+      const kw = topicKw.toLowerCase()
+      const matched = graphNodes.filter(
+        (n) =>
+          n.title.toLowerCase().includes(kw) ||
+          (n.summary && n.summary.toLowerCase().includes(kw)),
+      )
+      if (matched.length > 0) {
+        setQuizNodeIds(matched.map((n) => n.id))
+        setScopeAll(false)
+      } else {
+        // 无匹配节点，回退到全图
+        setQuizNodeIds(null)
+        setScopeAll(true)
+      }
+    } else if (scopeAll) {
       setQuizNodeIds(null)
     }
     await generateQuiz()
@@ -279,6 +282,8 @@ export function QuizPanel() {
               selectedNodeIds={quizNodeIds ?? []}
               onSelectNodeIds={setQuizNodeIds}
               graphNodes={graphNodes}
+              topic={topic}
+              onTopicChange={setTopic}
               generating={generatingQuiz}
               onGenerate={handleGenerate}
               hasGraph={!!currentGraphId}
@@ -375,6 +380,8 @@ interface ConfigStageProps {
   selectedNodeIds: string[]
   onSelectNodeIds: (ids: string[] | null) => void
   graphNodes: Node[]
+  topic: string
+  onTopicChange: (t: string) => void
   generating: boolean
   onGenerate: () => void
   hasGraph: boolean
@@ -388,6 +395,8 @@ function ConfigStage({
   selectedNodeIds,
   onSelectNodeIds,
   graphNodes,
+  topic,
+  onTopicChange,
   generating,
   onGenerate,
   hasGraph,
@@ -495,6 +504,24 @@ function ConfigStage({
         )}
       </div>
 
+      {/* 主题关键词 */}
+      <div className="quiz-field">
+        <label className="quiz-field__label" htmlFor="quiz-topic">
+          主题关键词
+          <span className="quiz-field__hint">（可选）输入后将只围绕相关节点出题</span>
+        </label>
+        <input
+          id="quiz-topic"
+          type="text"
+          className="quiz-topic-input"
+          value={topic}
+          onChange={(e) => onTopicChange(e.target.value)}
+          placeholder="如：Python 基础、HTTP 协议…"
+          autoComplete="off"
+          spellCheck={false}
+        />
+      </div>
+
       {/* 生成按钮 */}
       <div className="quiz-actions">
         <button
@@ -555,7 +582,7 @@ function AnsweringStage({
       <div className="quiz-stage__head">
         <span className="quiz-stage__chip">{QUIZ_TYPE_LABEL[quiz.type]}</span>
         <span className="quiz-stage__time">
-          生成于 {formatTime(quiz.created_at)}
+          生成于 {formatShortTime(quiz.created_at)}
         </span>
       </div>
 
@@ -916,9 +943,9 @@ function HistoryItem({
         </div>
         <p className="quiz-history__preview">{preview}</p>
         <div className="quiz-history__meta">
-          <span>{formatTime(quiz.created_at)}</span>
+          <span>{formatShortTime(quiz.created_at)}</span>
           {quiz.answered_at && (
-            <span className="quiz-history__answered">作答 {formatTime(quiz.answered_at)}</span>
+            <span className="quiz-history__answered">作答 {formatShortTime(quiz.answered_at)}</span>
           )}
         </div>
       </button>
