@@ -76,7 +76,7 @@ function StarIcon({ size = 14 }: { size?: number }) {
   )
 }
 
-export const RecommendationCard = forwardRef<HTMLElement, RecommendationCardProps>(
+export const RecommendationCard = forwardRef<HTMLButtonElement, RecommendationCardProps>(
   function RecommendationCard(
     { item, mode, onClick, enterDelay, enterDuration, enterX, enterY, enterRot, isDimmed },
     ref,
@@ -118,13 +118,13 @@ export const RecommendationCard = forwardRef<HTMLElement, RecommendationCardProp
   const remindText = formatRemindAt(node.remind_at)
 
   return (
-    <article
+    <button
+      type="button"
       ref={ref}
       className={cardCls}
       style={enterStyle}
       onClick={onClick}
-      role="button"
-      tabIndex={0}
+      aria-label={`打开推荐：${node.title || '无标题'}`}
     >
       {/* 顶部：标题 + 类型标签 */}
       <div className="rec-card__head">
@@ -164,7 +164,7 @@ export const RecommendationCard = forwardRef<HTMLElement, RecommendationCardProp
           </>
         )}
       </div>
-    </article>
+    </button>
   )
   },
 )

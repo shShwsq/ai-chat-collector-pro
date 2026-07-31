@@ -38,7 +38,7 @@ app/
 | `__init__.py` | 包标识 | 仅 `__version__ = "0.0.0"`，由 `main.py` 与 `/api/health` 引用；勿在此聚合导出，避免循环导入 |
 | `main.py` | FastAPI 入口 | `lifespan`（加载 `_REGISTRY.load()` → `await init_db()` → `await migrate_node_columns(engine)` → `await migrate_session_columns(engine)` → `try: init_main_agent(); init_writer_agent(...) except: logging.warning` → `init_graph_agent()`）；CORS 允许 `["http://localhost:5174","file://"]`；按 `/api` 前缀挂载 14 个 router + `/ws`；`if __name__ == "__main__"` 提供 `uv run python -m app.main` 便捷入口（生产推荐用 `uvicorn` 命令） |
 | `config.py` | 配置 | `Settings(BaseSettings)`：`app_env` / `cors_origins` / `llm_base_url` / `llm_api_key` / `llm_model` / `llm_context_window` / `data_dir` / `database_url` / `backend_port=8788` / `encryption_key`；`ensure_dirs()` 创建 `data/`、`data/files/`、`data/sessions/`；`model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")` |
-| `db.py` | 异步 DB | `Base(DeclarativeBase)` 所有 ORM 模型的基类；`engine = create_async_engine(settings.database_url, future=True)`；`AsyncSessionLocal = async_sessionmaker(...)`；`_set_sqlite_pragma` 监听器在每次连接时 `PRAGMA foreign_keys=ON`；`init_db()` 调 `Base.metadata.create_all` + 创建 4 张 FTS5 虚拟表（`messages_fts` / `checkpoints_fts` / `file_metadata_fts` / `observations_fts`）+ INSERT/UPDATE/DELETE 触发器；`get_session()` FastAPI 依赖 |
+| `db.py` | 异步 DB | `Base(DeclarativeBase)` 所有 ORM 模型的基类；`engine = create_async_engine(settings.database_url, future=True)`；`AsyncSessionLocal = async_sessionmaker(...)`；`configure_sqlite_engine(async_engine)` 为 engine 安装 `_set_sqlite_pragma` 连接级监听器（**当前启用 4 项 PRAGMA**：`foreign_keys=ON` 确保 ON DELETE CASCADE 生效 / `busy_timeout=5000ms` 忙等待避免 database is locked / `journal_mode=WAL` 允许读写并发 / `synchronous=NORMAL` 平衡性能与原子性）；**并发安全**：`with_sqlite_lock_retry[T]()` 泛型包装器对 `database is locked` 做指数退避重试（`SQLITE_LOCK_RETRIES=4`，初始 delay 50ms），供易争用的写入路径使用；`init_db()` 调 `Base.metadata.create_all` + 增强列迁移 `_migrate_add_columns`（observations 表回填 `dedup_key` 列并建部分唯一索引 `uq_observations_dedup_key`、edges 表规范化端点方向 + 去重 + 建 `uq_edges_graph_endpoints_relation` 唯一索引、messages 表添加 `tool_calls` / `thinking` 列）+ 创建 4 张 FTS5 虚拟表（`messages_fts` / `checkpoints_fts` / `file_metadata_fts` / `observations_fts`）+ INSERT/UPDATE/DELETE 触发器；`get_session()` FastAPI 依赖 |
 
 ## 应用生命周期（lifespan）
 
@@ -185,9 +185,20 @@ shutdown 当前无额外资源需释放；后续接入 MCP / 后台任务时在�
 
 部分 SQLite 编译版本不含 FTS5（罕见），`init_db._create_fts5` 会捕获异常并跳过，仅记录 `WARNING` 日志，不阻断启动。此时 `messages_fts` / `observations_fts` 等表不存在，`knowledge_store` / `tag_store` 的全文检索会失效，但图谱 CRUD 等核心功能仍可用。用 `SELECT sqlite_compileoption_used('ENABLE_FTS5')` 检查是否启用。
 
-### SQLite 外键级联需手动开启
+### SQLite 外键级联与并发配置
 
-SQLAlchemy 默认不开启 SQLite 的 `PRAGMA foreign_keys`，本项目在 `db.py` 用 `event.listens_for(engine.sync_engine, "connect")` 监听器在每次连接时执行 `PRAGMA foreign_keys=ON`，确保 `ON DELETE CASCADE` 生效。若手动用 DB Browser for SQLite 操作数据库，默认 `PRAGMA foreign_keys=OFF`，删除图谱不会级联清理 nodes / edges；需要在 DB Browser 的"Execute SQL"中先跑 `PRAGMA foreign_keys=ON;`。
+SQLAlchemy 默认不开启 SQLite 的 `PRAGMA foreign_keys`，本项目在 [db.py](./db.py) 通过 `configure_sqlite_engine(async_engine)` 为 engine 安装连接级监听器 `_set_sqlite_pragma`，**每次连接同时设置 4 项 PRAGMA**：
+
+1. `PRAGMA foreign_keys=ON`：确保 `ON DELETE CASCADE` 生效；
+2. `PRAGMA busy_timeout=5000`：忙等待 5 秒，避免多连接下出现 `database is locked`；
+3. `PRAGMA journal_mode=WAL`：写前日志模式，允许读写并发，显著降低阻塞；
+4. `PRAGMA synchronous=NORMAL`：平衡性能与原子性（WAL 下安全）。
+
+> **注意**：`busy_timeout` 仅在** SQLite 3.37+**（`PRAGMA` 支持变量）下生效；旧版本会解析失败。若手动用 DB Browser for SQLite 操作数据库，默认上述 PRAGMA 均未开启，删除图谱不会级联清理 nodes / edges，且并发写入容易锁库；需要在 DB Browser 的"Execute SQL"中先跑：
+> ```sql
+> PRAGMA foreign_keys=ON;
+> PRAGMA journal_mode=WAL;
+> ```
 
 ### 端口隔离约定
 

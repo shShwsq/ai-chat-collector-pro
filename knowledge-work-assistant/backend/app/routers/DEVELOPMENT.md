@@ -132,9 +132,10 @@ routers/
 **设计要点**：
 1. **平台白名单**：`platform` 必须命中 `SUPPORTED_PLATFORMS = frozenset({'chatgpt','claude','gemini','deepseek','qwen','doubao','kimi','fudan','custom'})`，否则 400。
 2. **metadata 类型校验**：`metadata` 中 `title / url / model` 若提供必须为 string，否则 422（Pydantic 的 `dict[str, Any]` 不约束值类型，需在路由层手动校验）。
-3. **幂等去重**：若 `metadata.conversation_id` 存在，组合 `{platform}:{conversation_id}` 作为 `dedup_key`，查最近 24h 是否已落库；命中则返回 `deduplicated: true`，不写新记录、不广播。
-4. **WebSocket 广播**：成功落库后通过 `ws_notify.broadcast` 向所有前端连接推送 `plugin.conversation_received` 事件，供前端 Toast / 刷新列表。
-5. **当前阶段不触发节点抽取**：抽取逻辑由 `graph_agent` 在用户主动触发时实现。
+3. **幂等去重**：若 `metadata.conversation_id` 存在，组合 `{platform}:{conversation_id}` 作为 `dedup_key`，先查最近 24h 是否已落库；命中则返回 `deduplicated: true`，不写新记录、不广播；写入时 `dedup_key` 传入 `graph_store.create_observation`，最终由 `observations.dedup_key` 的**部分唯一索引**（NULL 不冲突）作为并发裁决兜底。
+4. **`IntegrityError` 兜底（并发写入场景）**：两个请求同时通过预检查时，`graph_store` 层 commit 会触发 `UNIQUE constraint failed: observations.dedup_key`；路由层捕获 `sqlalchemy.exc.IntegrityError`，再次用 `dedup_key` 查库返回已存在记录的 `observation_id`，对外表现与去重命中一致（`deduplicated: true`），避免 500。
+5. **WebSocket 广播**：成功落库后通过 `ws_notify.broadcast` 向所有前端连接推送 `plugin.conversation_received` 事件，供前端 Toast / 刷新列表。
+6. **当前阶段不触发节点抽取**：抽取逻辑由 `graph_agent` 在用户主动触发时实现。
 
 ### `llm_admin.py`（LLM 请求队列与配置管理）
 
@@ -159,7 +160,10 @@ routers/
 - `POST /api/graphs/{graph_id}/work/ask-stream`：触发 Work 模式问答流式生成。
 - `POST /api/graphs/{graph_id}/work/report-stream`：触发工作报告流式生成。
 
-**双通道协议**：HTTP 响应**只**返回 `StreamStartedResponse { request_id }`，立即结束；实际 token 流通过 **WebSocket** 推送（按 `session_id` 路由），前端通过 `streamingSessionId` 绑定连接。后端 `asyncio.create_task` 跑 `graph_agent.xxx_stream`，每个 token 通过 `ws_notify.notify_session(session_id, {"type": "graph_agent_token", "op": "...", "delta": token, ...})` 推送。`chat.py` 的流式端点沿用同协议，但 `op` 固定为 `"chat"`，并新增 3 个 chat 事件类型（`chat_tool_call` / `chat_tool_result` / `chat_tool_call_confirmation`）用于工具调用前后端协作。
+**双通道协议**：HTTP 响应**只**返回 `StreamStartedResponse { request_id }`，立即结束；实际 token 流通过 **WebSocket** 推送（按 `session_id` 路由），前端通过 `streamingSessionId` 绑定连接。
+- **WS 会话预检**：所有流式端点在启动任务前调用 `ws_notify.is_session_online(body.session_id)`，若目标 session 未建立 WS 连接则返回 **HTTP 409**「WebSocket 会话未连接，请先建立连接」，避免前端启动流式后永远收不到事件。
+- **后台任务托管**：不再用裸 `asyncio.create_task`，改由 `background_tasks.create_task(..., session_id=..., op=...)` 托管流式任务；lifespan 退出时 `background_tasks.shutdown(8s)` 会取消未完成任务，防止 uvicorn 关停时任务悬挂。
+- 后端 `background_tasks.create_task` 跑 `graph_agent.xxx_stream`，每个 token 通过 `ws_notify.notify_session(session_id, {"type": "graph_agent_token", "op": "...", "delta": token, ...})` 推送。`chat.py` 的流式端点沿用同协议，但 `op` 固定为 `"chat"`，并新增 3 个 chat 事件类型（`chat_tool_call` / `chat_tool_result` / `chat_tool_call_confirmation`）用于工具调用前后端协作。
 
 ### `chat.py`（Task 8 多轮对话 chat 路由）
 
@@ -178,16 +182,22 @@ routers/
 
 **设计要点**：
 1. **会话级 MainAgent 缓存**：模块内维护 `_session_agents: dict[session_id, MainAgent]`，同一会话复用 agent 实例以保留历史与上下文，会话销毁时清理。
-2. **双通道流式**：`POST /api/chat/sessions/{id}/stream` 立即返回 `StreamStartedResponse { request_id }`，实际 token 通过 WebSocket 推送（`op="chat"`），与 `stream.py` 一致；后台 `asyncio.create_task` 跑 `main_agent.run_stream`。
+2. **双通道流式**：`POST /api/chat/sessions/{id}/stream` 立即返回 `StreamStartedResponse { request_id }`，实际 token 通过 WebSocket 推送（`op="chat"`），与 `stream.py` 一致；后台 `background_tasks.create_task`（非裸 `asyncio.create_task`）跑 `main_agent.run_stream`，随 lifespan 统一关停。
 3. **WS session_id 与 chat session_id 分离**：`_run_chat_stream` 现显式接收 `ws_session_id`（前端 WebSocket 连接注册时的 session_id）与 `session_id`（chat 会话 DB ID）两个参数；所有 `_push_ws` 调用均改用 `ws_session_id` 推送，修复此前用 chat `session_id` 推送导致前端收不到流式事件的 Bug。
-4. **LLM 配置预检**：流式任务启动前检查 `llm_client.api_key / base_url`，未配置时立即推送 `graph_agent_error`（op="chat"）并标记任务为 failed，避免前端无意义等待 LLM 重试超时。
-5. **错误友好化**：新增 `_friendly_error_message(raw)` 将底层技术错误（连接失败 / 401 鉴权 / 超时 / 429 限流 / 服务端错误）映射为中文可读提示，供前端直接展示。
-6. **新增 chat 事件类型**：在 WS `op="chat"` 通道上新增 3 个事件类型：
+4. **WS 连接预检（HTTP 409）**：启动流前调 `is_session_online(body.session_id)` 确认前端有活跃 WS 连接，未连接直接返回 409「WebSocket 会话未连接，请先建立连接」。
+5. **会话级流式准入控制**：同一 chat `session_id` 同一时间只允许一个流式请求占用 MainAgent，避免并发修改导致模式 / 取消状态错乱：
+   - `_session_active_requests: dict[session_id, request_id]` + `_session_admission_lock: asyncio.Lock` 双重保护；
+   - 请求开始前加锁写入占用标记，`_run_chat_stream` 的 finally 里释放；
+   - 并发请求会收到 HTTP 409，携带已运行的 `request_id`。
+6. **LLM 配置预检**：流式任务启动前检查 `llm_client.api_key / base_url`，未配置时立即推送 `graph_agent_error`（op="chat"）并标记任务为 failed，避免前端无意义等待 LLM 重试超时。
+7. **错误友好化**：新增 `_friendly_error_message(raw)` 将底层技术错误（连接失败 / 401 鉴权 / 超时 / 429 限流 / 服务端错误）映射为中文可读提示，供前端直接展示。
+8. **终态标记修正**：流程中若触发 `chat_error` 事件，`failed=True` 标记，结束时不写入 `completed` 而是保持 `failed`，避免请求列表显示"成功"但实际有错误。
+9. **新增 chat 事件类型**：在 WS `op="chat"` 通道上新增 3 个事件类型：
    - `chat_tool_call`：Agent 决定调用工具时推送，携带工具名 / 参数 / call_id。
    - `chat_tool_result`：工具执行完成时推送，携带返回值。
    - `chat_tool_call_confirmation`：高风险工具需用户确认时推送，前端展示"确认 / 取消"按钮。
-7. **取消机制**：`POST /api/chat/requests/{id}/cancel` 通过 `llm_request_registry` 持有的 `asyncio.Task` 引用调 `task.cancel()`，终止流式任务。
-8. **高风险工具需确认**：工具声明 `require_confirmation=True` 时，Agent 暂停执行，推送 `chat_tool_call_confirmation` 事件等待用户确认；前端调 `POST /api/chat/requests/{id}/confirm` 续跑，或超时自动取消。
+10. **取消机制**：`POST /api/chat/requests/{id}/cancel` 通过 `llm_request_registry` 持有的 `asyncio.Task` 引用调 `task.cancel()`，并把 `agent.cancel_and_wait(5s)` 交给 `background_tasks` 托管，避免阻塞 HTTP 响应。
+11. **高风险工具需确认**：工具声明 `require_confirmation=True` 时，Agent 暂停执行，推送 `chat_tool_call_confirmation` 事件等待用户确认；前端调 `POST /api/chat/requests/{id}/confirm` 续跑，或超时自动取消。
 
 ### `ws.py`（WebSocket 端点）
 

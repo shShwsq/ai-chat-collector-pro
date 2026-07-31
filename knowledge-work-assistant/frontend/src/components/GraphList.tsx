@@ -33,11 +33,13 @@ function formatTime(iso: string): string {
   try {
     const d = new Date(iso)
     if (Number.isNaN(d.getTime())) return ''
-    const mm = String(d.getMonth() + 1).padStart(2, '0')
-    const dd = String(d.getDate()).padStart(2, '0')
-    const hh = String(d.getHours()).padStart(2, '0')
-    const mi = String(d.getMinutes()).padStart(2, '0')
-    return `${mm}/${dd} ${hh}:${mi}`
+    return new Intl.DateTimeFormat('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(d)
   } catch {
     return ''
   }
@@ -181,16 +183,17 @@ export function GraphList() {
               <div
                 key={g.id}
                 className={`graph-list__item${active ? ' is-active' : ''}`}
-                onClick={() => !isRenaming && selectGraph(g.id)}
               >
                 <div className="graph-list__item-row">
                   {isRenaming ? (
                     <input
                       ref={renameRef}
                       className="graph-list__rename-input"
+                      name={`graph-name-${g.id}`}
+                      aria-label={`重命名图谱：${g.name}`}
+                      autoComplete="off"
                       value={renameValue}
                       onChange={(e) => setRenameValue(e.target.value)}
-                      onClick={(e) => e.stopPropagation()}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') void confirmRename()
                         if (e.key === 'Escape') cancelRename()
@@ -198,15 +201,26 @@ export function GraphList() {
                       onBlur={() => void confirmRename()}
                     />
                   ) : (
-                    <span className="graph-list__item-name" title={g.name}>
-                      {g.name}
-                    </span>
+                    <button
+                      type="button"
+                      className="graph-list__select-btn"
+                      aria-current={active ? 'true' : undefined}
+                      onClick={() => selectGraph(g.id)}
+                    >
+                      <span className="graph-list__item-name" title={g.name}>
+                        {g.name}
+                      </span>
+                      <span className="graph-list__item-meta">
+                        更新于 {formatTime(g.updated_at)}
+                      </span>
+                    </button>
                   )}
                   {!isRenaming && (
                     <div className="graph-list__item-actions">
                       <button
                         type="button"
                         className="graph-list__icon-btn"
+                        aria-label={`重命名图谱：${g.name}`}
                         title="重命名"
                         onClick={(e) => {
                           e.stopPropagation()
@@ -218,6 +232,7 @@ export function GraphList() {
                       <button
                         type="button"
                         className="graph-list__icon-btn graph-list__icon-btn--danger"
+                        aria-label={`删除图谱：${g.name}`}
                         title="删除"
                         onClick={(e) => {
                           e.stopPropagation()
@@ -229,11 +244,6 @@ export function GraphList() {
                     </div>
                   )}
                 </div>
-                {!isRenaming && (
-                  <div className="graph-list__item-meta">
-                    <span>更新于 {formatTime(g.updated_at)}</span>
-                  </div>
-                )}
               </div>
             )
           })
@@ -244,7 +254,10 @@ export function GraphList() {
             <input
               autoFocus
               className="graph-list__create-input"
-              placeholder={`输入${MODE_LABEL[mode]}图谱名称`}
+              name="new-graph-name"
+              aria-label={`新建${MODE_LABEL[mode]}图谱名称`}
+              autoComplete="off"
+              placeholder={`输入${MODE_LABEL[mode]}图谱名称…`}
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => {

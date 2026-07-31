@@ -744,7 +744,10 @@ const VectorStore = {
     });
     const data = await resp.json();
     return (data.result || []).map(item => ({
-      id: String(item.id),
+      // Qdrant point id 是内部 UUID；RAG 必须使用写入 payload 中保留的原始 chunk id。
+      // 旧数据可能没有 _origId，此时保留空 id，交给统一上下文层跳过并输出诊断。
+      id: typeof item.payload?._origId === 'string' ? item.payload._origId : '',
+      storageId: String(item.id),
       convId: item.payload?.convId || '',
       score: item.score || 0,
       vector: null

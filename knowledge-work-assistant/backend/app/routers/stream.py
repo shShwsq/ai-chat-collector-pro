@@ -30,7 +30,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any, Literal
 
@@ -40,6 +39,8 @@ from pydantic import BaseModel, Field
 from app.models.node_types import GRAPH_TYPE_WORK
 from app.services.graph_agent import GraphAgent, get_graph_agent
 from app.services.graph_store import GraphStore, graph_store
+from app.services.task_registry import background_tasks
+from app.services.ws_notify import is_session_online
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +151,10 @@ class StreamStartedResponse(BaseModel):
             "LLM 不可用时为 None，前端将立即收到 error 事件。"
         ),
     )
-    op: str = Field(..., description="流式操作类型（generate_node_detail/answer_question/generate_report）")
+    op: str = Field(
+        ...,
+        description="流式操作类型（generate_node_detail/answer_question/generate_report）",
+    )
 
 
 # ============================================================================
@@ -286,7 +290,8 @@ async def stream_node_detail(
     WebSocket 推送至 ``session_id`` 对应的前端连接。
 
     WS 事件类型：
-    - ``graph_agent_token``：每个 token（含 ``op``、``graph_id``、``node_id``、``content``、``seq``）
+    - ``graph_agent_token``：每个 token
+      （含 ``op``、``graph_id``、``node_id``、``content``、``seq``）
     - ``graph_agent_done``：流式完成（含 ``full_text``）
     - ``graph_agent_cancelled``：被外部取消
     - ``graph_agent_error``：失败（含 ``message``）
@@ -295,10 +300,14 @@ async def stream_node_detail(
     node = await store.get_node(node_id)
     if node is None or node.get("graph_id") != graph_id:
         raise _not_found(f"节点不存在或不属于图谱 {graph_id}: {node_id}")
+    if not await is_session_online(body.session_id):
+        raise HTTPException(status_code=409, detail="WebSocket 会话未连接，请先建立连接")
 
     # 启动后台流式任务（不等待，立即返回）
-    asyncio.create_task(
-        _run_detail_stream(agent, graph_id, node_id, body.session_id)
+    background_tasks.create_task(
+        _run_detail_stream(agent, graph_id, node_id, body.session_id),
+        session_id=body.session_id,
+        op="generate_node_detail",
     )
 
     # request_id 无法在端点层预知（在 GraphAgent 内部 register 后才生成），
@@ -327,9 +336,13 @@ async def stream_ask_question(
     推送至 ``session_id`` 对应的前端连接。
     """
     await _ensure_work_graph(graph_id, store)
+    if not await is_session_online(body.session_id):
+        raise HTTPException(status_code=409, detail="WebSocket 会话未连接，请先建立连接")
 
-    asyncio.create_task(
-        _run_ask_stream(agent, graph_id, body.question, body.session_id)
+    background_tasks.create_task(
+        _run_ask_stream(agent, graph_id, body.question, body.session_id),
+        session_id=body.session_id,
+        op="answer_question",
     )
 
     return StreamStartedResponse(
@@ -356,9 +369,13 @@ async def stream_generate_report(
     推送至 ``session_id`` 对应的前端连接。
     """
     await _ensure_work_graph(graph_id, store)
+    if not await is_session_online(body.session_id):
+        raise HTTPException(status_code=409, detail="WebSocket 会话未连接，请先建立连接")
 
-    asyncio.create_task(
-        _run_report_stream(agent, graph_id, body.period, body.session_id)
+    background_tasks.create_task(
+        _run_report_stream(agent, graph_id, body.period, body.session_id),
+        session_id=body.session_id,
+        op="generate_report",
     )
 
     return StreamStartedResponse(

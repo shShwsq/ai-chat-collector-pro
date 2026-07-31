@@ -24,6 +24,7 @@ import logging
 from typing import Any
 
 from fastapi import WebSocket
+from starlette.websockets import WebSocketState
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,17 @@ async def register(session_id: str, ws: WebSocket) -> None:
         ws: 已 ``accept`` 的 WebSocket 连接。
     """
     async with _lock:
-        _connections.setdefault(session_id, set()).add(ws)
+        stale = list(_connections.get(session_id, ()))
+        _connections[session_id] = {ws}
+
+    # 单进程本地 Demo 中同一 session 只保留最新连接，避免重连后重复投递。
+    for old_ws in stale:
+        if old_ws is ws:
+            continue
+        try:
+            await old_ws.close(code=1000, reason="同一会话已建立新连接")
+        except Exception:  # noqa: BLE001
+            logger.debug("关闭被替换的 WS 连接失败 session=%s", session_id)
 
 
 async def unregister(session_id: str, ws: WebSocket) -> None:
@@ -94,6 +105,7 @@ async def notify_session(session_id: str, event: dict[str, Any]) -> int:
     payload = _dumps_event(event)
 
     count = 0
+    failed: list[WebSocket] = []
     for ws in sockets:
         try:
             await ws.send_text(payload)
@@ -106,6 +118,9 @@ async def notify_session(session_id: str, event: dict[str, Any]) -> int:
                 event.get("type"),
                 exc,
             )
+            failed.append(ws)
+    for ws in failed:
+        await unregister(session_id, ws)
     return count
 
 
@@ -123,9 +138,9 @@ async def broadcast(event: dict[str, Any]) -> int:
         成功推送的连接数（0 表示无活跃连接）。
     """
     async with _lock:
-        all_sockets: list[WebSocket] = []
-        for conns in _connections.values():
-            all_sockets.extend(conns)
+        all_sockets: list[tuple[str, WebSocket]] = []
+        for session_id, conns in _connections.items():
+            all_sockets.extend((session_id, ws) for ws in conns)
 
     if not all_sockets:
         return 0
@@ -133,7 +148,8 @@ async def broadcast(event: dict[str, Any]) -> int:
     payload = _dumps_event(event)
 
     count = 0
-    for ws in all_sockets:
+    failed: list[tuple[str, WebSocket]] = []
+    for session_id, ws in all_sockets:
         try:
             await ws.send_text(payload)
             count += 1
@@ -141,9 +157,39 @@ async def broadcast(event: dict[str, Any]) -> int:
             logger.debug(
                 "WS 广播失败 event_type=%s: %s", event.get("type"), exc
             )
+            failed.append((session_id, ws))
+    for session_id, ws in failed:
+        await unregister(session_id, ws)
     return count
 
 
 def has_session_connection(session_id: str) -> bool:
     """查询指定会话是否有活跃 WebSocket 连接（同步，便于快速判断）。"""
-    return bool(_connections.get(session_id))
+    return any(_is_connected(ws) for ws in _connections.get(session_id, ()))
+
+
+def _is_connected(ws: WebSocket) -> bool:
+    """同时检查 ASGI 客户端与应用端状态，过滤已关闭但尚未清理的连接。"""
+    return (
+        ws.client_state == WebSocketState.CONNECTED
+        and ws.application_state == WebSocketState.CONNECTED
+    )
+
+
+async def is_session_online(session_id: str) -> bool:
+    """在锁内确认目标 session 当前存在已连接 socket。"""
+    async with _lock:
+        return any(_is_connected(ws) for ws in _connections.get(session_id, ()))
+
+
+async def close_all() -> int:
+    """清空注册表并关闭所有 socket，供应用关停使用。"""
+    async with _lock:
+        sockets = [ws for conns in _connections.values() for ws in conns]
+        _connections.clear()
+    for ws in sockets:
+        try:
+            await ws.close(code=1001, reason="服务正在关闭")
+        except Exception:  # noqa: BLE001
+            pass
+    return len(sockets)

@@ -92,6 +92,32 @@ describe('chunkText', () => {
   });
 });
 
+describe('setConfig 配置持久化', () => {
+  it('二次保存时保留自定义 baseUrl', async () => {
+    let saved;
+    const originalSet = window.chrome.storage.local.set;
+    window.chrome.storage.local.set = (data, cb) => {
+      saved = data.embeddingSettings;
+      if (cb) cb();
+    };
+    EmbeddingService._modelsCatalog = { embeddingProviders: [] };
+    try {
+      await EmbeddingService.setConfig({
+        provider: 'custom',
+        model: 'custom-embedding',
+        baseUrl: 'https://embedding.example/v1',
+        apiKey: 'secret'
+      });
+      expect(saved.baseUrl).toBe('https://embedding.example/v1');
+
+      await EmbeddingService.setConfig({ includeThinking: true });
+      expect(saved.baseUrl).toBe('https://embedding.example/v1');
+    } finally {
+      window.chrome.storage.local.set = originalSet;
+    }
+  });
+});
+
 // =================================================================
 // filterContentForEmbedding：根据设置剥离 think / search_result 块
 // =================================================================

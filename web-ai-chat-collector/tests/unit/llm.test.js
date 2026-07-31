@@ -426,3 +426,71 @@ describe('AIAssistant._parseEmbId', () => {
     }
   });
 });
+
+describe('AIAssistant._buildContexts 安全映射', () => {
+  it('无法解析的远程命中直接跳过，不回退为整段对话', async () => {
+    let conversationReads = 0;
+    const originalGetConversation = window.getConversation;
+    window.getConversation = async () => {
+      conversationReads++;
+      return { title: '不应读取', messages: [{ role: 'user', content: '整段敏感内容' }] };
+    };
+    try {
+      const context = await AIAssistant._buildContexts([{
+        id: '',
+        storageId: 'qdrant-internal-uuid',
+        convId: 'conv-1',
+        score: 0.9
+      }]);
+      expect(context).toBe('（未找到相关对话片段）');
+      expect(conversationReads).toBe(0);
+    } finally {
+      window.getConversation = originalGetConversation;
+    }
+  });
+
+  it('合法 chunk 仅加入命中消息及其相邻消息', async () => {
+    const originalGetConversation = window.getConversation;
+    window.getConversation = async () => ({
+      title: '测试对话',
+      messages: [
+        { role: 'user', hash: 'before', content: '前文' },
+        { role: 'assistant', hash: 'hit', content: '命中内容' },
+        { role: 'user', hash: 'after', content: '后文' },
+        { role: 'assistant', hash: 'far', content: '不相关远端消息' }
+      ]
+    });
+    try {
+      const context = await AIAssistant._buildContexts([{
+        id: 'conv-1::msg::hit::chunk::0',
+        convId: 'conv-1',
+        score: 0.88
+      }]);
+      expect(context).toContain('[用户·]: 前文');
+      expect(context).toContain('[助手★]: 命中内容');
+      expect(context).toContain('[用户·]: 后文');
+      expect(context).not.toContain('不相关远端消息');
+    } finally {
+      window.getConversation = originalGetConversation;
+    }
+  });
+
+  it('chunk 的消息 hash 在本地不存在时跳过，不扩大到整段对话', async () => {
+    const originalGetConversation = window.getConversation;
+    window.getConversation = async () => ({
+      title: '旧数据',
+      messages: [{ role: 'user', hash: 'different', content: '不应发送给 LLM' }]
+    });
+    try {
+      const context = await AIAssistant._buildContexts([{
+        id: 'conv-1::msg::missing::chunk::0',
+        convId: 'conv-1',
+        score: 0.7
+      }]);
+      expect(context).toBe('（未找到相关对话片段）');
+      expect(context).not.toContain('不应发送给 LLM');
+    } finally {
+      window.getConversation = originalGetConversation;
+    }
+  });
+});

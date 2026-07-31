@@ -105,6 +105,8 @@ async def tmp_db(
 
     # 重建 engine 与 AsyncSessionLocal（绑定到临时 SQLite）
     test_engine = create_async_engine(db_url, echo=False, future=True)
+    from app.db import configure_sqlite_engine
+    configure_sqlite_engine(test_engine)
     test_session_maker = async_sessionmaker(
         bind=test_engine,
         expire_on_commit=False,

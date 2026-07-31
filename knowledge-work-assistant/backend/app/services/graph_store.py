@@ -33,13 +33,13 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, delete, func, or_, select, text
 from sqlalchemy.orm import selectinload
 
-from app.db import AsyncSessionLocal
+from app.db import AsyncSessionLocal, with_sqlite_lock_retry
 from app.models.db_models import Edge as EdgeRow
 from app.models.db_models import Graph as GraphRow
 from app.models.db_models import Node as NodeRow
@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 
 def _now() -> datetime:
     """UTC 当前时间。"""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _new_id() -> str:
@@ -625,6 +625,7 @@ class GraphStore:
         Raises:
             ValueError: 图谱或节点不存在，或节点不属于该图谱。
         """
+        src_id, dst_id = sorted((src_id, dst_id))
         async with AsyncSessionLocal() as db:
             # 校验图谱存在
             graph = (
@@ -651,16 +652,8 @@ class GraphStore:
                     select(EdgeRow).where(
                         and_(
                             EdgeRow.graph_id == graph_id,
-                            or_(
-                                and_(
-                                    EdgeRow.src_id == src_id,
-                                    EdgeRow.dst_id == dst_id,
-                                ),
-                                and_(
-                                    EdgeRow.src_id == dst_id,
-                                    EdgeRow.dst_id == src_id,
-                                ),
-                            ),
+                            EdgeRow.src_id == src_id,
+                            EdgeRow.dst_id == dst_id,
                             EdgeRow.relation == relation,
                         )
                     )
@@ -727,6 +720,7 @@ class GraphStore:
         occurred_at: datetime | None = None,
         metadata: dict[str, Any] | None = None,
         graph_id: str | None = None,
+        dedup_key: str | None = None,
     ) -> dict[str, Any]:
         """创建观察记录（原始对话）。
 
@@ -745,20 +739,28 @@ class GraphStore:
             raise ValueError(f"非法观察来源: {source}（允许: {OBSERVATION_SOURCES}）")
 
         observation_id = _new_id()
-        async with AsyncSessionLocal() as db:
-            row = ObservationRow(
-                id=observation_id,
-                platform=platform,
-                occurred_at=occurred_at,
-                conversation_markdown=conversation_markdown,
-                metadata_json=_safe_json_dumps(metadata or {}),
-                source=source,
-                graph_id=graph_id,
-                processed=False,
-            )
-            db.add(row)
-            await db.commit()
-            return _observation_to_dict(row)
+        async def _insert() -> dict[str, Any]:
+            async with AsyncSessionLocal() as db:
+                row = ObservationRow(
+                    id=observation_id,
+                    platform=platform,
+                    occurred_at=occurred_at,
+                    conversation_markdown=conversation_markdown,
+                    metadata_json=_safe_json_dumps(metadata or {}),
+                    dedup_key=dedup_key,
+                    source=source,
+                    graph_id=graph_id,
+                    processed=False,
+                )
+                db.add(row)
+                try:
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    raise
+                return _observation_to_dict(row)
+
+        return await with_sqlite_lock_retry(_insert)
 
     async def get_observation(self, observation_id: str) -> dict[str, Any] | None:
         """获取观察记录。不存在返回 None。"""
@@ -848,9 +850,8 @@ class GraphStore:
     ) -> dict[str, Any] | None:
         """查找最近 ``within_hours`` 小时内同 ``dedup_key`` 的观察记录。
 
-        ``dedup_key`` 存储在 ``observations.metadata_json`` 的 ``_dedup_key``
-        字段中。使用 SQLite 的 ``json_extract`` 函数查询（``metadata_json``
-        列为 TEXT）。
+        ``dedup_key`` 存储在独立索引列中，历史数据由启动迁移从
+        ``metadata_json._dedup_key`` 回填。
 
         Args:
             dedup_key: 幂等去重键（如 ``"chatgpt:conv-abc123"``）。
@@ -865,9 +866,7 @@ class GraphStore:
             stmt = (
                 select(ObservationRow)
                 .where(
-                    text(
-                        "json_extract(metadata_json, '$._dedup_key') = :dk"
-                    )
+                    ObservationRow.dedup_key == dedup_key
                 )
                 .where(ObservationRow.created_at >= cutoff)
                 .order_by(ObservationRow.created_at.desc())

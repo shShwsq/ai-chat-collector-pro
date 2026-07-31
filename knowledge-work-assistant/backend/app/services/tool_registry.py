@@ -227,10 +227,19 @@ class ToolRegistry:
                 "message": f"工具未注册: {name}",
             }
         # 模式权限校验：显式模式下，不在 allowed_modes 中的工具拒绝执行
+        # （优先于参数校验）
         if mode is not None and mode not in entry.allowed_modes:
             return {
                 "status": "error",
                 "message": f"工具 {name} 在 {mode} 模式下不可用",
+            }
+        # 参数校验：required / 顶层类型 / enum（失败时不调用 handler，直接返回错误）
+        validation_errors = self._validate_args(entry, args or {})
+        if validation_errors:
+            return {
+                "status": "error",
+                "message": f"参数校验失败: {validation_errors}",
+                "errors": validation_errors,
             }
         try:
             # 注入 _mode 供需要模式感知的 handler 使用（不污染调用方 args）
@@ -249,6 +258,67 @@ class ToolRegistry:
                 "message": f"工具执行异常: {exc}",
                 "tool": name,
             }
+
+    def _validate_args(self, entry: ToolEntry, args: dict[str, Any]) -> list[str]:
+        """轻量参数校验：检查 required / 顶层类型 / enum。
+
+        校验依据来自 ``entry.schema["function"]["parameters"]``。仅校验顶层字段，
+        不做深度递归（不校验 array items / object 嵌套属性），保持简单。
+
+        约定：
+        - ``_mode`` / ``_scenario`` 由 execute / main_agent 注入，不算 required 缺失。
+        - 异常时返回空列表（不阻断执行，让 handler 自行处理）。
+
+        Args:
+            entry: 工具条目（含 schema）。
+            args: 调用参数（可能含注入的 _mode / _scenario，校验时跳过）。
+
+        Returns:
+            错误信息列表（空表示校验通过）。
+        """
+        errors: list[str] = []
+        try:
+            params = entry.schema.get("function", {}).get("parameters", {}) or {}
+            properties = params.get("properties", {}) or {}
+            required = params.get("required", []) or []
+            # 注入字段不算 required 缺失
+            injected_keys = {"_mode", "_scenario"}
+            for name in required:
+                if name not in args and name not in injected_keys:
+                    errors.append(f"missing required: {name}")
+            # 顶层类型与 enum 校验（仅对实际存在的字段）
+            # 注意 bool 是 int 子类：integer / number 不应接受 bool
+            _INTEGER_TYPES = (int,)
+            _NUMBER_TYPES = (int, float)
+            for name, value in args.items():
+                if name in injected_keys:
+                    continue
+                prop = properties.get(name)
+                if not prop:
+                    continue
+                expected_type = prop.get("type")
+                if expected_type == "string" and not isinstance(value, str):
+                    errors.append(f"{name} expected string, got {type(value).__name__}")
+                elif expected_type == "integer":
+                    if isinstance(value, bool) or not isinstance(value, _INTEGER_TYPES):
+                        errors.append(f"{name} expected integer, got {type(value).__name__}")
+                elif expected_type == "number":
+                    if isinstance(value, bool) or not isinstance(value, _NUMBER_TYPES):
+                        errors.append(f"{name} expected number, got {type(value).__name__}")
+                elif expected_type == "boolean" and not isinstance(value, bool):
+                    errors.append(f"{name} expected boolean, got {type(value).__name__}")
+                elif expected_type == "array" and not isinstance(value, list):
+                    errors.append(f"{name} expected array, got {type(value).__name__}")
+                elif expected_type == "object" and not isinstance(value, dict):
+                    errors.append(f"{name} expected object, got {type(value).__name__}")
+                # enum 校验
+                enum_values = prop.get("enum")
+                if enum_values and value not in enum_values:
+                    errors.append(f"{name} invalid enum value: {value!r}")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("参数校验异常 %s: %s", entry.name, exc)
+            return []
+        return errors
 
 
 # ======================================================================
@@ -772,6 +842,16 @@ def register_default_tools(
         logger.debug("graph_tools 未就位（Task 7 未完成），跳过图谱工具注册")
     except Exception as exc:  # noqa: BLE001
         logger.warning("注册图谱工具失败（Task 7 未完成？）: %s", exc)
+
+    # 注册 skill_* 工具（技能系统）
+    try:
+        from app.services.skills import register_skill_tools
+
+        register_skill_tools(registry)
+    except ImportError:
+        logger.debug("skills 模块未就位，跳过 skill_* 工具注册")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("注册 skill_* 工具失败: %s", exc)
 
 
 def _load_real_handlers() -> dict[str, ToolHandler]:

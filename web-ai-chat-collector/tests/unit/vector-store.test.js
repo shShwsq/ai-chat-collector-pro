@@ -127,6 +127,44 @@ describe('_strToQdrantUUID', () => {
   });
 });
 
+describe('_searchQdrant', () => {
+  it('优先恢复 payload._origId，并保留内部 UUID 仅供诊断', async () => {
+    const originalFetch = window.fetch;
+    window.fetch = async () => new Response(JSON.stringify({
+      result: [{
+        id: '11111111-2222-3333-4444-555555555555',
+        score: 0.91,
+        payload: { _origId: 'conv::msg::hash1::chunk::0', convId: 'conv' }
+      }]
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    try {
+      const results = await VectorStore._searchQdrant('https://qdrant.example', 'key', 'chunks', [1, 0], 1);
+      expect(results[0]).toMatchObject({
+        id: 'conv::msg::hash1::chunk::0',
+        storageId: '11111111-2222-3333-4444-555555555555',
+        convId: 'conv',
+        score: 0.91
+      });
+    } finally {
+      window.fetch = originalFetch;
+    }
+  });
+
+  it('旧数据缺少 _origId 时不把 Qdrant UUID 当作 chunk ID', async () => {
+    const originalFetch = window.fetch;
+    window.fetch = async () => new Response(JSON.stringify({
+      result: [{ id: 'legacy-uuid', score: 0.5, payload: { convId: 'conv' } }]
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    try {
+      const [result] = await VectorStore._searchQdrant('https://qdrant.example', '', 'chunks', [1], 1);
+      expect(result.id).toBe('');
+      expect(result.storageId).toBe('legacy-uuid');
+    } finally {
+      window.fetch = originalFetch;
+    }
+  });
+});
+
 // =================================================================
 // _chromaDistanceToScore：按 distance function 转换 distance → score
 // =================================================================

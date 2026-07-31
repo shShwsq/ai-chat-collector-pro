@@ -35,9 +35,9 @@
 
 | 文件 | 职责 | 关键内容 |
 |------|------|---------|
-| `app/main.py` | FastAPI 入口 | `lifespan`（加载 `_REGISTRY.load()` → `init_db()` → `migrate_node_columns(engine)` → `init_graph_agent()`）；CORS 允许 `["http://localhost:5174","file://"]`；按 `/api` 前缀挂载 11 个 router + `/ws` |
+| `app/main.py` | FastAPI 入口 | `lifespan`（加载 `_REGISTRY.load()` → `init_db()` → `migrate_node_columns(engine)` → `migrate_session_columns(engine)` → `init_graph_agent()` → `seed_onboarding_if_empty` → `background_tasks.start_accepting()`；yield 后**关闭清理**：`background_tasks.shutdown(8s)` → `ws_notify.close_all()` → `engine.dispose()`）；CORS 允许 `["http://localhost:5174","file://"]`；按 `/api` 前缀挂载 11 个 router + `/ws` |
 | `app/config.py` | 配置 | `Settings(BaseSettings)`：`backend_port=8788` / `data_dir=./data` / `database_url=sqlite+aiosqlite:///./data/app.db` / `cors_origins=["http://localhost:5174","file://"]` / `encryption_key`（空时由 crypto 自动生成）；`ensure_dirs()` 创建 `data/`、`data/files/`、`data/sessions/` |
-| `app/db.py` | 异步 DB | `engine = create_async_engine(settings.database_url, future=True)`；`AsyncSessionLocal = async_sessionmaker(...)`；`init_db()` 调 `Base.metadata.create_all` + 创建 4 张 FTS5 虚拟表 + 同步触发器；`get_session()` FastAPI 依赖；`_set_sqlite_pragma` 监听器确保 `PRAGMA foreign_keys=ON` |
+| `app/db.py` | 异步 DB | `engine = create_async_engine(settings.database_url, future=True)`；**`configure_sqlite_engine(async_engine)`**：为 engine 安装连接级监听器 `_set_sqlite_pragma`，**启用 4 项 PRAGMA**：`foreign_keys=ON`（确保级联删除生效）/ `busy_timeout=5000`（避免多连接下 database is locked）/ `journal_mode=WAL`（读写并发）/ `synchronous=NORMAL`（平衡性能与安全）；**`with_sqlite_lock_retry[T](operation)`**：对 `database is locked` 错误最多 4 次指数退避重试（50ms → 100ms → 200ms → 400ms），其他异常原样抛出，用于易争用的写入路径；`AsyncSessionLocal = async_sessionmaker(...)`；`init_db()` 调 `Base.metadata.create_all` + 增强列迁移 `_migrate_add_columns`（observations 表回填 `dedup_key` 列并建部分唯一索引、edges 表规范化端点方向 + 去重 + 建唯一索引）+ 创建 4 张 FTS5 虚拟表 + 同步触发器；`get_session()` FastAPI 依赖 |
 | `pyproject.toml` | 依赖声明 | `requires-python >= 3.12`；运行依赖：fastapi/uvicorn[standard]/openai/httpx/sqlalchemy/aiosqlite/pypdf/python-docx/Pillow/pydantic/pydantic-settings/cryptography/python-multipart/python-pptx/python-dotenv；dev：ruff/pytest/pytest-asyncio；`ruff.line-length=100` `target-version=py312`；`pytest.ini_options.asyncio_mode=auto` |
 | `.env.example` | 环境变量模板 | `APP_ENV / LLM_BASE_URL / LLM_API_KEY / LLM_MODEL / LLM_CONTEXT_WINDOW / DATA_DIR / DATABASE_URL / APP_ENCRYPTION_KEY / CORS_ORIGINS / BACKEND_PORT`，每项含注释 |
 | `seed-graph.ps1` | 种子脚本 | 调 `POST /api/graphs` + `POST /api/graphs/{id}/nodes` + `POST /api/graphs/{id}/edges` 注入一个最小 study 图谱（3 节点 + 2 边），用于开发自检 |
@@ -298,10 +298,14 @@ uv run python -m app.main
 
 ## 注意事项（坑）
 
-### SQLite 外键级联需手动开启
+### SQLite 外键级联与并发配置
 
-- SQLAlchemy 默认不开启 SQLite 的 `PRAGMA foreign_keys`，本项目在 [app/db.py](./app/db.py) 用 `event.listens_for(engine.sync_engine, "connect")` 监听器在每次连接时执行 `PRAGMA foreign_keys=ON`。
-- 若手动用 DB Browser for SQLite 操作数据库，默认 `PRAGMA foreign_keys=OFF`，删除图谱不会级联清理 nodes / edges；需要在 DB Browser 的"Execute SQL"中先跑 `PRAGMA foreign_keys=ON;`。
+- SQLAlchemy 默认不开启 SQLite 的 `PRAGMA foreign_keys`，本项目在 [app/db.py](./app/db.py) 通过 `configure_sqlite_engine(async_engine)` 为 engine 安装连接级监听器 `_set_sqlite_pragma`，**每次连接同时设置 4 项 PRAGMA**：
+  1. `PRAGMA foreign_keys=ON`：确保 `ON DELETE CASCADE` 生效；
+  2. `PRAGMA busy_timeout=5000`：忙等待 5 秒，避免多连接下 `database is locked`；
+  3. `PRAGMA journal_mode=WAL`：写前日志模式，允许读写并发；
+  4. `PRAGMA synchronous=NORMAL`：平衡性能与原子性（WAL 下安全）。
+- `busy_timeout` 在 SQLite < 3.37 上不生效（变量形式 `PRAGMA` 会解析失败）；若手动用 DB Browser for SQLite 操作数据库，需在 "Execute SQL" 中先跑 `PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;`。
 
 ### FTS5 不可用时静默降级
 
@@ -334,13 +338,19 @@ uv run python -m app.main
 
 `app/main.py` 的 `lifespan` 按顺序执行：
 1. `_REGISTRY.load()`：加载 `model_config.json`，失败回退到 `_FALLBACK_REGISTRY` 硬编码。
-2. `await init_db()`：创建所有表 + FTS5 虚拟表 + 触发器 + 确保 `data/` / `data/files/` / `data/sessions/` 目录存在。
+2. `await init_db()`：创建所有表 + FTS5 虚拟表 + 触发器 + **`_migrate_add_columns` 轻量列迁移（messages.tool_calls / messages.thinking / observations.dedup_key + 唯一索引 / edges 归一 + 唯一索引）** + 确保 `data/` / `data/files/` / `data/sessions/` 目录存在。
 3. `await migrate_node_columns(engine)`：幂等迁移 nodes 表 5 个智能推荐列。
 4. `await migrate_session_columns(engine)`：幂等迁移 `sessions` 表 `mode` / `graph_id` 两列（Task 8 chat 路由用），与 `migrate_node_columns` 同模式。
 5. `try: init_main_agent(); init_writer_agent(...) except Exception: logging.warning(...)`：初始化 MainAgent / WriterAgent 单例；LLM 未配置或调不通时**降级跳过**（仅记 warning，不阻断启动）。
 6. `init_graph_agent()`：初始化全局 GraphAgent 单例（无状态，仅确保模块加载与启动日志）。
+7. `await seed_onboarding_if_empty()`：首次启动且图谱列表为空时自动注入 2 张 onboarding 种子图（study / work 各一张），帮助新用户快速上手。
+8. **`background_tasks.start_accepting()`**：启用 `task_registry` 后台任务注册（流式任务、取消等待等通过它托管）。
+9. **yield 后关停阶段**（应用退出时执行）：
+   - `await background_tasks.shutdown(timeout=8.0)`：取消并等待所有未完成托管任务；
+   - `await ws_notify.close_all()`：向所有 WS 连接发 1001「服务正在关闭」后清空注册表；
+   - `await engine.dispose()`：释放 SQLite engine 占用的文件句柄与连接池。
 
-**顺序不能乱**：`init_db` 必须在 `migrate_node_columns` / `migrate_session_columns` 之前（否则对应表不存在）；`_REGISTRY.load` 必须在 `init_main_agent` / `init_writer_agent` / `init_graph_agent` 之前（否则依赖 `model_config` 的 agent 用空注册表）。
+**顺序不能乱**：`init_db` 必须在 `migrate_node_columns` / `migrate_session_columns` 之前（否则对应表不存在）；`_REGISTRY.load` 必须在 `init_main_agent` / `init_writer_agent` / `init_graph_agent` 之前（否则依赖 `model_config` 的 agent 用空注册表）；`background_tasks.start_accepting()` 必须在 yield 之前（否则 lifespan 结束前创建的流式任务会被立即拒绝）。
 
 ### 32 位十六进制 ID 不能含连字符
 

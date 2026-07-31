@@ -45,7 +45,8 @@ export function ModeSwitch() {
   const handleModeChange = (newMode: Mode) => {
     if (newMode === mode) return
     const doc = document as ViewTransitionDoc
-    if (typeof doc.startViewTransition === 'function') {
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (!reduceMotion && typeof doc.startViewTransition === 'function') {
       // 标记方向，供 ::view-transition-old/new 选择对应动画
       document.documentElement.dataset.modeTransition =
         newMode === 'work' ? 'to-work' : 'to-study'
@@ -64,12 +65,7 @@ export function ModeSwitch() {
   }
 
   return (
-    <div
-      className="mode-switch"
-      role="tablist"
-      aria-label="模式切换：学习 / 工作"
-      data-mode={mode}
-    >
+    <div className="mode-switch" aria-label="模式切换：学习 / 工作" data-mode={mode}>
       <span className="mode-switch__indicator" aria-hidden="true" />
       {MODES.map((m) => {
         const active = mode === m.value
@@ -77,8 +73,7 @@ export function ModeSwitch() {
           <button
             key={m.value}
             type="button"
-            role="tab"
-            aria-selected={active}
+            aria-pressed={active}
             className={`mode-switch__btn${active ? ' is-active' : ''}`}
             onClick={() => handleModeChange(m.value)}
           >

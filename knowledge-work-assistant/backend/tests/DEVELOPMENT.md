@@ -34,10 +34,11 @@ tests/
 1. `monkeypatch.setattr(settings, "database_url", db_url)`：指向临时 SQLite 文件
 2. `monkeypatch.setattr(settings, "data_dir", tmp_path / "data")`：避免 lifespan 在 `backend/data` 下创建目录
 3. 重建 `test_engine` + `test_session_maker`（绑定到临时 SQLite）
-4. `monkeypatch.setattr(db_module, "engine", test_engine)` 与 `monkeypatch.setattr(db_module, "AsyncSessionLocal", test_session_maker)`
-5. 通过 `_ASYNC_SESSION_IMPORTERS` 列表逐一 monkeypatch 所有使用方模块（`graph_store` / `writer_agent` / `main_agent` / `context_manager` / `mcp_manager` / `graph_agent` / 各 `routers.*` 等）的 `AsyncSessionLocal` 引用
-6. `Base.metadata.create_all` 初始化表结构（不创建 FTS5 虚拟表与触发器）
-7. yield 后 `test_engine.dispose()` 释放连接，临时 SQLite 文件由 pytest `tmp_path` 自动清理
+4. **`from app.db import configure_sqlite_engine; configure_sqlite_engine(test_engine)`**：为测试 engine 安装与生产一致的 PRAGMA 监听器（foreign_keys / busy_timeout / WAL / synchronous=NORMAL），确保测试行为与生产一致，避免外键级联失效等差异
+5. `monkeypatch.setattr(db_module, "engine", test_engine)` 与 `monkeypatch.setattr(db_module, "AsyncSessionLocal", test_session_maker)`
+6. 通过 `_ASYNC_SESSION_IMPORTERS` 列表逐一 monkeypatch 所有使用方模块（`graph_store` / `writer_agent` / `main_agent` / `context_manager` / `mcp_manager` / `graph_agent` / 各 `routers.*` 等）的 `AsyncSessionLocal` 引用
+7. `Base.metadata.create_all` 初始化表结构（不创建 FTS5 虚拟表与触发器）
+8. yield 后 `test_engine.dispose()` 释放连接，临时 SQLite 文件由 pytest `tmp_path` 自动清理
 
 **fixture 类型**：`@pytest_asyncio.fixture`（异步，需 yield）
 

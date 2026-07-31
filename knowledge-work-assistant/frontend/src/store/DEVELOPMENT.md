@@ -31,6 +31,7 @@ store/
 #### 基础态
 
 - `mode: Mode`（study / work）、`view: ViewType`（graph / card）、`activeNav: ActiveNav`（chat / graph / settings）
+- `theme: Theme`（simple-white / simple-black / angular-white，由 [themes.ts](../lib/themes.ts) 定义；启动时从 localStorage 读取 `isValidTheme` 校验，非法回退 `DEFAULT_THEME`）
 - `currentGraphId: string | null`、`graphs: Graph[]`、`fullGraph: FullGraph | null`、`selectedNodeId: string | null`
 - `loading: boolean`、`error: string`、`reminderCount: number`
 
@@ -96,6 +97,7 @@ store/
 #### 模式 / 视图 / 导航
 
 - `setMode(mode)`：清空当前模式相关状态（含延伸 / 候选 / 测验 / Work / 流式 / Chat 会话与消息 / 工具确认态 / 大卡浮层态 / Toast），重新加载新模式图谱列表。
+- `setTheme(theme)`：切换外观主题；写入 `theme` 状态并同步到 `localStorage.setItem(THEME_STORAGE_KEY, theme)`；App.tsx 的 `useEffect` 监听后会把值同步到 `document.documentElement.dataset.theme` 与 `theme-color` meta 标签。
 - `setView(view)`：切换内容区视图（graph / card）。
 - `setActiveNav(nav)`：切换左侧竖排导航；进入 `chat` 时加载推荐 + 刷新角标 + 调 `loadChatSessions()`，进入 `settings` 时懒加载 LLM 配置。
 - `setSelectedNode(id)`：选中节点（图谱视图与卡片视图间同步）。

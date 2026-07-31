@@ -14,8 +14,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import (
@@ -28,6 +29,9 @@ from sqlalchemy.orm import DeclarativeBase
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+SQLITE_BUSY_TIMEOUT_MS = 5_000
+SQLITE_LOCK_RETRIES = 4
 
 
 class Base(DeclarativeBase):
@@ -51,12 +55,41 @@ AsyncSessionLocal = async_sessionmaker(
 )
 
 
-@event.listens_for(engine.sync_engine, "connect")
 def _set_sqlite_pragma(dbapi_connection, _connection_record) -> None:
-    """SQLite 默认关闭外键约束，这里在每次连接时打开，确保 ON DELETE CASCADE 生效。"""
+    """为每个 SQLite 连接启用一致的并发与完整性配置。"""
     cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA foreign_keys=ON")
-    cursor.close()
+    try:
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+    finally:
+        cursor.close()
+
+
+def configure_sqlite_engine(async_engine) -> None:
+    """为异步 SQLite engine 安装连接级 PRAGMA；测试 engine 也应调用。"""
+    event.listen(async_engine.sync_engine, "connect", _set_sqlite_pragma)
+
+
+configure_sqlite_engine(engine)
+
+
+async def with_sqlite_lock_retry[T](operation: Callable[[], Awaitable[T]]) -> T:
+    """重试短暂的 SQLite 锁冲突，其他数据库错误原样抛出。"""
+    delay = 0.05
+    for attempt in range(SQLITE_LOCK_RETRIES + 1):
+        try:
+            return await operation()
+        except Exception as exc:  # noqa: BLE001
+            message = str(exc).lower()
+            if "database is locked" not in message and "database table is locked" not in message:
+                raise
+            if attempt >= SQLITE_LOCK_RETRIES:
+                raise
+            await asyncio.sleep(delay)
+            delay *= 2
+    raise AssertionError("unreachable")
 
 
 async def init_db() -> None:
@@ -86,23 +119,64 @@ async def _migrate_add_columns(conn) -> None:
 
     def _get_columns(sync_conn):
         insp = sa_inspect(sync_conn)
-        if "messages" not in insp.get_table_names():
-            return []
-        return [c["name"] for c in insp.get_columns("messages")]
+        tables = set(insp.get_table_names())
+        return {
+            "messages": [c["name"] for c in insp.get_columns("messages")]
+            if "messages" in tables else [],
+            "observations": [c["name"] for c in insp.get_columns("observations")]
+            if "observations" in tables else [],
+        }
 
-    existing = await conn.run_sync(_get_columns)
-    if not existing:
-        return  # messages 表不存在（首次启动由 create_all 创建）
-    if "tool_calls" not in existing:
+    columns = await conn.run_sync(_get_columns)
+    if columns["messages"] and "tool_calls" not in columns["messages"]:
         await conn.execute(
             text("ALTER TABLE messages ADD COLUMN tool_calls TEXT NOT NULL DEFAULT '[]'")
         )
         logger.info("迁移：messages 表已添加 tool_calls 列")
-    if "thinking" not in existing:
+    if columns["messages"] and "thinking" not in columns["messages"]:
         await conn.execute(
             text("ALTER TABLE messages ADD COLUMN thinking TEXT NOT NULL DEFAULT ''")
         )
         logger.info("迁移：messages 表已添加 thinking 列")
+    if columns["observations"]:
+        if "dedup_key" not in columns["observations"]:
+            await conn.execute(text("ALTER TABLE observations ADD COLUMN dedup_key VARCHAR(512)"))
+        await conn.execute(text(
+            "UPDATE observations SET dedup_key = "
+            "json_extract(metadata_json, '$._dedup_key') "
+            "WHERE dedup_key IS NULL AND json_extract(metadata_json, '$._dedup_key') IS NOT NULL"
+        ))
+        # 历史数据可能已有重复键。保留最早创建的记录，其余记录置空后再建唯一索引。
+        await conn.execute(text(
+            "UPDATE observations SET dedup_key = NULL WHERE id IN ("
+            "SELECT newer.id FROM observations AS newer "
+            "JOIN observations AS older ON older.dedup_key = newer.dedup_key "
+            "AND (older.created_at < newer.created_at OR "
+            "(older.created_at = newer.created_at AND older.id < newer.id))"
+            ")"
+        ))
+        await conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_observations_dedup_key "
+            "ON observations(dedup_key) WHERE dedup_key IS NOT NULL"
+        ))
+        logger.info("迁移：observations dedup_key 已回填并确保唯一索引")
+
+    if "edges" in await conn.run_sync(
+        lambda sync_conn: set(sa_inspect(sync_conn).get_table_names())
+    ):
+        await conn.execute(text("DROP INDEX IF EXISTS uq_edges_graph_endpoints_relation"))
+        await conn.execute(text(
+            "UPDATE edges SET src_id = dst_id, dst_id = src_id "
+            "WHERE src_id > dst_id"
+        ))
+        await conn.execute(text(
+            "DELETE FROM edges WHERE id NOT IN ("
+            "SELECT MIN(id) FROM edges GROUP BY graph_id, src_id, dst_id, relation)"
+        ))
+        await conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_edges_graph_endpoints_relation "
+            "ON edges(graph_id, src_id, dst_id, relation)"
+        ))
 
 
 async def _create_fts5(conn) -> None:

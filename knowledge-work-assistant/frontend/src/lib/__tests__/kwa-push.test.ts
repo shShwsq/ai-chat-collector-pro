@@ -16,9 +16,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-// kwa-push.js 是 UMD/CJS 模块且无类型声明，TS 静态检查会报「找不到模块」，
-// 用 @ts-ignore 抑制；运行时由 vite/esbuild 做 CJS interop，default 导出 = module.exports
-// @ts-ignore
+// kwa-push.js 是 UMD/CJS 模块，运行时由 vite/esbuild 做 CJS interop，
+// default 导出对应 module.exports。
 import KwaPush from '../../../../plugin-sdk/kwa-push.js';
 
 // 被测 SDK 暴露的 API（factory 返回对象）

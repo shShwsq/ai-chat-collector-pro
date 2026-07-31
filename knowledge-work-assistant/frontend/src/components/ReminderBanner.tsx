@@ -41,11 +41,10 @@ export function ReminderBanner({ count, onClick }: ReminderBannerProps) {
   if (count <= 0) return null
 
   return (
-    <div
+    <button
+      type="button"
       className="reminder-banner"
       onClick={onClick}
-      role="button"
-      tabIndex={0}
       title="查看到期提醒"
     >
       <span className="reminder-banner__icon">
@@ -56,7 +55,7 @@ export function ReminderBanner({ count, onClick }: ReminderBannerProps) {
         项提醒已到期
       </span>
       <span className="reminder-banner__action">查看</span>
-    </div>
+    </button>
   )
 }
 

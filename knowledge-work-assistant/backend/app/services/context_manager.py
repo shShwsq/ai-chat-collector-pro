@@ -38,9 +38,11 @@ from sqlalchemy import desc, select
 
 from app.config import settings
 from app.db import AsyncSessionLocal
-from app.models.db_models import Checkpoint, FileMetadata, Message as MessageRow
+from app.models.db_models import Checkpoint, FileMetadata
+from app.models.db_models import Message as MessageRow
 from app.services.compaction import Compactor, prune_tool_outputs
 from app.services.llm_client import LLMClient
+from app.services.task_registry import background_tasks
 from app.services.writer_agent import CHECKPOINT_FIELDS, WriterAgent
 
 logger = logging.getLogger(__name__)
@@ -228,7 +230,10 @@ class ContextManager:
         if last_asst_idx <= 0:
             return 0
 
-        tokens = [_estimate_text_tokens(_message_content_text(m.get("content", ""))) for m in messages]
+        tokens = [
+            _estimate_text_tokens(_message_content_text(m.get("content", "")))
+            for m in messages
+        ]
 
         start_idx = max(0, last_asst_idx - 1)
         tail_sum = sum(tokens[start_idx:])
@@ -471,7 +476,11 @@ class ContextManager:
             finally:
                 self._writer_running = False
 
-        task = asyncio.create_task(_run_writer())
+        task = background_tasks.create_task(
+            _run_writer(),
+            session_id=self.session_id,
+            op="writer-checkpoint",
+        )
         self._pending_tasks.add(task)
         task.add_done_callback(self._pending_tasks.discard)
         logger.info(
@@ -526,7 +535,8 @@ class ContextManager:
           5. 按 ``_BUDGET_RATIOS`` 分配各类预算，budget_inject 贪心填充；
           6. 拼装为 system 摘要 + 近期消息的新 messages 数组；
           7. ``cycle_index`` 自增并记录 rebuild 边界到 Checkpoint 表；
-          8. 重置 ``triggered_checkpoints`` 与 ``last_checkpoint_idx``（新 cycle 可再次触发 20/45/70%）。
+          8. 重置 ``triggered_checkpoints`` 与 ``last_checkpoint_idx``
+             （新 cycle 可再次触发 20/45/70%）。
 
         **重要契约**：调用方必须用返回值**替换**而非追加到原 messages 列表
         （``messages = await cm.rebuild_context()``）。MiMo-Code 通过

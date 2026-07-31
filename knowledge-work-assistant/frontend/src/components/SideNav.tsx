@@ -125,9 +125,7 @@ export function SideNav() {
   return (
     <nav
       className="side-nav"
-      role="tablist"
       aria-label="主导航：对话 / 图谱 / 设置"
-      aria-orientation="vertical"
     >
       <div className="side-nav__main">
         {MAIN_ITEMS.map((item) => {
@@ -136,8 +134,7 @@ export function SideNav() {
             <button
               key={item.value}
               type="button"
-              role="tab"
-              aria-selected={active}
+              aria-current={active ? 'page' : undefined}
               aria-label={item.label}
               title={item.label}
               className={`side-nav__btn${active ? ' is-active' : ''}`}
@@ -163,8 +160,7 @@ export function SideNav() {
             <button
               key={item.value}
               type="button"
-              role="tab"
-              aria-selected={active}
+              aria-current={active ? 'page' : undefined}
               aria-label={item.label}
               title={item.label}
               className={`side-nav__btn${active ? ' is-active' : ''}`}

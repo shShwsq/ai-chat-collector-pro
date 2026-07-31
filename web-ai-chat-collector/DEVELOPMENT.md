@@ -19,7 +19,7 @@
 
 根目录只承担"装配与声明"职责，本身不含业务逻辑：
 
-- **`manifest.json`**：声明 MV3 元数据，包括 host_permissions（5 个 AI 平台 + 6 个 LLM/embedding 厂商域名 + 1 个 Jina）、permissions（storage / downloads / activeTab / scripting）、optional_host_permissions（远程向量库域名用 `http://*/*` 与 `https://*/*` 兜底）、content_scripts（按平台分别注入，每平台两条 entries：一条 MAIN world 的 `network-interceptor.js` 在 document_start 注入；一条默认 world 的 lib + content + 平台入口脚本）。Kimi 没有 MAIN world 注入，因为它走 WebSocket+protobuf 无法拦截。
+- **`manifest.json`**：声明 MV3 元数据，包括 host_permissions（5 个 AI 平台 + 6 个 LLM/embedding 厂商域名 + 1 个 Jina）、permissions（storage / downloads / activeTab / scripting）、optional_host_permissions（远程向量库域名用 `http://*/*` 与 `https://*/*` 兜底）、content_scripts（按平台分别注入，每平台两条 entries：一条 MAIN world 的 `network-interceptor.js` 在 document_start 注入；一条默认 world 的 lib + content + 平台入口脚本，**所有平台额外注入 `lib/sanitize-html.js`** 用于渲染前对 Markdown→HTML 结果做 XSS 消毒——白名单标签/属性/协议三层过滤，剥离 `<script>` / `<img onerror>` / `<a href="javascript:">` 等 payload，对应测试 `tests/dom/markdown-safety.test.js`）。Kimi 没有 MAIN world 注入，因为它走 WebSocket+protobuf 无法拦截。
 - **`background.js`**：Service Worker 唯一入口，仅做两件事——(1) 顶层同步 `importScripts` 加载 `lib/*.js` + `bg/*.js`，(2) 调用 `initAll()` 并把 Promise 赋给 `_initPromise`，由 `bg/router.js` 的 `ensureInit()` await。注意 `importScripts` 必须在顶层 try 块中同步执行，不能放进 async 函数。
 - **`models.json`**：LLM 与 Embedding 厂商/模型清单（被 `lib/embedding.js`、`lib/llm.js`、`popup/settings.js` 三处通过 `chrome.runtime.getURL('models.json')` fetch 后读取）。新增厂商或模型只需要改这一个文件，不需要改代码。
 - **`package.json`**：仅声明测试套件依赖（vitest + jsdom + @vitest/coverage-v8），不声明运行时依赖——扩展运行时无构建步骤、无 npm 包打入产物。
@@ -32,8 +32,9 @@
 
 | 文件 | 职责 | 关键内容 |
 |------|------|---------|
-| `manifest.json` | MV3 清单 | host_permissions 含 15 个域名；content_scripts 5 套（每平台两条 entry，Kimi 仅一条）；action.default_popup 指向 `popup/popup.html`；web_accessible_resources 仅暴露 `lib/katex.min.css` |
+| `manifest.json` | MV3 清单 | host_permissions 含 15 个域名；content_scripts 5 套（每平台两条 entry，Kimi 仅一条）；所有平台 content_scripts 额外注入 `lib/sanitize-html.js`；action.default_popup 指向 `popup/popup.html`；web_accessible_resources 仅暴露 `lib/katex.min.css` |
 | `background.js` | SW 入口 | 顶层 `importScripts` 加载顺序：`lib/db.js → lib/embedding.js → lib/vector-store.js → lib/llm.js → bg/init.js → bg/conversations.js → bg/export.js → bg/ai-handlers.js → bg/settings-handlers.js → bg/vector-handlers.js → bg/data-handlers.js → bg/router.js`；最后 `_initPromise = initAll()` |
+| `lib/sanitize-html.js` | Markdown XSS 消毒器 | `HtmlSanitizer` 单例：三层白名单策略（25 个 HTML 标签 + 8 个属性 + 3 个协议）；按 HTML namespace 过滤 SVG/MathML；`on*` 事件属性全剥离；`<a href>` 自动加 `target=_blank` + `rel=noopener noreferrer`；`javascript:` 协议强制改 `#`；popup 对话预览与 settings 帮助文档的 Markdown 渲染后必须经此消毒；对应测试 `tests/dom/markdown-safety.test.js`（验证 `<img onerror>` / `<a href="javascript:">` 等 payload 被剥离） |
 | `models.json` | 厂商清单 | `llmProviders`（6 家：dashscope/deepseek/zhipu/moonshot/doubao/minimax，全 `backend:"openai"`）+ `embeddingProviders`（5 家：dashscope/zhipu/baidu/volcengine/jina）。每家含 id/name/baseUrl/apiKeyLabel/apiKeyUrl/models，模型含 dimension/multimodal/dimensionsParam 等元信息 |
 | `package.json` | 测试依赖 | scripts: `test`/`test:watch`/`test:dom`/`test:unit`/`test:coverage`；无 runtime deps |
 | `vitest.config.js` | 测试配置 | `environment: 'jsdom'`、`globals: true`、`include: ['tests/**/*.test.js']`；coverage include 仅 `lib/**` 与 `content/dom/**`，排除 `lib/*.min.js` 和 `lib/turndown-plugin-gfm.js` |
@@ -271,7 +272,20 @@
 
 ### settings 保存触发权限申请
 
-- 保存远程向量库配置时，`popup/settings.js` 的 `saveSettings` 末尾会通过 `chrome.permissions.request` 申请该域名权限（弹窗会导致 popup 失焦关闭），所以权限申请放在保存最后——配置已持久化，用户重开 popup 即可继续。
+- 保存远程向量库配置时，`popup/settings.js` 的 `saveSettings` **先做安全校验再持久化**：(1) `validateRemoteEndpoint` 校验所有远程服务（Embedding / LLM / 非本地向量库）URL 必须是 http(s)://；(2) 非 HTTPS 且非 localhost 的地址弹 `confirm` 二次确认，告知 API Key 与数据可能被窃听；(3) `ensureHostPermission` 逐一申请目标域 host 权限；**全部通过才 `SAVE_SETTINGS` 消息写 chrome.storage**，避免用户拒绝授权时留下"已保存但必然不可用"的半配置状态。
+
+### Markdown → HTML 的 XSS 消毒
+
+- popup 对话预览与 settings 帮助文档 Markdown 渲染流程：`marked.parse(md, { breaks:true, gfm:true })` 的输出**必须再经 `HtmlSanitizer.sanitize(html)`**，`lib/sanitize-html.js` 实现默认白名单策略（允许常用排版标签、剥离 `<script>` / `javascript:` / 危险事件属性等）。
+- 对应测试：`tests/dom/markdown-safety.test.js` 断言 `<img onerror>` / `<a href="javascript:">` 等 payload 被剥离后不执行。
+
+### RAG 命中的上下文严谨性（防无关内容污染）
+
+- `lib/llm.js` 的 `AIAssistant._buildContexts` 对向量库检索结果做三道校验：(1) 缺 `convId` 跳过并 warn；(2) 检索 ID 无法映射到原始 chunk（`_parseEmbId` 失败或 chunkIdx<0 或 msgHash 空）跳过；(3) 命中了 msgHash 但原对话中找不到对应消息时**不允许静默扩大为整段对话兜底**，直接 warn 跳过该对话，避免低质量 RAG 命中把整段无关对话注入 LLM 上下文。
+
+### 远程向量库 ID 回读修正（Qdrant / 通用）
+
+- `lib/vector-store.js` 的远程检索返回：`id` 字段用 `payload._origId`（写入时保留的原始 chunk ID）而不是 Qdrant 内部 UUID，确保上层 `_parseEmbId` 能正确还原 convId/msgHash/chunkIdx；内部 UUID 落到新增 `storageId` 字段供调试；旧数据缺 `_origId` 时 `id=''`，由上层统一跳过 + 输出诊断日志。
 
 ### Kimi 平台无网络拦截模式
 

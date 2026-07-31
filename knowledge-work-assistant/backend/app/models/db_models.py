@@ -29,13 +29,14 @@ FTS5 虚拟表（全文检索）在 ``app.db.init_db`` 中用 raw SQL 创建，�
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     Boolean,
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -51,7 +52,7 @@ logger = logging.getLogger(__name__)
 
 def _now() -> datetime:
     """UTC 当前时间，作为时间戳默认值。"""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Session(Base):
@@ -351,6 +352,16 @@ class Edge(Base):
     """
 
     __tablename__ = "edges"
+    __table_args__ = (
+        Index(
+            "uq_edges_graph_endpoints_relation",
+            "graph_id",
+            "src_id",
+            "dst_id",
+            "relation",
+            unique=True,
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     graph_id: Mapped[str] = mapped_column(
@@ -401,6 +412,10 @@ class Observation(Base):
     conversation_markdown: Mapped[str] = mapped_column(Text, default="")
     # 附加元数据 JSON 字符串（如对话标题、URL、模型名、用户标签等）
     metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    # 原子幂等键：没有 conversation_id 的历史数据保持 NULL
+    dedup_key: Mapped[str | None] = mapped_column(
+        String(512), nullable=True, unique=True, index=True
+    )
     # 来源标记：plugin / import / manual
     source: Mapped[str] = mapped_column(String(16), default="manual", index=True)
     # 关联图谱（可选，抽取后绑定的目标图谱）

@@ -1,6 +1,6 @@
 # lib/ 通信层与类型契约开发指南
 
-> 一句话定位：本目录是 KWA 前端渲染进程的"通信层 + 类型契约层"，5 个文件分别承担 HTTP 客户端（`api.ts`）、WebSocket 客户端（`ws.ts`）、前后端类型契约（`types.ts`）、节点模板镜像（`nodeTemplates.ts`）、Electron 桥类型声明（`electron.d.ts`）。本目录**不写业务逻辑**，只做"通信封装 + 类型定义"；业务态由 [`store/useAppStore.ts`](../store/useAppStore.ts) 管理，组件层通过 `useAppStore` 间接调用本目录 API。
+> 一句话定位：本目录是 KWA 前端渲染进程的"通信层 + 类型契约层 + 外观主题层"，6 个文件分别承担 HTTP 客户端（`api.ts`）、WebSocket 客户端（`ws.ts`）、前后端类型契约（`types.ts`）、外观系统主题（`themes.ts`）、节点模板镜像（`nodeTemplates.ts`）、Electron 桥类型声明（`electron.d.ts`）。本目录**不写业务逻辑**，只做"通信封装 + 类型定义 + 主题常量"；业务态由 [`store/useAppStore.ts`](../store/useAppStore.ts) 管理，组件层通过 `useAppStore` 间接调用本目录 API。
 
 ## 模块职责
 
@@ -9,6 +9,7 @@ lib/
 ├── api.ts               # HTTP 客户端：/api 前缀 + file:// 环境地址解析 + ApiError + 全部 API 方法
 ├── ws.ts                # WebSocket 客户端：TestSocket 类 + generateSessionId + 后端协议对齐
 ├── types.ts             # 与 backend/app/models/schemas.py 一一对应的 TypeScript 类型定义
+├── themes.ts            # 外观系统主题定义：Theme 类型 + THEMES 元信息 + localStorage 持久化
 ├── nodeTemplates.ts     # 与 backend/app/models/node_types.py 一一对应的节点模板镜像
 ├── electron.d.ts        # window.electronAPI 全局类型声明（与 electron/preload.ts 对齐）
 └── __tests__/           # 库测试套件，vitest 跑（详见 __tests__/DEVELOPMENT.md）
@@ -98,6 +99,22 @@ lib/
     - WS 事件：`ChatOp`（'chat'）/ `ChatToolCallEvent` / `ChatToolResultEvent` / `ChatToolConfirmationEvent` / `ChatTokenEvent` / `ChatDoneEvent` / `ChatCancelledEvent` / `ChatErrorEvent`
     - `WsEvent` 联合类型扩展加入上述 7 个 chat 事件
   - 通用删除：`DeleteResult`
+
+### `themes.ts`（外观系统主题定义）
+
+- **与模式（mode）解耦的中性色板系统**：主题决定 bg / surface / border / text 等中性灰阶，mode 仅决定 `--accent` 强调色；新增主题无需改组件代码，仅追加 `THEMES` 项 + app.css 对应 `data-theme` 块。
+- **主题集合**：3 个预置主题（后续可扩展）：
+  - `simple-white`（默认）：明亮克制的日常工作台，强调清晰层级与舒适留白；
+  - `simple-black`：低眩光深灰工作台，适合长时间专注与图谱浏览；
+  - `angular-white`：锐角工业控制台，使用紧凑结构与明确状态标记。
+- **核心类型与常量**：
+  - `Theme`：主题 id 字面量联合类型（`'simple-white' | 'simple-black' | 'angular-white'`）。
+  - `ThemeMeta`：主题元信息（id / label / description / isDark），用于设置面板的主题卡片展示。
+  - `DEFAULT_THEME: Theme = 'simple-white'`：localStorage 缺失或非法时的回退值。
+  - `THEME_STORAGE_KEY: string = 'kwa.theme'`：localStorage 持久化键名。
+  - `THEMES: ThemeMeta[]`：全部可选主题，按设置面板展示顺序排列。
+- **类型守卫**：`isValidTheme(id: unknown): id is Theme`——localStorage 读取后的类型守卫，避免把非法字符串直接当作 Theme 使用；未命中时返回 `false`，调用方用 `DEFAULT_THEME` 回退。
+- **在 App 层的接入**：[App.tsx](../App.tsx) 启动时从 localStorage 读取并校验后写入 `store.theme`；`useEffect` 监听 `theme` 变化，把值写到 `document.documentElement.dataset.theme` 与 `<meta name="theme-color">`（PWA 顶栏色）；`.app-shell` 根节点同时带 `data-mode` 与 `data-theme` 两个属性，CSS 通过双重属性选择器定位。
 
 ### `nodeTemplates.ts`（节点模板镜像）
 
