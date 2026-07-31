@@ -23,7 +23,7 @@ src/
 │   ├── components/              # React 组件（详见 components/DEVELOPMENT.md）
 │   ├── graph/               #   图谱相关子组件（GraphView / NodeDetailCard / QuizPanel 等）
 │   ├── ChatExpandedOverlay.tsx  # 对话首页大卡浮层（FLIP 动画 + createPortal + 无缝切图谱）
-│   ├── ChatHome.tsx         #   对话首页瀑布流主体组件（交互增强版）：study/work 双模式推荐卡片瀑布流 + 居中输入框 + sending 过渡；4 项交互增强：卡片飞入（随机 delay/duration）、滚轮覆盖（瀑布流上移盖住输入框 + 输入框渐进模糊）、点击展开（setChatExpandedNodeId 触发顶层 ChatExpandedOverlay）、sending 过渡（仅 work）；props: `{ mode: 'study'|'work', onAsk?: (q: string) => void }`
+│   ├── ChatHome.tsx         #   对话首页瀑布流主体组件（交互增强版）：study/work 双模式推荐卡片瀑布流 + 居中输入框 + sending 过渡；4 项交互增强：卡片飞入（由 node.id 哈希 seed 推导可复现的 delay/duration/x/y/rot，不用 Math.random，刷新/录屏一致）、滚轮覆盖（瀑布流上移盖住输入框 + 输入框渐进模糊用 requestAnimationFrame 节流，直接写 --input-blur CSS 变量不经 useState 重渲染）、点击展开（setChatExpandedNodeId 触发顶层 ChatExpandedOverlay）、sending 过渡（仅 work，含 prefers-reduced-motion 降级、sendTimerRef 防组件卸载后回调泄漏）；输入框补全 id/name/autoComplete/aria-label 可访问性属性；props: `{ mode: 'study'|'work', onAsk?: (q: string) => void }`
 │   ├── ChatPanel.tsx        #   多轮对话面板（Task 9 / Task 10，Study/Work 统一）
 │   ├── ContentToolbar.tsx   #   内容区顶栏：视图切换 / 重新布局 / 撤销延伸 / 开始测验
 │   ├── GraphList.tsx        #   左侧图谱列表：新建 / 重命名 / 删除 / 选中

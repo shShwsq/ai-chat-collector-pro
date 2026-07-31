@@ -540,7 +540,20 @@ function AppearanceSection() {
               onClick={() => setTheme(item.id)}
               aria-pressed={active}
             >
-              <span className="appearance-item__swatch" data-theme-swatch={item.id} />
+              <span className="appearance-item__preview" data-theme-preview={item.id} aria-hidden="true">
+                <span className="appearance-item__preview-rail" />
+                <span className="appearance-item__preview-main">
+                  <span className="appearance-item__preview-line" />
+                  <span className="appearance-item__preview-card">
+                    <span />
+                    <span />
+                  </span>
+                  <span className="appearance-item__preview-accents">
+                    <i />
+                    <i />
+                  </span>
+                </span>
+              </span>
               <span className="appearance-item__info">
                 <span className="appearance-item__label">{item.label}</span>
                 <span className="appearance-item__desc">{item.description}</span>

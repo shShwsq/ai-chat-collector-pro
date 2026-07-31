@@ -40,9 +40,13 @@ styles/
 |  | `--radius-sm` | `6px` | 按钮 / 输入框 / chip |
 |  | `--radius-md` | `8px` | 卡片 / toast / 列表项 |
 |  | `--radius-lg` | `12px` | 模态弹窗 / 大型容器 |
-| **过渡** | `--ease` | `cubic-bezier(0.4, 0, 0.2, 1)` | 统一缓动 |
-|  | `--transition-fast` | `160ms var(--ease)` | 即时反馈：hover / focus / 描边色变化 |
-|  | `--transition-base` | `220ms var(--ease)` | 结构性变化：chip 模式切换 / toast 进场 |
+| **过渡** | `--ease` | `cubic-bezier(0.2, 0, 0, 1)` | 统一缓动（更快的 Material 3 风格 ease） |
+|  | `--motion-fast` | `160ms` | 即时反馈微动画：hover / focus / 描边色变化 |
+|  | `--motion-panel` | `220ms` | 结构性变化：chip 模式切换 / toast 进场 / 卡片切换 |
+|  | `--motion-expand` | `340ms` | 展开 / 收缩 / 大尺寸面板过渡 |
+|  | `--transition-fast` | `160ms var(--ease)` | 旧名保留：即时反馈过渡（与 `--motion-fast` 同时长） |
+|  | `--transition-base` | `220ms var(--ease)` | 旧名保留：结构性变化过渡（与 `--motion-panel` 同时长） |
+| **焦点可访问性** | `--focus-ring` | `0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent)` | `:focus-visible` 全局焦点轮廓偏移量 |
 
 #### 模式切换（`.app-shell[data-mode="..."]`）
 

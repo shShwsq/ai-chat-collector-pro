@@ -486,15 +486,26 @@ JSON 注意事项：
     // 按 convId 分组，同对话的多 chunk 命中合并处理
     const convMap = new Map(); // convId -> { bestScore, msgHashes: Set }
     for (const r of searchResults) {
-      if (!r.convId) continue;
+      if (!r.convId) {
+        console.warn('[AIAssistant] 检索命中缺少 convId，已跳过:', r.storageId || r.id || '(未知 ID)');
+        continue;
+      }
       const parsed = this._parseEmbId(r.id);
-      const msgHash = parsed?.msgHash || '';
+      if (!parsed || parsed.chunkIdx < 0 || !parsed.msgHash) {
+        console.warn('[AIAssistant] 检索命中无法映射到原始 chunk，已跳过:', {
+          convId: r.convId,
+          id: r.id || '',
+          storageId: r.storageId || ''
+        });
+        continue;
+      }
+      const msgHash = parsed.msgHash;
       if (!convMap.has(r.convId)) {
-        convMap.set(r.convId, { bestScore: r.score || 0, msgHashes: new Set() });
+        convMap.set(r.convId, { bestScore: r.score || 0, msgHashes: new Set([msgHash]) });
       } else {
         const entry = convMap.get(r.convId);
         entry.bestScore = Math.max(entry.bestScore, r.score || 0);
-        if (msgHash) entry.msgHashes.add(msgHash);
+        entry.msgHashes.add(msgHash);
       }
     }
 
@@ -553,20 +564,11 @@ JSON 注意事项：
             addedCount++;
           }
         } else {
-          // 回退路径：msgHash 未匹配上（老数据或 hash 缺失），遍历整对话
-          for (const msg of messages) {
-            if (charCount >= maxCharsPerConv) {
-              contextText += '...（内容过长，已截断）\n';
-              break;
-            }
-            const role = msg.role === 'user' ? '用户' : '助手';
-            const filtered = EmbeddingService.filterContentForEmbedding(msg.content || '');
-            if (!filtered) continue;
-            const content = filtered.substring(0, 500);
-            contextText += `[${role}]: ${content}\n`;
-            charCount += content.length;
-            addedCount++;
-          }
+          // 不允许把无法验证的命中静默扩大为整段对话，避免无关内容污染 RAG。
+          console.warn('[AIAssistant] 原始 chunk 对应消息不存在，已跳过对话:', {
+            convId,
+            msgHashes: [...info.msgHashes]
+          });
         }
 
         if (addedCount > 0) {

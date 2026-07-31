@@ -1228,98 +1228,74 @@ class MainAgent:
             )
             messages.append(assistant_tool_msg)
 
-            # 逐个执行工具并回填结果
+            # ---- 执行工具调用（支持并行，SubTask 并行改造）----
+            # 依赖分析：args 含 $prev / ${...} 占位符 → 串行；
+            # 高风险工具 → 串行（需 WS 确认）；其余默认并行。
+            force_serial = False
             for tc in pending_tool_calls:
-                if self._cancel_event.is_set():
+                if tc.get("name", "") in HIGH_RISK_TOOLS:
+                    force_serial = True
+                    break
+                _preview = self._parse_tool_call_args(tc.get("arguments", ""))
+                _raw = json.dumps(_preview, ensure_ascii=False, default=str)
+                if "$prev" in _raw or "${" in _raw:
+                    force_serial = True
                     break
 
-                tool_name = tc.get("name", "")
-                tool_call_id = tc.get("id", "")
-                raw_args = tc.get("arguments", "")
-
-                try:
-                    args = json.loads(raw_args) if raw_args else {}
-                except json.JSONDecodeError:
-                    args = {}
-
-                # 通知前端即将执行工具
-                yield {
-                    "type": "tool_call",
-                    "id": tool_call_id,
-                    "tool": tool_name,
-                    "args": args,
-                }
-                # 记录到累积列表（持久化用，status 先标记 pending）
-                assistant_tool_calls.append({
-                    "id": tool_call_id,
-                    "tool": tool_name,
-                    "args": args,
-                    "status": "pending",
-                })
-
-                # ---- 高风险工具拦截（SubTask 5.4）----
-                if tool_name in HIGH_RISK_TOOLS:
-                    result = await self._intercept_high_risk_tool(
-                        tool_name=tool_name,
-                        args=args,
-                        tool_mode=eff_tool_mode,
-                        graph_id=eff_graph_id,
+            if force_serial:
+                # 串行执行（保持原顺序；高风险工具逐个 WS 确认）
+                for tc in pending_tool_calls:
+                    if self._cancel_event.is_set():
+                        break
+                    result, tc_event = await self._execute_tool_call(
+                        tc, eff_tool_mode, eff_graph_id
                     )
-                else:
-                    # ---- 普通工具执行 ----
-                    is_mcp = tool_name.startswith(MCP_PREFIX)
-                    allowed = (
-                        mcp_manager.has_tool(tool_name)
-                        if is_mcp
-                        else self.tool_registry.is_tool_allowed(tool_name, eff_tool_mode)
-                    )
-                    if not allowed:
-                        result = {
-                            "status": "error",
-                            "message": f"工具 {tool_name} 在 {eff_tool_mode} 模式下不可用",
-                        }
-                    elif is_mcp:
-                        result = await mcp_manager.call_tool(tool_name, args)
-                    else:
-                        result = await self.tool_registry.execute(
-                            tool_name, args, mode=eff_tool_mode
-                        )
-
-                yield {
-                    "type": "tool_result",
-                    "tool": tool_name,
-                    "result": result,
-                }
-                # 更新累积列表中对应工具调用的状态与结果（持久化用）
-                if assistant_tool_calls:
-                    # 找到最后一个同 id 且 pending 的条目更新
-                    for idx in range(len(assistant_tool_calls) - 1, -1, -1):
-                        tc_entry = assistant_tool_calls[idx]
-                        if (
-                            tc_entry.get("id") == tool_call_id
-                            and tc_entry.get("status") == "pending"
-                        ):
-                            status = (
-                                "error"
-                                if isinstance(result, dict)
-                                and result.get("status") == "error"
-                                else "done"
-                            )
-                            tc_entry["status"] = status
-                            tc_entry["result"] = result
-                            break
-
-                # 回填 tool 角色消息
-                # 使用 default=str 兜底：工具结果可能包含 datetime / UUID /
-                # ORM 对象等非 JSON 原生类型，避免序列化失败抛 TypeError 中断
-                # 整个 chat_stream（导致 assistant 消息无法保存）。
-                messages.append(
-                    {
+                    tool_call_id = tc_event["id"]
+                    tool_name = tc_event["tool"]
+                    yield tc_event
+                    assistant_tool_calls.append({
+                        "id": tool_call_id,
+                        "tool": tool_name,
+                        "args": tc_event["args"],
+                        "status": "pending",
+                    })
+                    yield {"type": "tool_result", "tool": tool_name, "result": result}
+                    self._mark_tool_call_status(assistant_tool_calls, tool_call_id, result)
+                    # 回填 tool 角色消息（default=str 兜底非 JSON 原生类型）
+                    messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call_id,
                         "content": json.dumps(result, ensure_ascii=False, default=str),
-                    }
-                )
+                    })
+            else:
+                # 并行执行（无依赖且无高风险）
+                if not self._cancel_event.is_set():
+                    coros = [
+                        self._execute_tool_call(tc, eff_tool_mode, eff_graph_id)
+                        for tc in pending_tool_calls
+                    ]
+                    pairs = await asyncio.gather(*coros)
+                    # 按原顺序产出事件与回填 tool 消息
+                    # （顺序须与 assistant 消息中 tool_calls 一致）
+                    for result, tc_event in pairs:
+                        tool_call_id = tc_event["id"]
+                        tool_name = tc_event["tool"]
+                        yield tc_event
+                        assistant_tool_calls.append({
+                            "id": tool_call_id,
+                            "tool": tool_name,
+                            "args": tc_event["args"],
+                            "status": "pending",
+                        })
+                        yield {"type": "tool_result", "tool": tool_name, "result": result}
+                        self._mark_tool_call_status(
+                            assistant_tool_calls, tool_call_id, result
+                        )
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "content": json.dumps(result, ensure_ascii=False, default=str),
+                        })
 
             if self._cancel_event.is_set():
                 await self._save_assistant_message(
@@ -1437,6 +1413,210 @@ class MainAgent:
         return await self.tool_registry.execute(
             tool_name, effective_args, mode=tool_mode
         )
+
+    # ==================================================================
+    # 内部：工具调用解析 / 重试 / 分发（SubTask 重试 + 并行改造）
+    # ==================================================================
+
+    def _parse_tool_call_args(self, raw_args: str) -> dict[str, Any]:
+        """解析工具调用参数 JSON，带多级修复尝试。
+
+        修复顺序：
+        1. 直接 ``json.loads``；
+        2. 移除 markdown 代码块包装（```json ... ```）后解析；
+        3. 正则提取首个 JSON 对象（``{...}``）后解析；
+        4. ``json.loads(raw_args, strict=False)`` 容忍控制字符；
+        5. 全部失败返回空 dict 并记录 warning（含原始 raw_args 前 200 字符）。
+
+        Args:
+            raw_args: LLM 返回的 arguments 字符串（可能为空 / 含 markdown
+                包装 / 含控制字符 / 截断）。
+
+        Returns:
+            解析后的参数 dict。
+        """
+        if not raw_args:
+            return {}
+        # 1. 直接解析
+        try:
+            return json.loads(raw_args)
+        except json.JSONDecodeError:
+            pass
+        # 2. 移除 markdown 代码块包装
+        stripped = re.sub(r"^```(?:json)?\s*", "", raw_args.strip(), flags=re.IGNORECASE)
+        stripped = re.sub(r"\s*```$", "", stripped).strip()
+        if stripped and stripped != raw_args.strip():
+            try:
+                return json.loads(stripped)
+            except json.JSONDecodeError:
+                pass
+        # 3. 提取首个 JSON 对象
+        match = re.search(r"\{.*\}", raw_args, flags=re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except json.JSONDecodeError:
+                pass
+        # 4. strict=False 容忍控制字符
+        try:
+            return json.loads(raw_args, strict=False)
+        except json.JSONDecodeError:
+            pass
+        # 5. 全部失败
+        logger.warning(
+            "工具参数 JSON 解析失败，使用空 dict。raw_args 前 200 字符: %r",
+            raw_args[:200],
+        )
+        return {}
+
+    async def _execute_tool_with_retry(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+        mode: str,
+        max_retries: int = 2,
+    ) -> dict[str, Any]:
+        """执行普通工具，对瞬时失败重试。
+
+        瞬时失败判定：返回 ``{"status": "error", "message": ...}`` 且 message 含
+        ``timeout`` / ``temporarily`` / ``connection`` / ``EOF`` 之一。
+
+        - 最多重试 ``max_retries`` 次，每次间隔 0.5s（``asyncio.sleep``）。
+        - 非瞬时失败（参数错误 / 权限拒绝 / 资源不存在）不重试，直接返回。
+        - 高风险工具不在此处重试（由 ``_intercept_high_risk_tool`` 单独处理）。
+        - MCP 工具不在此处重试（可能涉及外部状态）。
+        - 注入 ``_scenario`` 供 skill_* 等需要场景感知的工具使用。
+
+        Args:
+            tool_name: 工具名（非高风险、非 MCP）。
+            args: 调用参数。
+            mode: 工具模式（plan/build）。
+            max_retries: 最大重试次数（默认 2）。
+
+        Returns:
+            工具执行结果 dict。
+        """
+        # 注入 _scenario（供 skill_list 等工具读取当前场景）
+        call_args = dict(args or {})
+        if "_scenario" not in call_args:
+            call_args["_scenario"] = self.scenario_mode
+        transient_markers = ("timeout", "temporarily", "connection", "EOF")
+        last_result: dict[str, Any] = {}
+        for attempt in range(max_retries + 1):
+            result = await self.tool_registry.execute(tool_name, call_args, mode=mode)
+            last_result = (
+                result if isinstance(result, dict) else {"status": "ok", "result": result}
+            )
+            if last_result.get("status") == "error":
+                msg = str(last_result.get("message", ""))
+                if any(m in msg for m in transient_markers) and attempt < max_retries:
+                    logger.info(
+                        "工具 %s 瞬时失败(第 %d/%d 次)，0.5s 后重试: %s",
+                        tool_name,
+                        attempt + 1,
+                        max_retries,
+                        msg[:120],
+                    )
+                    await asyncio.sleep(0.5)
+                    continue
+            # 成功 / 非瞬时失败 / 重试耗尽
+            if attempt > 0:
+                logger.info(
+                    "工具 %s 重试后最终状态: %s (重试 %d 次)",
+                    tool_name,
+                    last_result.get("status"),
+                    attempt,
+                )
+            return last_result
+        return last_result
+
+    async def _execute_tool_call(
+        self,
+        tc: dict[str, Any],
+        eff_tool_mode: str,
+        eff_graph_id: str | None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """执行单个工具调用，返回 ``(结果, tool_call 事件)``。
+
+        解析参数 → 构造 tool_call 事件 → 按工具类型分发执行：
+        - 高风险工具：``_intercept_high_risk_tool``（WS 确认）；
+        - MCP 工具：``mcp_manager.call_tool``（不重试，可能涉及外部状态）；
+        - 普通工具：``_execute_tool_with_retry``（瞬时失败重试 + _scenario 注入）。
+
+        Args:
+            tc: 工具调用事件 dict（含 id / name / arguments）。
+            eff_tool_mode: 工具模式（plan/build）。
+            eff_graph_id: 图谱 ID（高风险拦截 WS 推送时附带）。
+
+        Returns:
+            ``(result, tool_call_event)`` 元组。``tool_call_event`` 形如
+            ``{"type": "tool_call", "id", "tool", "args"}``。
+        """
+        tool_name = tc.get("name", "")
+        tool_call_id = tc.get("id", "")
+        args = self._parse_tool_call_args(tc.get("arguments", ""))
+        tool_call_event = {
+            "type": "tool_call",
+            "id": tool_call_id,
+            "tool": tool_name,
+            "args": args,
+        }
+
+        # 高风险工具拦截
+        if tool_name in HIGH_RISK_TOOLS:
+            result = await self._intercept_high_risk_tool(
+                tool_name=tool_name,
+                args=args,
+                tool_mode=eff_tool_mode,
+                graph_id=eff_graph_id,
+            )
+            return result, tool_call_event
+
+        # 普通工具（本地 / MCP）
+        is_mcp = tool_name.startswith(MCP_PREFIX)
+        allowed = (
+            mcp_manager.has_tool(tool_name)
+            if is_mcp
+            else self.tool_registry.is_tool_allowed(tool_name, eff_tool_mode)
+        )
+        if not allowed:
+            result = {
+                "status": "error",
+                "message": f"工具 {tool_name} 在 {eff_tool_mode} 模式下不可用",
+            }
+        elif is_mcp:
+            # MCP 工具暂不重试（可能涉及外部状态）
+            result = await mcp_manager.call_tool(tool_name, args)
+        else:
+            result = await self._execute_tool_with_retry(
+                tool_name, args, mode=eff_tool_mode
+            )
+        return result, tool_call_event
+
+    @staticmethod
+    def _mark_tool_call_status(
+        assistant_tool_calls: list[dict[str, Any]],
+        tool_call_id: str,
+        result: dict[str, Any],
+    ) -> None:
+        """更新累积列表中对应工具调用的状态与结果（持久化用）。
+
+        找到最后一个同 id 且 pending 的条目，标记为 done / error 并写入 result。
+        """
+        for idx in range(len(assistant_tool_calls) - 1, -1, -1):
+            tc_entry = assistant_tool_calls[idx]
+            if (
+                tc_entry.get("id") == tool_call_id
+                and tc_entry.get("status") == "pending"
+            ):
+                status = (
+                    "error"
+                    if isinstance(result, dict) and result.get("status") == "error"
+                    else "done"
+                )
+                tc_entry["status"] = status
+                tc_entry["result"] = result
+                break
 
     @staticmethod
     def _build_assistant_tool_call_message(

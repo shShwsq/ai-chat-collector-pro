@@ -37,6 +37,7 @@ export function ChatExpandedOverlay(_props: ChatExpandedOverlayProps) {
   const [isClosing, setIsClosing] = useState(false)
   const [isTransitioning, setIsTransitioning] = useState(false)
   const [contentVisible, setContentVisible] = useState(false)
+  const contentTimerRef = useRef<number | null>(null)
 
   const isOpen = chatExpandedNodeId !== null
 
@@ -52,6 +53,7 @@ export function ChatExpandedOverlay(_props: ChatExpandedOverlayProps) {
   const errorRate = recItem?.error_rate
 
   useLayoutEffect(() => {
+    if (contentTimerRef.current) window.clearTimeout(contentTimerRef.current)
     if (!isOpen) {
       setIsPlaying(false)
       setIsClosing(false)
@@ -85,7 +87,7 @@ export function ChatExpandedOverlay(_props: ChatExpandedOverlayProps) {
     if (!cardRef.current || !originRef.current) {
       requestAnimationFrame(() => {
         setIsPlaying(true)
-        setTimeout(() => setContentVisible(true), 200)
+        contentTimerRef.current = window.setTimeout(() => setContentVisible(true), 200)
       })
       return
     }
@@ -112,9 +114,12 @@ export function ChatExpandedOverlay(_props: ChatExpandedOverlayProps) {
         setIsPlaying(true)
         card.style.setProperty('--flip-rot', '0deg')
         // 内容延迟淡入
-        setTimeout(() => setContentVisible(true), 150)
+        contentTimerRef.current = window.setTimeout(() => setContentVisible(true), 150)
       })
     })
+    return () => {
+      if (contentTimerRef.current) window.clearTimeout(contentTimerRef.current)
+    }
   }, [isOpen, chatExpandedNodeId])
 
   const handleClose = () => {
@@ -140,7 +145,8 @@ export function ChatExpandedOverlay(_props: ChatExpandedOverlayProps) {
       card.style.setProperty('--flip-rot', '5deg')
     }
 
-    window.setTimeout(() => {
+    if (contentTimerRef.current) window.clearTimeout(contentTimerRef.current)
+    contentTimerRef.current = window.setTimeout(() => {
       setChatExpandedNodeId(null)
     }, 400)
   }

@@ -49,7 +49,8 @@ from app.models.db_models import Session as SessionRow
 from app.services.llm_factory import get_llm_client
 from app.services.llm_request_registry import llm_request_registry
 from app.services.main_agent import MainAgent, resolve_tool_confirmation
-from app.services.ws_notify import notify_session
+from app.services.task_registry import background_tasks
+from app.services.ws_notify import is_session_online, notify_session
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,11 @@ _chat_tasks: dict[str, asyncio.Task[None]] = {}
 
 #: request_id -> session_id 映射（用于 cancel 端点定位 MainAgent）
 _request_sessions: dict[str, str] = {}
+
+# 同一 chat session 的 MainAgent 含有可变的模式与取消状态，同一时间只允许
+# 一个流式请求占用它。这里仅记录正在运行的 request，不把请求排队到未知时长。
+_session_active_requests: dict[str, str] = {}
+_session_admission_lock = asyncio.Lock()
 
 
 # ============================================================================
@@ -130,7 +136,8 @@ async def _get_or_create_session_agent(session: SessionRow) -> MainAgent:
             # LLM 未配置时保留旧 client（chat_stream 调用时会报错）
             pass
         # 同步 mode / graph_id / plan_mode 到实例（用户可能切换图谱或 Plan/Build）
-        await cached.switch_scenario_mode(session.mode if session.mode in ("study", "work") else "work")
+        scenario_mode = session.mode if session.mode in ("study", "work") else "work"
+        await cached.switch_scenario_mode(scenario_mode)
         cached.set_graph_id(session.graph_id)
         return cached
 
@@ -187,6 +194,7 @@ async def _run_chat_stream(
     """
     full_text_parts: list[str] = []
     seq = 0
+    failed = False
 
     # 标记 LLM 请求为 running
     await llm_request_registry.update(request_id, "running")
@@ -208,6 +216,9 @@ async def _run_chat_stream(
         await llm_request_registry.update(request_id, "failed", error=message)
         _chat_tasks.pop(request_id, None)
         _request_sessions.pop(request_id, None)
+        async with _session_admission_lock:
+            if _session_active_requests.get(session_id) == request_id:
+                _session_active_requests.pop(session_id, None)
         return
 
     try:
@@ -302,6 +313,7 @@ async def _run_chat_stream(
 
             elif etype == "error":
                 message = _friendly_error_message(event.get("message", "未知错误"))
+                failed = True
                 await _push_ws(
                     ws_session_id,
                     {
@@ -343,7 +355,8 @@ async def _run_chat_stream(
                             "full_text": full_text,
                         },
                     )
-                    await llm_request_registry.update(request_id, "completed")
+                    if not failed:
+                        await llm_request_registry.update(request_id, "completed")
                 return
 
     except asyncio.CancelledError:
@@ -380,6 +393,9 @@ async def _run_chat_stream(
     finally:
         _chat_tasks.pop(request_id, None)
         _request_sessions.pop(request_id, None)
+        async with _session_admission_lock:
+            if _session_active_requests.get(session_id) == request_id:
+                _session_active_requests.pop(session_id, None)
 
 
 def _friendly_error_message(raw: str) -> str:
@@ -684,7 +700,8 @@ async def stream_chat(
     - ``graph_agent_token``：每个 token（含 ``content``、``seq``）
     - ``chat_tool_call``：工具调用开始（含 ``tool``、``args``）
     - ``chat_tool_result``：工具执行结果（含 ``tool``、``result``）
-    - ``chat_tool_call_confirmation``：高风险工具确认请求（含 ``tool``、``args``、``request_id``、``timeout``）
+    - ``chat_tool_call_confirmation``：高风险工具确认请求
+      （含 ``tool``、``args``、``request_id``、``timeout``）
     - ``graph_agent_done``：流式完成（含 ``full_text``）
     - ``graph_agent_cancelled``：被外部取消
     - ``graph_agent_error``：失败（含 ``message``）
@@ -693,12 +710,23 @@ async def stream_chat(
     if session is None:
         raise _not_found(f"会话不存在: {session_id}")
 
+    if not await is_session_online(body.session_id):
+        raise HTTPException(status_code=409, detail="WebSocket 会话未连接，请先建立连接")
+
+    async with _session_admission_lock:
+        active_request_id = _session_active_requests.get(session_id)
+        if active_request_id is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"该聊天会话已有流式请求运行中: {active_request_id}",
+            )
+
     # 获取或创建会话级 MainAgent
     agent = await _get_or_create_session_agent(session)
 
-    # 应用 per-call Plan/Build 模式覆盖
+    # 应用 per-call Plan/Build 模式覆盖；占用标记在创建任务前写入，避免两个
+    # 并发请求都通过预检后同时修改同一个 MainAgent。
     effective_plan_mode = body.plan_mode if body.plan_mode is not None else agent.plan_mode
-    await agent.switch_plan_mode(effective_plan_mode)
 
     # 注册 LLM 请求（便于前端管理面板展示与取消）
     request_id = await llm_request_registry.register(
@@ -711,20 +739,38 @@ async def stream_chat(
         },
     )
 
-    # 启动后台流式任务
-    # body.session_id 是前端 WebSocket 连接的 session_id，WS 事件必须推送到此 ID
-    task = asyncio.create_task(
-        _run_chat_stream(
-            agent=agent,
-            session_id=session_id,
-            ws_session_id=body.session_id,
+    async with _session_admission_lock:
+        if session_id in _session_active_requests:
+            await llm_request_registry.cancel(request_id)
+            raise HTTPException(status_code=409, detail="该聊天会话已有流式请求运行中")
+        _session_active_requests[session_id] = request_id
+
+    try:
+        await agent.switch_plan_mode(effective_plan_mode)
+
+        # 启动后台流式任务
+        # body.session_id 是前端 WebSocket 连接的 session_id，WS 事件必须推送到此 ID
+        task = background_tasks.create_task(
+            _run_chat_stream(
+                agent=agent,
+                session_id=session_id,
+                ws_session_id=body.session_id,
+                request_id=request_id,
+                user_message=body.content,
+                plan_mode=effective_plan_mode,
+                graph_id=session.graph_id,
+                mode=session.mode if session.mode in ("study", "work") else "work",
+            ),
             request_id=request_id,
-            user_message=body.content,
-            plan_mode=effective_plan_mode,
-            graph_id=session.graph_id,
-            mode=session.mode if session.mode in ("study", "work") else "work",
+            session_id=session_id,
+            op="chat",
         )
-    )
+    except Exception:
+        await llm_request_registry.cancel(request_id)
+        async with _session_admission_lock:
+            if _session_active_requests.get(session_id) == request_id:
+                _session_active_requests.pop(session_id, None)
+        raise
     _chat_tasks[request_id] = task
     _request_sessions[request_id] = session_id
 
@@ -880,7 +926,12 @@ async def cancel_chat(request_id: str) -> CancelResponse:
     if agent is not None:
         agent.cancel()
         # 异步等待退出（不阻塞 HTTP 响应）
-        asyncio.create_task(agent.cancel_and_wait(timeout=5.0))
+        background_tasks.create_task(
+            agent.cancel_and_wait(timeout=5.0),
+            request_id=request_id,
+            session_id=session_id,
+            op="chat-cancel-wait",
+        )
 
     return CancelResponse(ok=True, request_id=request_id)
 

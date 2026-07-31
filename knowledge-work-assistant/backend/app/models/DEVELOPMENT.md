@@ -56,8 +56,8 @@ models/
 |------|------|---------|
 | `graphs` | 知识图谱主表 | `id` / `name` / `type`（`study` / `work`）/ `created_at` / `updated_at`；`nodes` / `edges` / `quizzes` 反向关系（CASCADE） |
 | `nodes` | 图谱节点 | `id` / `graph_id`（CASCADE）/ `type`（学科或工作对象枚举）/ `title` / `summary` / `detail_payload`（JSON）/ `is_gray` / `user_fill`（JSON）/ `source` / `confidence` / 智能推荐 5 列（`last_reviewed_at` / `review_count` / `mention_count` / `remind_at` / `is_starred`）/ `created_at` / `updated_at` |
-| `edges` | 图谱无向边 | `id` / `graph_id`（CASCADE）/ `src_id`（CASCADE）/ `dst_id`（CASCADE）/ `relation` / `created_at` |
-| `observations` | 原始观察 / 对话记录 | `id` / `platform` / `occurred_at` / `conversation_markdown` / `metadata_json` / `source`（`plugin` / `import` / `manual`）/ `graph_id`（SET NULL）/ `processed` / `created_at` |
+| `edges` | 图谱无向边 | `id` / `graph_id`（CASCADE）/ `src_id`（CASCADE）/ `dst_id`（CASCADE）/ `relation` / `created_at`；**`(graph_id, src_id, dst_id, relation)` 联合唯一索引**，写入前 GraphStore 会把 `src_id/dst_id` 按字典序排序归一，保证同一条无向边不会正反各存一条；迁移会去重历史重复边后再建索引 |
+| `observations` | 原始观察 / 对话记录 | `id` / `platform` / `occurred_at` / `conversation_markdown` / `metadata_json` / **`dedup_key`（VARCHAR(512) 唯一可空，`platform:conversation_id` 组合键，迁移从 `metadata_json._dedup_key` 回填并去重）** / `source`（`plugin` / `import` / `manual`）/ `graph_id`（SET NULL）/ `processed` / `created_at` |
 | `quizzes` | 测验记录 | `id` / `graph_id`（CASCADE）/ `node_id`（CASCADE）/ `type`（`single_choice` / `multi_choice` / `feynman`）/ `payload`（JSON）/ `answer` / `result`（JSON）/ `answered` / `created_at` / `answered_at` |
 
 **FTS5 虚拟表**（在 `app/db.init_db` 中用 raw SQL 创建，不在 ORM 中声明）：
@@ -69,6 +69,10 @@ models/
 **迁移函数**：
 - `migrate_node_columns(engine)`：幂等检查 `nodes` 表的 5 个智能推荐列，缺失则 `ALTER TABLE nodes ADD COLUMN ...`；多次执行不报错。`_NODE_MIGRATION_COLUMNS` 列表登记需迁移的列名与 SQLite DDL 类型。
 - `migrate_session_columns(engine)`：与 `migrate_node_columns` 同模式，幂等检查 `sessions` 表的 `mode` / `graph_id` 两列（Task 8 chat 路由用），缺失则 `ALTER TABLE sessions ADD COLUMN ...`；多次执行不报错。`_SESSION_MIGRATION_COLUMNS = [("mode", "TEXT NOT NULL DEFAULT 'work'"), ("graph_id", "TEXT")]` 列表登记需迁移的列名与 SQLite DDL 类型。
+- **`app.db._migrate_add_columns(conn)`（启动时自动执行）**：在 `init_db → Base.metadata.create_all` 之后、`_create_fts5` 之前调用，额外处理 3 类轻量迁移（不依赖 ORM 声明，直接 DDL）：
+  1. `messages` 表追加 `tool_calls`（JSON 数组，默认 `'[]'`）与 `thinking`（助手思考文本，默认 `''`）两列；
+  2. `observations` 表追加 `dedup_key VARCHAR(512)` → 从 `metadata_json._dedup_key` 回填历史值 → 去重重复键（保留最早创建记录，其余置 NULL）→ 建 `uq_observations_dedup_key` 部分唯一索引（NULL 不冲突）；
+  3. `edges` 表归一化：删除旧唯一索引 → 翻转 `src_id/dst_id`（`src_id > dst_id` 的行交换两端）→ 按 `(graph_id, src_id, dst_id, relation)` 去重（保留最小 `id`）→ 重建同名唯一索引，与 ORM `__table_args__` 声明对齐。
 
 ### `node_types.py`：节点类型与模板
 

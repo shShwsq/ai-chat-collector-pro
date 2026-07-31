@@ -30,6 +30,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.exc import IntegrityError
 
 from app.models.node_types import OBSERVATION_SOURCE_PLUGIN
 from app.models.schemas import (
@@ -209,6 +210,23 @@ async def push_conversation(
             occurred_at=occurred_at,
             metadata=merged_metadata,
             graph_id=None,
+            dedup_key=dedup_key,
+        )
+    except IntegrityError as exc:
+        # 并发请求可能同时通过预检查，唯一索引是最终幂等裁决。
+        if dedup_key is None:
+            raise HTTPException(
+                status_code=503, detail="数据库写入冲突，请稍后重试"
+            ) from exc
+        existing = await store.find_observation_by_dedup_key(
+            dedup_key, within_hours=_DEDUP_WITHIN_HOURS
+        )
+        if existing is None:
+            raise HTTPException(
+                status_code=503, detail="数据库写入冲突，请稍后重试"
+            ) from exc
+        return PluginConversationResponse(
+            received=True, deduplicated=True, observation_id=existing["id"]
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

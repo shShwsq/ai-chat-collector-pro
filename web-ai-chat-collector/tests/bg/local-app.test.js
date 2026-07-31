@@ -46,6 +46,12 @@ describe('_buildRequestBody', () => {
     expect(body.platform).toBe('qwen');
   });
 
+  it('platform 契约：yuanbao → yuanbao（不得被降级为 custom）', () => {
+    const conv = { id: 'c1', platform: 'yuanbao', updatedAt: '2025-01-01T00:00:00Z', messages: [] };
+    const body = lib._buildRequestBody(conv);
+    expect(body.platform).toBe('yuanbao');
+  });
+
   it('platform 映射：未知平台 → custom（后端兜底白名单）', () => {
     const conv = { id: 'c1', platform: 'unknown-xyz', updatedAt: '2025-01-01T00:00:00Z', messages: [] };
     const body = lib._buildRequestBody(conv);

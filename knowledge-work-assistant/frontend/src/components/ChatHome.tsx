@@ -23,7 +23,7 @@
  * 控制哪张卡片处于展开态（null = 无）。
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { useAppStore } from '../store/useAppStore'
 import type { RecommendationItem } from '../lib/types'
@@ -56,12 +56,11 @@ export function ChatHome({ mode, onAsk }: ChatHomeProps) {
   const [phase, setPhase] = useState<Phase>('idle')
   /** sending 时输入框下移距离（px），由提交时测量视口算出。 */
   const [slideY, setSlideY] = useState(0)
-  /** 输入框高斯模糊量（px），随瀑布流滚动渐增。 */
-  const [inputBlur, setInputBlur] = useState(0)
-
   // ===== refs =====
+  const homeRef = useRef<HTMLDivElement>(null)
   const inputWrapRef = useRef<HTMLDivElement>(null)
   const firstOverdueRef = useRef<HTMLDivElement>(null)
+  const sendTimerRef = useRef<number | null>(null)
 
   // ===== 挂载时按需加载推荐 =====
   useEffect(() => {
@@ -85,20 +84,25 @@ export function ChatHome({ mode, onAsk }: ChatHomeProps) {
   useEffect(() => {
     const panel = inputWrapRef.current?.closest<HTMLElement>('.chat-panel')
     if (!panel) return
-    const handleScroll = () => {
-      const st = panel.scrollTop
-      // 从滑动一开始就渐变模糊，当卡片完全盖住输入框时达到最大 8px
-      // coverDistance = 输入框区域高度（瀑布流需要上移这么多才能完全覆盖输入框）
+    let frame = 0
+    const updateBlur = () => {
+      frame = 0
       const coverDistance = inputWrapRef.current?.offsetHeight ?? 100
-      const blur = Math.min(st / coverDistance * 8, 8)
-      setInputBlur(blur)
+      const blur = Math.min((panel.scrollTop / coverDistance) * 8, 8)
+      homeRef.current?.style.setProperty('--input-blur', `${blur}px`)
+    }
+    const handleScroll = () => {
+      if (!frame) frame = window.requestAnimationFrame(updateBlur)
     }
     panel.addEventListener('scroll', handleScroll, { passive: true })
-    handleScroll()
-    return () => panel.removeEventListener('scroll', handleScroll)
+    updateBlur()
+    return () => {
+      panel.removeEventListener('scroll', handleScroll)
+      if (frame) window.cancelAnimationFrame(frame)
+    }
   }, [])
 
-  // ===== 卡片飞入动画配置（行间有序：第一排先到、第二排后到；列间随机：抖动）=====
+  // ===== 卡片飞入动画配置（由稳定 id 推导，保证刷新与录屏可复现）=====
   const enterConfig = useMemo(() => {
     const map = new Map<string, { delay: number; duration: number; x: number; y: number; rot: number }>()
     // 估算列数：与 CSS auto-fill minmax(260px, 1fr) 对齐
@@ -108,60 +112,51 @@ export function ChatHome({ mode, onAsk }: ChatHomeProps) {
     )
     const cols = Math.max(1, Math.floor((containerW + 16) / (260 + 16)))
     recommendations.forEach((item, i) => {
+      let seed = 0
+      for (const char of item.node.id) seed = (seed * 31 + char.charCodeAt(0)) >>> 0
+      const unit = (shift: number) => ((seed >>> shift) & 0xff) / 255
       const row = Math.floor(i / cols)
-      // 行间有序：每行基础延迟 120ms
-      const rowBase = row * 120
-      // 列内/列间小抖动 ±40ms
-      const jitter = (Math.random() - 0.5) * 80
-      const delay = rowBase + jitter
-      // 持续时长 450~850ms
-      const duration = 450 + Math.random() * 400
-      // 起始位置随机：X ±30px、Y 60~140px
-      const x = (Math.random() - 0.5) * 60
-      const y = 60 + Math.random() * 80
-      // 起始旋转 ±5deg
-      const rot = (Math.random() - 0.5) * 10
+      const delay = Math.max(0, row * 90 + (unit(0) - 0.5) * 50)
+      const duration = 300 + unit(8) * 60
+      const x = (unit(16) - 0.5) * 24
+      const y = 28 + unit(4) * 24
+      const rot = (unit(12) - 0.5) * 3
       map.set(item.node.id, { delay, duration, x, y, rot })
     })
     return map
   }, [recommendations])
 
   // ===== 输入框回车提交（两种模式都发送对话） =====
+  const submitQuestion = useCallback(() => {
+    const q = input.trim()
+    if (!q || phase === 'sending') return
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const el = inputWrapRef.current
+    if (el && !reduceMotion) {
+      const rect = el.getBoundingClientRect()
+      setSlideY(window.innerHeight - rect.top + 40)
+    }
+    setPhase('sending')
+    if (sendTimerRef.current) window.clearTimeout(sendTimerRef.current)
+    sendTimerRef.current = window.setTimeout(() => {
+      onAsk?.(q)
+      setInput('')
+      sendTimerRef.current = null
+    }, reduceMotion ? 0 : 450)
+  }, [input, onAsk, phase])
+
+  useEffect(() => () => {
+    if (sendTimerRef.current) window.clearTimeout(sendTimerRef.current)
+  }, [])
+
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== 'Enter') return
     e.preventDefault()
-    const q = input.trim()
-    if (!q) return
-    if (phase === 'sending') return
-    // 测量输入框到视口底部的距离，作为下移量
-    const el = inputWrapRef.current
-    if (el) {
-      const rect = el.getBoundingClientRect()
-      setSlideY(window.innerHeight - rect.top + 40)
-    }
-    setPhase('sending')
-    // 等 sending 动画完成后调 onAsk 发送对话
-    window.setTimeout(() => {
-      onAsk?.(q)
-      setInput('')
-    }, 500)
+    submitQuestion()
   }
 
   // ===== 发送按钮点击 =====
-  const handleSendClick = () => {
-    const q = input.trim()
-    if (!q || phase === 'sending') return
-    const el = inputWrapRef.current
-    if (el) {
-      const rect = el.getBoundingClientRect()
-      setSlideY(window.innerHeight - rect.top + 40)
-    }
-    setPhase('sending')
-    window.setTimeout(() => {
-      onAsk?.(q)
-      setInput('')
-    }, 500)
-  }
+  const handleSendClick = submitQuestion
 
   // ===== 卡片点击：触发顶层大卡浮层 =====
   const handleCardClick = (item: RecommendationItem) => {
@@ -172,7 +167,7 @@ export function ChatHome({ mode, onAsk }: ChatHomeProps) {
   const handleBannerClick = () => {
     if (firstOverdueRef.current) {
       firstOverdueRef.current.scrollIntoView({
-        behavior: 'smooth',
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
         block: 'center',
       })
       return
@@ -180,7 +175,7 @@ export function ChatHome({ mode, onAsk }: ChatHomeProps) {
     // 无到期卡片时，滚动到瀑布流顶部
     window.scrollTo({
       top: 0,
-      behavior: 'smooth',
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
     })
   }
 
@@ -194,7 +189,6 @@ export function ChatHome({ mode, onAsk }: ChatHomeProps) {
   // chat-home 根元素样式：注入 --slide-y / --input-blur CSS 变量
   const homeStyle = {
     '--slide-y': `${slideY}px`,
-    '--input-blur': `${inputBlur}px`,
   } as React.CSSProperties
 
   const homeCls = [
@@ -205,7 +199,7 @@ export function ChatHome({ mode, onAsk }: ChatHomeProps) {
     .join(' ')
 
   return (
-    <div className={homeCls} style={homeStyle}>
+    <div ref={homeRef} className={homeCls} style={homeStyle}>
       {/* 顶部提醒横幅（仅 reminderCount > 0 时显示） */}
       <ReminderBanner count={reminderCount} onClick={handleBannerClick} />
 
@@ -216,13 +210,16 @@ export function ChatHome({ mode, onAsk }: ChatHomeProps) {
       <div className="chat-home__input-wrap" ref={inputWrapRef}>
         <div className="chat-home__input-row">
           <input
+            id="chat-home-question"
             className="chat-home__input"
             type="text"
+            name="chat-home-question"
+            autoComplete="off"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleInputKeyDown}
             placeholder={placeholder}
-            aria-label={placeholder}
+            aria-label="输入对话问题"
             disabled={phase === 'sending'}
           />
           <button

@@ -71,11 +71,27 @@ function ChatConversationView() {
   const sendMessage = useAppStore((s) => s.sendMessage)
 
   const [input, setInput] = useState('')
+  const [showLatest, setShowLatest] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messagesRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    const container = messagesRef.current
+    if (!container) return
+    const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 96
+    if (nearBottom) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
+      setShowLatest(false)
+    } else {
+      setShowLatest(true)
+    }
   }, [chatMessages, chatAsking, chatStreamingActive])
+
+  const handleMessagesScroll = () => {
+    const container = messagesRef.current
+    if (!container) return
+    setShowLatest(container.scrollHeight - container.scrollTop - container.clientHeight >= 96)
+  }
 
   const handleSend = async () => {
     if (chatAsking) return
@@ -136,7 +152,12 @@ function ChatConversationView() {
           </p>
         </header>
 
-        <div className="chat-panel__messages">
+        <div
+          className="chat-panel__messages"
+          ref={messagesRef}
+          onScroll={handleMessagesScroll}
+          aria-label="对话消息"
+        >
           <ul className="chat-panel__message-list">
             {chatMessages.map((m, i) => (
               <ChatMessageItem
@@ -151,6 +172,18 @@ function ChatConversationView() {
             ))}
           </ul>
           <div ref={messagesEndRef} />
+          {showLatest && (
+            <button
+              type="button"
+              className="chat-panel__latest-btn"
+              onClick={() => {
+                messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
+                setShowLatest(false)
+              }}
+            >
+              回到最新消息
+            </button>
+          )}
         </div>
 
         {/* 底部输入区：长方形输入框 + 左下角+按钮 + 右下角发送 + Plan/Go 切换 */}
@@ -159,6 +192,8 @@ function ChatConversationView() {
             <textarea
               className="chat-input-bar__textarea"
               value={input}
+              name="chat-question"
+              aria-label="输入对话问题"
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={
@@ -170,10 +205,7 @@ function ChatConversationView() {
               disabled={chatAsking}
             />
             <div className="chat-input-bar__toolbar">
-              {/* 左下角：+ 按钮组（上传文件 / 调用 skills） */}
-              <div className="chat-input-bar__left-actions">
-                <ChatPlusButton />
-              </div>
+              <div className="chat-input-bar__left-actions" aria-hidden="true" />
               {/* 右下角：Plan/Go 切换（仅 Work 模式） + 发送按钮 */}
               <div className="chat-input-bar__right-actions">
                 {mode === 'work' && (
@@ -866,69 +898,6 @@ function PlanGoToggle({ planMode, onToggle, disabled }: PlanGoToggleProps) {
     >
       {planMode ? 'Plan' : 'Go'}
     </button>
-  )
-}
-
-// ============================================================================
-// 左下角 + 按钮（上传文件 / 调用 skills）
-// ============================================================================
-
-function ChatPlusButton() {
-  const [open, setOpen] = useState(false)
-  const popRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const handler = (e: MouseEvent) => {
-      if (popRef.current && !popRef.current.contains(e.target as Node)) {
-        setOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open])
-
-  return (
-    <div className="chat-plus" ref={popRef}>
-      <button
-        type="button"
-        className="chat-plus__btn"
-        onClick={() => setOpen((v) => !v)}
-        title="附件 / Skills"
-        aria-label="附件 / Skills"
-        aria-expanded={open}
-      >
-        +
-      </button>
-      {open && (
-        <div className="chat-plus__menu" role="menu">
-          <button
-            type="button"
-            className="chat-plus__item"
-            onClick={() => {
-              setOpen(false)
-              // 上传文件入口占位（后续接入文件上传组件）
-              alert('文件上传功能即将上线')
-            }}
-          >
-            <span className="chat-plus__item-icon" aria-hidden="true">📎</span>
-            上传文件
-          </button>
-          <button
-            type="button"
-            className="chat-plus__item"
-            onClick={() => {
-              setOpen(false)
-              // Skills 入口占位（后续接入 skills 选择器）
-              alert('Skills 调用功能即将上线')
-            }}
-          >
-            <span className="chat-plus__item-icon" aria-hidden="true">✨</span>
-            调用 Skills
-          </button>
-        </div>
-      )}
-    </div>
   )
 }
 

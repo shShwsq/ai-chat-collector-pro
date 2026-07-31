@@ -67,6 +67,17 @@ export default function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [healthError, setHealthError] = useState<string>('')
 
+  useEffect(() => {
+    const dark = theme === 'simple-black'
+    document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
+    document.documentElement.dataset.theme = theme
+    const themeColor = dark ? '#121212' : '#f6f6f2'
+    document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute('content', themeColor)
+    return () => {
+      delete document.documentElement.dataset.theme
+    }
+  }, [theme])
+
   const checkHealth = useCallback(async () => {
     try {
       const resp = await api.getHealth()
@@ -194,6 +205,7 @@ export default function App() {
 
   return (
     <div className="app-shell" data-mode={mode} data-theme={theme}>
+      <a className="skip-link" href="#main-content">跳到主要内容</a>
       <header className="app-header">
         <div className="app-header__left">
           <h1 className="app-header__title">知识工作助手</h1>
@@ -206,6 +218,7 @@ export default function App() {
             className={`health-badge${
               isHealthy ? ' health-badge--ok' : ' health-badge--error'
             }`}
+            role="status"
             title={
               isHealthy
                 ? `后端正常（${health!.version}）`
@@ -228,7 +241,7 @@ export default function App() {
             ModeSwitch 中 startViewTransition 捕获新旧快照，
             CSS ::view-transition-old/new 分别播放滑出/滑入动画。
             SideNav 不在此容器内，保持固定不参与滑动。 */}
-        <div className="mode-slide-wrap">
+        <div className="mode-slide-wrap" id="main-content" tabIndex={-1}>
           {/* 主内容区：按 activeNav 切换 */}
           {activeNav === 'chat' ? (
             <main className="content-area content-area--chat">
@@ -243,7 +256,7 @@ export default function App() {
               <GraphList />
               <main className="content-area">
               {error && (
-                <div className="error-bar">
+                <div className="error-bar" role="alert">
                   <span>{error}</span>
                   <button
                     type="button"

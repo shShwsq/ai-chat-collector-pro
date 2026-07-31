@@ -50,6 +50,7 @@
       "matches": ["https://chat.deepseek.com/*"],
       "js": [
         "lib/marked.min.js",
+        "lib/sanitize-html.js",
         "lib/katex.min.js",
         "lib/turndown.min.js",
         "lib/turndown-plugin-gfm.js",
@@ -80,6 +81,7 @@
       "matches": ["https://www.qianwen.com/*"],
       "js": [
         "lib/marked.min.js",
+        "lib/sanitize-html.js",
         "lib/katex.min.js",
         "lib/turndown.min.js",
         "lib/turndown-plugin-gfm.js",
@@ -110,6 +112,7 @@
       "matches": ["https://aiagent.fudan.edu.cn/*"],
       "js": [
         "lib/marked.min.js",
+        "lib/sanitize-html.js",
         "lib/katex.min.js",
         "lib/turndown.min.js",
         "lib/turndown-plugin-gfm.js",
@@ -140,6 +143,7 @@
       "matches": ["https://www.doubao.com/*"],
       "js": [
         "lib/marked.min.js",
+        "lib/sanitize-html.js",
         "lib/katex.min.js",
         "lib/turndown.min.js",
         "lib/turndown-plugin-gfm.js",
@@ -162,6 +166,7 @@
       "matches": ["https://kimi.com/*", "https://www.kimi.com/*", "https://kimi.moonshot.cn/*"],
       "js": [
         "lib/marked.min.js",
+        "lib/sanitize-html.js",
         "lib/katex.min.js",
         "lib/turndown.min.js",
         "lib/turndown-plugin-gfm.js",
@@ -182,6 +187,7 @@
       "matches": ["https://yuanbao.tencent.com/*"],
       "js": [
         "lib/marked.min.js",
+        "lib/sanitize-html.js",
         "lib/katex.min.js",
         "lib/turndown.min.js",
         "lib/turndown-plugin-gfm.js",

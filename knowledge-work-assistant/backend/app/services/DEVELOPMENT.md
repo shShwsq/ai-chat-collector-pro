@@ -26,10 +26,11 @@ services/
 ├── llm_factory.py             # LLM 客户端工厂：从 settings 表读取配置构造 LLMClient
 ├── llm_errors.py              # LLM 错误类型层级（LLMError / LLMAuthError / LLMRateLimitError / ...）
 ├── llm_request_registry.py    # LLM 请求注册表（取消 / 清理 / 状态查询）
+├── task_registry.py           # **后台任务托管**：流式任务 / 取消等待统一注册，lifespan 统一关停
 ├── model_config.py            # 模型配置注册表：从 model_config.json 加载并缓存
 ├── settings_store.py          # settings 表读写助手（普通字段 JSON 序列化，敏感字段加密）
 ├── crypto.py                  # Fernet 对称加密（敏感字段加密存储）
-├── ws_notify.py               # WebSocket 连接注册表（按 session_id 索引，broadcast / notify_session）
+├── ws_notify.py               # WebSocket 连接注册表（按 session_id 索引，broadcast / notify_session / 健康检查 / close_all）
 ├── session_queue.py           # 会话队列（任务排队执行）
 ├── knowledge_store.py         # 知识存储与 FTS5 全文检索
 ├── tag_store.py               # 标签库 CRUD（去重 / 同义词归一）
@@ -57,8 +58,10 @@ services/
 2. **JSON 字段透明序列化**：`detail_payload` / `user_fill` / `metadata_json` / `payload` / `result` 在 DB 中以 TEXT 存储，本层在读取时反序列化为 dict，写入时序列化为 JSON 字符串，调用方无需关心。
 3. **节点类型校验**：`create_node` / `update_node` 校验 `node_type` 在对应图谱模式的合法枚举内（见 [../models/node_types.py](../models/node_types.py)），非法类型抛 `ValueError`。
 4. **图谱隔离**：所有节点 / 边 / 测验操作均通过 `graph_id` 关联到图谱，删除图谱时级联清理（`ondelete=CASCADE`）。
-5. **观察来源**：`create_observation` 支持 `plugin` / `import` / `manual` 三种来源；`mark_observation_processed` 标记已被 Agent 处理，避免重复抽取。
-6. **幂等去重**：`find_observation_by_dedup_key(platform, dedup_key, within_hours)` 用于插件推送去重（24h 内同 `conversation_id` 不重复落库）。
+5. **边的无向规范化**：`create_edge(graph_id, src_id, dst_id, relation, ...)` 在写入前对 `(src_id, dst_id)` 做 `sorted()`，确保同一对节点的正反方向只存一条记录；启动迁移会对历史 edges 表做方向规范化 + 去重 + 建唯一索引 `uq_edges_graph_endpoints_relation`，后续 `create_edge` 的去重查询只需匹配单一方向。
+6. **观察来源**：`create_observation(source='plugin' | 'import' | 'manual', platform, ..., dedup_key=None)` 支持三种来源，新增独立 `dedup_key` 参数（替代旧 `metadata._dedup_key` JSON 路径）；`mark_observation_processed` 标记已被 Agent 处理，避免重复抽取。
+7. **幂等去重**：`find_observation_by_dedup_key(dedup_key, within_hours)` 直接查独立 `dedup_key` 列 + 启动迁移建好的部分唯一索引 `uq_observations_dedup_key`，不再走 `json_extract(metadata_json, '$._dedup_key')`；历史数据由 `_migrate_add_columns` 从 JSON 回填并对重复键保留最早一条，其余置空后建索引。
+8. **SQLite 并发写入保护**：`create_observation` 的 DB 写入包在 `with_sqlite_lock_retry(_insert)` 中执行，遇到 `database is locked` / `database table is locked` 时最多重试 4 次（指数退避 50/100/200/400ms），仍失败才向上抛异常。
 
 主要方法（部分）：
 - 图谱：`create_graph` / `list_graphs` / `get_graph` / `get_full_graph` / `update_graph` / `delete_graph` / `get_graph_stats`
@@ -143,6 +146,20 @@ services/
 
 供 `routers/llm_admin.py` 与 `routers/stream.py` 使用。
 
+### `task_registry.py`：后台任务托管注册表
+
+新增的后台任务统一托管模块，解决 lifespan 退出时裸 `asyncio.create_task` 悬挂、uvicorn 关停时任务被暴力取消无法清理的问题。模块级单例 `background_tasks = TaskRegistry()`。
+
+**生命周期**：
+- `start_accepting()`：由 lifespan 在所有初始化完成后、yield 前调用，此后 `create_task` 才会接受新任务；未开启前调用抛 `RuntimeError`，保证启动阶段不会提前注册任务。
+- `shutdown(timeout=8.0)`：由 lifespan 在 yield 后调用；依次执行：标记停止接受新任务 → 对所有未完成 task 调 `task.cancel()` → 用 `asyncio.wait_for` 聚合并行等待所有 task 结束（超时未结束直接丢弃）。返回 `(cancelled_count, done_count, timeout_count)` 三元组供日志。
+
+**核心 API**：
+- `create_task(coro, *, request_id=None, session_id=None, op=None) -> asyncio.Task`：创建并登记托管任务，返回原始 Task 对象（与 `asyncio.create_task` 兼容）。可选元数据 `request_id/session_id/op` 写入包装对象，供调试时查看任务归属（流式 / chat / 取消等待等）。
+- 属性 `.tasks`：只读视图，外部调试可枚举当前登记的任务。
+
+**与 routers 的集成**：`chat.py` 的流式对话与 `cancel_and_wait`、`stream.py` 的三个流式端点，现全部从裸 `asyncio.create_task` 切换为 `background_tasks.create_task(...)`，随 lifespan 统一关停。
+
 ### `model_config.py`：模型配置注册表
 
 模块级单例 `_REGISTRY`，从 `backend/data/model_config.json` 加载模型配置并缓存。`get_model_config(model_name)` 返回模型属性 dict（`context_window` / `max_output_tokens` / `default_temperature` / `supports_tools` / `supports_streaming` / `vendor` / `description`）。
@@ -177,13 +194,19 @@ services/
 
 ### `ws_notify.py`：WebSocket 连接注册表
 
-按 `session_id` 索引的连接注册表：
-- `register(session_id, ws)`：注册连接。
-- `unregister(session_id, ws)`：注销连接（幂等，空集合自动从 dict 移除）。
-- `notify_session(session_id, event) -> int`：向指定会话的所有连接推送事件，返回成功推送的连接数（0 表示无活跃连接）。推送失败的连接被静默忽略。
-- `broadcast(event) -> int`：向所有连接推送事件，返回成功推送的连接数。
+按 `session_id` 索引的连接注册表，强化了连接生命周期管理与并发安全：
 
-**并发安全**：`asyncio.Lock` 保护内部 `dict`，避免 `register` / `unregister` 在事件循环中交错。`send_json` 涉及 IO，持锁时间应尽量短（仅复制连接列表后释放锁再推送）。
+- `register(session_id, ws)`：注册连接。**新行为**：同一会话重新连入时，会用新连接替换旧集合，并主动 `close(code=1000, reason="同一会话已建立新连接")` 关闭被替换的旧 socket，避免重连后重复投递。
+- `unregister(session_id, ws)`：注销连接（幂等，空集合自动从 dict 移除）。
+- `notify_session(session_id, event) -> int`：向指定会话的所有连接推送事件，返回成功推送的连接数。**推送失败的连接会被追加到 `failed` 列表，循环结束后统一调 `unregister` 清理**，防止脏连接长期占据注册表。
+- `broadcast(event) -> int`：向所有连接推送事件，返回成功推送的连接数。同样在失败时回收脏连接；广播时记录 `(session_id, ws)` 二元组以便精确清理。
+- `has_session_connection(session_id) -> bool`：同步判断是否存在**已连接** socket（过滤 `client_state / application_state` 非 `CONNECTED` 的僵尸连接）。
+- `is_session_online(session_id) -> bool`：异步锁内判断，供业务侧在推送前做快速筛选。
+- `close_all() -> int`：清空注册表并关闭所有 socket（`code=1001, reason="服务正在关闭"`），供应用关停阶段使用。
+
+**连接健康检查**：`_is_connected(ws)` 同时校验 `ws.client_state` 与 `ws.application_state` 均为 `WebSocketState.CONNECTED`，过滤"半关闭但尚未清理"的僵尸连接，避免向已关闭 socket 推送导致异常。
+
+**并发安全**：`asyncio.Lock` 保护内部 `dict`。`notify_session` / `broadcast` 在持锁阶段仅做"复制连接列表到局部变量"，释放锁后再 `await ws.send_json(...)`，避免长时间持锁阻塞其他 `register` / `unregister`。
 
 ### `session_queue.py`：会话队列
 

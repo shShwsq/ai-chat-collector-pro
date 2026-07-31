@@ -132,6 +132,12 @@ export function loadLlm() {
   };
 }
 
+export function loadHtmlSanitizer() {
+  mockChrome();
+  runInWindow(path.join(ROOT, 'lib', 'sanitize-html.js'));
+  return window.HtmlSanitizer;
+}
+
 // 加载 KaTeX/turndown 第三方库 + html-to-markdown.js + katex-html-to-latex.js
 // 需要真实第三方库才能测 KaTeX 解析与 Markdown 转换
 export function loadHtmlToMarkdown() {

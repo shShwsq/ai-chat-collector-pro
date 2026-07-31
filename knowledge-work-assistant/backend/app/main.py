@@ -44,6 +44,8 @@ from app.services.writer_agent import init_writer_agent
 # 新手引导种子图谱（首次启动自动创建）
 from app.services.onboarding_seed import seed_onboarding_if_empty
 from app.services.graph_store import graph_store
+from app.services.task_registry import background_tasks
+from app.services import ws_notify
 
 
 @asynccontextmanager
@@ -79,7 +81,11 @@ async def lifespan(_app: FastAPI):
         logging.getLogger(__name__).warning(
             "MainAgent / WriterAgent 初始化失败（LLM 可能未配置）: %s", exc
         )
+    background_tasks.start_accepting()
     yield
+    await background_tasks.shutdown(timeout=8.0)
+    await ws_notify.close_all()
+    await engine.dispose()
 
 
 app = FastAPI(

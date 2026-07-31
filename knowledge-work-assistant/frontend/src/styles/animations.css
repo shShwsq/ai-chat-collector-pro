@@ -37,3 +37,40 @@
   background: #ef4444;
   box-shadow: 0 0 4px rgba(239, 68, 68, 0.6);
 }
+
+@media (max-width: 960px) {
+  .chat-home__waterfall {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .rec-card--entering,
+  .chat-streaming-cursor,
+  .chat-typing__dot,
+  .chat-input-bar__send-spinner {
+    animation: none !important;
+  }
+
+  .chat-home__input-wrap,
+  .rec-card--dimmed,
+  .expanded-overlay__backdrop {
+    filter: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  .expanded-overlay__card {
+    transform: none !important;
+  }
+}

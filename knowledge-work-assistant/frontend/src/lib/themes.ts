@@ -29,19 +29,19 @@ export const THEMES: ThemeMeta[] = [
   {
     id: 'simple-white',
     label: '简单白',
-    description: 'AGENT-WORK-ATLAS 浅色工业控制台风格。',
+    description: '明亮克制的日常工作台，强调清晰层级与舒适留白。',
     isDark: false,
   },
   {
     id: 'simple-black',
     label: '简单黑',
-    description: 'AGENT-WORK-ATLAS 深色工业控制台风格。',
+    description: '低眩光深灰工作台，适合长时间专注与图谱浏览。',
     isDark: true,
   },
   {
     id: 'angular-white',
     label: '棱角白',
-    description: 'AGENT-WORK-ATLAS 锐角工业控制台风格，保留原始切角装饰。',
+    description: '锐角工业控制台，使用紧凑结构与明确状态标记。',
     isDark: false,
   },
 ]

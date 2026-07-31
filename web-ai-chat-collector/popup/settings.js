@@ -764,6 +764,33 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ---- 保存设置 ----
   async function saveSettings() {
+    // 自定义远程服务必须先完成安全校验和精确 origin 授权，再持久化配置。
+    // 这样用户拒绝授权时不会留下“已保存但必然不可用”的半配置状态。
+    const remoteUrls = [
+      { label: 'Embedding', url: embeddingBaseUrl.value.trim() },
+      { label: 'LLM', url: llmBackend.value === 'openai' ? openaiBaseUrl.value.trim() : ollamaBaseUrl.value.trim() }
+    ];
+    if (vectorStoreType.value !== 'local') {
+      remoteUrls.push({ label: '向量库', url: vectorUrl.value.trim() });
+    }
+    for (const endpoint of remoteUrls) {
+      if (!endpoint.url) continue;
+      const validation = validateRemoteEndpoint(endpoint.url);
+      if (!validation.ok) {
+        showToast(`${endpoint.label} 地址无效: ${validation.error}`, true);
+        return false;
+      }
+      if (validation.insecureRemote) {
+        const proceed = confirm(`${endpoint.label} 使用非 HTTPS 远程地址，API Key 和数据可能被窃听。\n\n仍要继续吗？`);
+        if (!proceed) return false;
+      }
+      const granted = await ensureHostPermission(endpoint.url);
+      if (!granted) {
+        showToast(`${endpoint.label} 未获得 ${validation.origin} 的访问权限，设置未保存`, true);
+        return false;
+      }
+    }
+
     // 平台提取设置
     await sendMessage({
       type: 'SAVE_SETTINGS',
@@ -905,19 +932,6 @@ document.addEventListener('DOMContentLoaded', () => {
     showToast(toastMsg);
     vectorSaveExtra = null;
 
-    // 保存完成后，若向量库为远程且尚未持有该域权限，则申请
-    // 放在最后：权限弹窗会导致 popup 失焦关闭，但此时配置已持久化，用户重开即可继续
-    const vecType2 = vectorStoreType.value;
-    if (vecType2 !== 'local') {
-      const origin = urlToOrigin(vectorUrl.value.trim());
-      if (origin) {
-        const has = await new Promise((r) => chrome.permissions.contains({ origins: [`${origin}/*`] }, r));
-        if (!has) {
-          // 不强制：用户拒绝也无所谓，配置已保存；下次测试/保存还会再问
-          await ensureHostPermission(vectorUrl.value.trim());
-        }
-      }
-    }
     return true;
   }
 
@@ -1167,6 +1181,24 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function validateRemoteEndpoint(rawUrl) {
+    try {
+      const u = new URL(rawUrl);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+        return { ok: false, error: '仅支持 http:// 或 https://' };
+      }
+      const host = u.hostname.toLowerCase();
+      const local = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+      return {
+        ok: true,
+        origin: u.origin,
+        insecureRemote: u.protocol !== 'https:' && !local
+      };
+    } catch (e) {
+      return { ok: false, error: 'URL 格式不正确' };
+    }
+  }
+
   // 确保扩展拥有目标域的 host 权限；已有则直接返回 true，否则弹窗申请
   // 必须在用户手势（如 click）上下文中调用，否则 chrome.permissions.request 会被拒绝
   async function ensureHostPermission(rawUrl) {
@@ -1341,7 +1373,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const md = await resp.text();
       let html;
       if (typeof marked !== 'undefined') {
-        html = marked.parse(md, { breaks: true, gfm: true });
+        html = HtmlSanitizer.sanitize(marked.parse(md, { breaks: true, gfm: true }));
       } else {
         // 降级：转义后用 <pre> 显示原始 markdown
         const div = document.createElement('div');

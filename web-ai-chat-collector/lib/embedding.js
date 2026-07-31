@@ -158,6 +158,7 @@ const EmbeddingService = {
       apiKey: this._apiKey,
       dashscopeKey: this._apiKey, // 兼容旧代码读取
       model: this._model,
+      baseUrl: this._customBaseUrl || '',
       includeThinking: this._includeThinking,
       includeSearch: this._includeSearch,
       chunkSize: this._chunkSize,
@@ -529,6 +530,7 @@ async function getEmbeddingSettings() {
         apiKey: '',
         dashscopeKey: '', // 兼容旧字段
         model: 'text-embedding-v4',
+        baseUrl: '',
         includeThinking: false,
         includeSearch: false,
         chunkSize: 500,

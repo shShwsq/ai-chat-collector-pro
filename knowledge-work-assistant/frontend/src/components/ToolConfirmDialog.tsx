@@ -14,7 +14,7 @@
  * - 显示倒计时（基于 timeout 字段，到 0 时后端视为拒绝）。
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useAppStore } from '../store/useAppStore'
 import type { ToolConfirmation } from '../lib/types'
@@ -126,6 +126,33 @@ export function ToolConfirmDialog({ confirmation }: ToolConfirmDialogProps) {
   const [reason, setReason] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [remaining, setRemaining] = useState(confirmation.timeout)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    triggerRef.current = document.activeElement as HTMLElement | null
+    dialogRef.current?.querySelector<HTMLElement>('button, textarea, input')?.focus()
+    return () => triggerRef.current?.focus()
+  }, [confirmation.request_id])
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab' || !dialogRef.current) return
+      const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>('button:not(:disabled), textarea:not(:disabled), input:not(:disabled)'))
+      if (focusable.length < 2) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // 倒计时（每秒递减，到 0 停止）
   useEffect(() => {
@@ -221,7 +248,7 @@ export function ToolConfirmDialog({ confirmation }: ToolConfirmDialogProps) {
       aria-modal="true"
       aria-labelledby="tool-confirm-title"
     >
-      <div className="tool-confirm-dialog">
+      <div className="tool-confirm-dialog" ref={dialogRef}>
         <header className="tool-confirm__header">
           <h3 id="tool-confirm-title" className="tool-confirm__title">
             高风险操作确认

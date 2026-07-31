@@ -7,7 +7,7 @@
  * - 内容受控（``open``），由父组件控制显隐
  */
 
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 
 export interface ConfirmDialogProps {
   /** 是否显示。 */
@@ -38,6 +38,16 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    triggerRef.current = document.activeElement as HTMLElement | null
+    dialogRef.current?.querySelector<HTMLElement>('button')?.focus()
+    return () => triggerRef.current?.focus()
+  }, [open])
+
   // Esc 关闭
   useEffect(() => {
     if (!open) return
@@ -45,6 +55,18 @@ export function ConfirmDialog({
       if (ev.key === 'Escape') {
         ev.preventDefault()
         onCancel()
+      }
+      if (ev.key !== 'Tab' || !dialogRef.current) return
+      const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>('button:not(:disabled)'))
+      if (focusable.length < 2) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (ev.shiftKey && document.activeElement === first) {
+        ev.preventDefault()
+        last.focus()
+      } else if (!ev.shiftKey && document.activeElement === last) {
+        ev.preventDefault()
+        first.focus()
       }
     }
     window.addEventListener('keydown', onKey)
@@ -63,6 +85,7 @@ export function ConfirmDialog({
     >
       <div
         className="confirm-dialog"
+        ref={dialogRef}
         onClick={(ev) => ev.stopPropagation()}
       >
         <h3 id="confirm-title" className="confirm-dialog__title">
