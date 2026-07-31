@@ -1,12 +1,12 @@
 # knowledge-work-assistant 项目开发指南
 
-> 一句话定位：这是「复赛工作区」的**软件侧**——双模式（Study / Work）知识图谱桌面软件，由 Electron + React + TypeScript 前端 + Python 3.12 + FastAPI 后端组成；通过 `POST /api/plugin/conversations` 接收插件侧 [web-ai-chat-collector](../web-ai-chat-collector/DEVELOPMENT.md) 推送的对话，由 `graph_agent` 抽取知识点形成图谱，并提供 Study 模式（测验 / 费曼解释）与 Work 模式（风口推荐 / 工作报告 / 用户提问）两类业务能力。本文件是项目根目录的全局导航，三个子目录（`backend/`、`frontend/`、`plugin-sdk/`）各有自己的 `DEVELOPMENT.md`。
+> 一句话定位：这是「复赛工作区」的**软件侧**——双模式（Study / Work）知识图谱桌面软件，由 Electron + React + TypeScript 前端 + Python 3.12 + FastAPI 后端组成；通过 `POST /api/plugin/conversations` 接收插件侧 [web-ai-chat-collector](../web-ai-chat-collector/DEVELOPMENT.md) 推送的对话，由 `graph_agent` 抽取知识点形成图谱，并提供 Study 模式（测验 / 费曼解释）与 Work 模式（风口推荐 / 工作报告 / 用户提问）两类业务能力。本文件是项目根目录的全局导航，两个子目录（`backend/`、`frontend/`）各有自己的 `DEVELOPMENT.md`。
 
 ## 与 web-ai-chat-collector 的关系（软件 + 插件一体化）
 
 本项目是「复赛工作区」的**软件侧**，与**插件侧** [web-ai-chat-collector](../web-ai-chat-collector/DEVELOPMENT.md) 构成一个完整项目：
 
-- **数据来源**：本项目后端的 `Observation` 表接收两类来源——(a) 浏览器插件推送（`source='plugin'`，由 collector 二次开发后通过 [plugin-sdk/kwa-push.js](./plugin-sdk/kwa-push.js) 推送）；(b) 用户手动导入 / 应用内输入（`source='import'` / `'manual'`）。
+- **数据来源**：本项目后端的 `Observation` 表接收两类来源——(a) 浏览器插件推送（`source='plugin'`，由 collector 的 [bg/local-app.js](../web-ai-chat-collector/bg/local-app.js) 在保存对话时即时 POST 到 `/api/plugin/conversations`）；(b) 用户手动导入 / 应用内输入（`source='import'` / `'manual'`）。
 - **抽取链路**：`observations.conversation_markdown` → `graph_agent.extract_candidates_from_observation` → 候选节点 → 用户确认批量入图 → `nodes` / `edges` 表 → 前端图谱可视化。
 - **共享约定**：
   - 平台白名单：本项目 `routers/plugin.py` 的 `SUPPORTED_PLATFORMS = ['chatgpt','claude','gemini','deepseek','qwen','doubao','kimi','fudan','custom']`，与 collector 实际采集的 5 平台（`deepseek/qianwen/fudan/doubao/kimi`）取交集；`qianwen` 与 `qwen` 视为同义，collector 推送时统一用 `qwen`。
@@ -34,26 +34,19 @@ knowledge-work-assistant/
 │   ├── pyproject.toml      # uv 管理的依赖声明
 │   └── seed-graph.ps1      # PowerShell 脚本：调 API 注入种子图谱（开发自检用）
 │
-├── frontend/               # Electron + React + TypeScript + Vite 前端（Vite 5174）
-│   ├── electron/           #   主进程 / preload / 后端启动器
-│   ├── src/
-│   │   ├── App.tsx         #   根组件（header + SideNav + 主内容区 + Toast）
-│   │   ├── main.tsx        #   React 入口
-│   │   ├── components/     #   React 组件（含 graph/ 子目录：图谱可视化与节点编辑）
-│   │   ├── lib/            #   api / ws / types / electron.d.ts / nodeTemplates
-│   │   ├── store/          #   Zustand 全局状态（useAppStore）
-│   │   └── styles/         #   animations.css + app.css
-│   ├── index.html
-│   ├── package.json        # pnpm 管理，含 dev / dev:electron / build / dist scripts
-│   ├── vite.config.ts      # 端口 5174，代理 /api、/ws 到 127.0.0.1:8788
-│   └── tsconfig.json
-│
-└── plugin-sdk/             # 推送 SDK + UI 样式包 + 二次开发 patch（桥梁层）
-    ├── kwa-push.js         #   UMD 推送 SDK（兼容 CommonJS / AMD / 浏览器全局 KwaPush）
-    ├── kwa-push.d.ts       #   TypeScript 类型定义
-    ├── ui/                 #   统一样式包 kwa-plugin.css + 视觉规范 style-guide.md
-    ├── example/            #   最小可运行 Chrome MV3 示例扩展
-    └── secondary-dev/      #   对原 collector 的二次开发 patch + PATCH-GUIDE.md
+└── frontend/               # Electron + React + TypeScript + Vite 前端（Vite 5174）
+    ├── electron/           #   主进程 / preload / 后端启动器
+    ├── src/
+    │   ├── App.tsx         #   根组件（header + SideNav + 主内容区 + Toast）
+    │   ├── main.tsx        #   React 入口
+    │   ├── components/     #   React 组件（含 graph/ 子目录：图谱可视化与节点编辑）
+    │   ├── lib/            #   api / ws / types / electron.d.ts / nodeTemplates
+    │   ├── store/          #   Zustand 全局状态（useAppStore）
+    │   └── styles/         #   animations.css + app.css
+    ├── index.html
+    ├── package.json        # pnpm 管理，含 dev / dev:electron / build / dist scripts
+    ├── vite.config.ts      # 端口 5174，代理 /api、/ws 到 127.0.0.1:8788
+    └── tsconfig.json
 ```
 
 ## 关键文件
@@ -78,11 +71,6 @@ knowledge-work-assistant/
 | `frontend/src/lib/types.ts` | 类型定义 | 与 `backend/app/models/schemas.py` 一一对应；含 Graph/Node/Edge/Observation/Quiz/Trend/RecommendationItem 等 |
 | `frontend/vite.config.ts` | Vite 配置 | `base: './'`（便于 Electron file:// 加载）；`server.port: 5174 strictPort: true`；proxy `/api` → `http://127.0.0.1:8788`、`/ws` → `ws://127.0.0.1:8788`，超时 5min（流式 LLM 用） |
 | `frontend/package.json` | 前端依赖 | `react 18.3` / `react-markdown 9` / `remark-gfm 4` / `d3-force 3` / `react-force-graph-2d 1.25` / `zustand 4.5`；scripts: `dev` / `dev:electron` / `build` / `dist`（electron-builder + NSIS） |
-| `backend/app/services/task_registry.py` | 后台任务注册表 | `BackgroundTaskRegistry` 持有流式/对话任务强引用，lifespan 退出时统一 `shutdown(8s)` 有界取消 + 等待；`create_task(coro, request_id/session_id/op)` 登记元数据；`start_accepting`/`shutdown` 生命周期门控；替代裸 `asyncio.create_task` 避免 uvicorn 关停时任务悬挂 |
-| `plugin-sdk/kwa-push.js` | 推送 SDK | UMD 模块；`pushConversation` / `configure` / `createClient` / `SUPPORTED_PLATFORMS`；超时 + 指数退避 + AbortSignal 取消；camelCase ↔ snake_case 自动转换 |
-| `plugin-sdk/kwa-push.d.ts` | 类型定义 | 与 `kwa-push.js` 运行时导出一一对应；`KwaPushError` / `KwaPushValidationError` |
-| `plugin-sdk/ui/kwa-plugin.css` | UI 样式包 | 定义 `--kwa-accent` 等 CSS 变量（study 墨绿 / work 琥珀双模式）+ `.kwa-btn` 等组件类 |
-| `plugin-sdk/secondary-dev/` | 二次开发 patch | 4 个 patch 文件 + `PATCH-GUIDE.md`；不修改原 collector，仅在副本上应用 |
 
 ## 开发工作流
 
@@ -151,10 +139,9 @@ pnpm dev:electron
 ### 联调：插件推送链路
 
 1. 启动后端（监听 8788）
-2. 按 [plugin-sdk/secondary-dev/PATCH-GUIDE.md](./plugin-sdk/secondary-dev/PATCH-GUIDE.md) 把 patch 应用到 collector 副本
-3. 加载 patched 后的 collector 扩展
-4. 在任一受支持 AI 平台发起对话 → collector 采集 → 自动推送 → 前端会收到 WebSocket 事件 `plugin.conversation_received` 并弹 Toast
-5. 在 study 模式图谱视图打开"待抽取"侧栏，确认 Observation 进入候选列表
+2. 加载 collector 扩展，在 popup 设置页"本地应用对接"分区勾选"启用对接"开关（可点"连通性测试"确认后端可达）
+3. 在任一受支持 AI 平台发起对话 → collector 采集保存 → [bg/local-app.js](../web-ai-chat-collector/bg/local-app.js) 即时 POST 到 `/api/plugin/conversations` → 前端会收到 WebSocket 事件 `plugin.conversation_received` 并弹 Toast
+4. 在 study 模式图谱视图打开"待抽取"侧栏，确认 Observation 进入候选列表
 
 ### 调试技巧
 
@@ -262,10 +249,9 @@ pnpm dev:electron
 2. 在 [backend/app/routers/plugin.py](./backend/app/routers/plugin.py) 的 `POST /api/plugin/conversations` 实现中，把 `metadata.user_tags` 原样存入 `observations.metadata_json`（无需特殊处理，已透明序列化）。
 3. 在 [backend/app/services/graph_agent.py](./backend/app/services/graph_agent.py) 的 `extract_candidates_from_observation` 中，把 `user_tags` 加入 prompt 上下文（如"用户已标注此对话为：xxx"）。
 4. 在 [frontend/src/components/graph/PendingNodes.tsx](./frontend/src/components/graph/PendingNodes.tsx) 的待抽取列表项中显示 `metadata.user_tags`（如有）。
-5. 同步更新 [plugin-sdk/kwa-push.d.ts](./plugin-sdk/kwa-push.d.ts) 的 `metadata` 类型注释。
-6. 同步更新 [plugin-sdk/README.md](./plugin-sdk/README.md) 的"请求字段说明"表。
+5. 同步更新 [web-ai-chat-collector/bg/local-app.js](../web-ai-chat-collector/bg/local-app.js) 的 `_buildRequestBody` 中 `metadata` 字段构造（若该字段需要由 collector 主动填充）；如该字段来自后端导入流程而非 collector，可跳过此步。
 
-**验证**：用 [plugin-sdk/kwa-push.js](./plugin-sdk/kwa-push.js) 推送一条带 `user_tags` 的对话 → 后端落库 → 前端待抽取列表显示标签 → 抽取候选节点时 prompt 含标签。
+**验证**：用 `curl` 或 collector 推送一条带 `user_tags` 的对话 → 后端落库 → 前端待抽取列表显示标签 → 抽取候选节点时 prompt 含标签。
 
 ### 任务 5：调整 Work 模式风口推荐算法
 
@@ -296,15 +282,9 @@ pnpm dev:electron
 
 ### 插件对接扩展
 
-- 新增推送字段：参考"任务 4"流程，同步改 schemas / plugin router / graph_agent prompt / 前端 PendingNodes / plugin-sdk 类型与文档。
+- 新增推送字段：参考"任务 4"流程，同步改 schemas / plugin router / graph_agent prompt / 前端 PendingNodes / [web-ai-chat-collector/bg/local-app.js](../web-ai-chat-collector/bg/local-app.js) 的请求体构造。
 - 新增推送来源（如桌面客户端直接推送）：在 `routers/plugin.py` 加新端点或在现有端点用 `metadata.source` 区分；`observations.source` 字段保留 `plugin / import / manual` 三种取值。
 - 新增幂等去重维度：当前用 `{platform}:{conversation_id}` 24h 去重，可扩展为支持自定义 `dedup_key` 字段（在 `metadata` 中传，后端覆盖默认计算）。
-
-### 二次开发 patch 扩展
-
-- `plugin-sdk/secondary-dev/` 下的 patch 文件**只改副本，不动原 collector**。
-- 新增 patch 文件需在 `PATCH-GUIDE.md` 加应用步骤。
-- patch 文件命名：`<功能>.patch.<ext>`（如 `kwa-push-handler.js` / `settings.patch.html` / `styles.patch.js`）。
 
 ## 注意事项（坑）
 
@@ -340,7 +320,7 @@ pnpm dev:electron
 ### 推送链路的鉴权风险
 
 - `POST /api/plugin/conversations` 当前**不做 token / Origin / 签名校验**，仅适用于本机 loopback（`127.0.0.1:8788`）。
-- 若将后端绑定到 `0.0.0.0` 或部署到公网 / 局域网，请务必自行在反向代理层加 token / Origin 白名单 / IP 限制。详见 [plugin-sdk/README.md](./plugin-sdk/README.md) 的"风险提示"。
+- 若将后端绑定到 `0.0.0.0` 或部署到公网 / 局域网，请务必自行在反向代理层加 token / Origin 白名单 / IP 限制。详见 [backend/app/routers/plugin.py](./backend/app/routers/plugin.py) 顶部注释。
 
 ### Electron 主进程与渲染进程的隔离
 
@@ -353,11 +333,11 @@ pnpm dev:electron
 - 本项目所有主键 ID 用 `uuid.uuid4().hex`（32 位十六进制无连字符），与 `frontend/src/lib/ws.ts` 的 `generateSessionId` 保持一致。
 - 不要混用 `str(uuid.uuid4())`（带连字符的 36 位格式），会导致前端 `Node.id` 字段类型校验失败。
 
-### 推送 SDK 的 camelCase ↔ snake_case 转换
+### 推送请求字段命名
 
-- `plugin-sdk/kwa-push.js` 对外暴露 camelCase（`conversationMarkdown`），发送到后端时自动转为 snake_case（`conversation_markdown`）。
-- 后端 `PluginConversationRequest` schema 用 snake_case，与 SDK 转换后字段对齐。
-- 在 `metadata` 内的字段不做转换，原样存入 `observations.metadata_json`，前端按需读取。
+- collector 的 [bg/local-app.js](../web-ai-chat-collector/bg/local-app.js) 直接按后端 snake_case 契约构造请求体（`conversation_markdown` / `metadata.conversation_id`），无需 camelCase 转换。
+- 后端 `PluginConversationRequest` schema 用 snake_case，与 collector 请求体字段对齐。
+- `metadata` 内的字段原样存入 `observations.metadata_json`，前端按需读取。
 
 ## 下一步该读什么
 
@@ -370,6 +350,6 @@ pnpm dev:electron
 | 要改前端组件 / 图谱可视化 | [frontend/DEVELOPMENT.md](./frontend/DEVELOPMENT.md) |
 | 要改 Electron 主进程 / 打包 | [frontend/electron/DEVELOPMENT.md](./frontend/electron/DEVELOPMENT.md) |
 | 要改前端 React 组件 / 状态 | [frontend/src/DEVELOPMENT.md](./frontend/src/DEVELOPMENT.md) |
-| 要做插件 → 软件推送对接 | [plugin-sdk/DEVELOPMENT.md](./plugin-sdk/DEVELOPMENT.md) |
+| 要做插件 → 软件推送对接 | [web-ai-chat-collector/bg/DEVELOPMENT.md](../web-ai-chat-collector/bg/DEVELOPMENT.md) 的 `bg/local-app.js` 段落 |
 | 要看高层项目约束 | 工作区根 [DEVELOPMENT.md](../DEVELOPMENT.md) |
 | 要看项目骨架说明 | [README.md](./README.md) |

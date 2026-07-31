@@ -7,7 +7,7 @@
 本扩展是「复赛工作区」的**插件侧**，与**软件侧** [knowledge-work-assistant](../knowledge-work-assistant/DEVELOPMENT.md) 构成一个完整项目，共同形成"采集 → 沉淀 → 抽取 → 图谱化"的数据闭环：
 
 - **默认行为**：本扩展独立运行，采集的对话存入 IndexedDB + 可选远程向量库，**不主动推送**到任何外部后端。
-- **二次开发后**：应用 [knowledge-work-assistant/plugin-sdk/secondary-dev/](../knowledge-work-assistant/plugin-sdk/secondary-dev/PATCH-GUIDE.md) 的 patch 到本扩展副本后，每次采集对话会**额外**通过 [kwa-push.js](../knowledge-work-assistant/plugin-sdk/kwa-push.js) 推送到 KWA 后端 `POST http://127.0.0.1:8788/api/plugin/conversations`，落库为 `Observation` 待 Agent 抽取知识点。
+- **启用本地应用对接后**：默认行为下采集的对话仅存入本地 IndexedDB；在 popup 设置页"本地应用对接"分区启用对接后，由 `bg/local-app.js` 在保存对话时即时推送（`pushOnSave`）+ 可选 `chrome.alarms` 定时推送（间隔 1/5/10/30 分钟可选，静默失败），POST 到 `http://127.0.0.1:8788/api/plugin/conversations`，落库为 `Observation` 待 Agent 抽取知识点。
 - **共享约定**：
   - 平台标识一致：本扩展采集时的 `platform` 字段（`deepseek/qianwen/fudan/doubao/kimi`）与 KWA 后端 `routers/plugin.py` 的白名单（`chatgpt/claude/gemini/deepseek/qwen/doubao/kimi/fudan/custom`）取交集；推送时建议带 `metadata.conversation_id`，KWA 后端会基于 `{platform}:{conversation_id}` 做 24h 幂等去重。
   - 对话格式：本扩展导出与推送均使用 `## 用户` / `## 助手` 分段的 Markdown，KWA 后端 `graph_agent` 据此解析角色与内容。
@@ -203,10 +203,10 @@
 
 ### 推送能力扩展（与 KWA 联动）
 
-- 默认扩展不主动推送采集结果到任何后端；要启用推送到 KWA，需应用 [knowledge-work-assistant/plugin-sdk/secondary-dev/](../knowledge-work-assistant/plugin-sdk/secondary-dev/PATCH-GUIDE.md) 的 patch（4 个文件 + settings 页 patch），启用 `kwa-push-handler.js` 监听采集事件。
-- 推送 SDK [kwa-push.js](../knowledge-work-assistant/plugin-sdk/kwa-push.js) 提供 UMD / CommonJS / ESM 三种引入方式，含超时控制、指数退避重试、`AbortSignal` 取消、24h 幂等去重（需 `metadata.conversation_id` 配合）。
-- 推送目标 URL 默认 `http://127.0.0.1:8788/api/plugin/conversations`，可在 patched 后的设置页「知识工作助手推送」分区配置；URL 变更后自动保存到 `chrome.storage.local`。
-- **鉴权风险**：KWA 后端当前不鉴权，仅适用于 loopback；部署到公网 / 局域网需自行加反代鉴权，详见 [plugin-sdk/README.md](../knowledge-work-assistant/plugin-sdk/README.md) 的"风险提示"。
+- 默认扩展不主动推送采集结果到任何后端；要启用推送到 KWA，在 popup 设置页"本地应用对接"分区打开启用开关，由 `bg/local-app.js` 负责对接。
+- 推送能力：保存对话时即时推送（`pushOnSave`）+ 可选 `chrome.alarms` 定时推送（间隔 1/5/10/30 分钟可选）；本地 `chrome.storage.local` 维护 `localAppPushedConvIds` 增量去重，避免无谓请求；后端 24h 幂等去重（`{platform}:{conversation_id}`）是兜底；后端不可达时静默失败，不阻断插件其他功能。
+- 设置入口：popup 设置页"本地应用对接"分区，含启用总开关、自动推送开关、定时推送间隔选择、baseUrl 输入框（默认 `http://127.0.0.1:8788`）、连通性测试按钮（调 `GET /api/plugin/health`）。
+- **鉴权风险**：KWA 后端当前不鉴权，仅适用于 loopback；部署到公网 / 局域网需自行加反代鉴权。
 
 ## 注意事项（坑）
 

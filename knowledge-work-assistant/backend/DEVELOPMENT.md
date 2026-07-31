@@ -368,7 +368,7 @@ uv run python -m app.main
 
 - `POST /api/plugin/conversations` 当前**不做 token / Origin / 签名校验**，仅适用于本机 loopback（`127.0.0.1:8788`）。
 - 若将后端绑定到 `0.0.0.0` 或部署到公网 / 局域网，请务必自行在反向代理层（如 Nginx / Caddy）加 token / Origin 白名单 / IP 限制。
-- 详见 [plugin-sdk/README.md](../plugin-sdk/README.md) 的"风险提示"章节。
+- 详见 [app/routers/plugin.py](./app/routers/plugin.py) 顶部注释与工作区根 [DEVELOPMENT.md](../DEVELOPMENT.md) 的"推送链路的鉴权风险"章节。
 
 ## 下一步该读什么
 
@@ -379,5 +379,5 @@ uv run python -m app.main
 | 要改服务层 / graph_agent / LLM 调用 / 图谱存储 | [app/services/DEVELOPMENT.md](./app/services/DEVELOPMENT.md) |
 | 要看应用入口 / 配置 / DB 初始化 | [app/DEVELOPMENT.md](./app/DEVELOPMENT.md) |
 | 要改前端 / 联调 | [../frontend/DEVELOPMENT.md](../frontend/DEVELOPMENT.md) |
-| 要做插件推送对接 | [../plugin-sdk/DEVELOPMENT.md](../plugin-sdk/DEVELOPMENT.md) |
+| 要做插件推送对接 | [../web-ai-chat-collector/bg/DEVELOPMENT.md](../web-ai-chat-collector/bg/DEVELOPMENT.md)（`bg/local-app.js` 段落） |
 | 要看项目整体架构 | [../DEVELOPMENT.md](../DEVELOPMENT.md) |

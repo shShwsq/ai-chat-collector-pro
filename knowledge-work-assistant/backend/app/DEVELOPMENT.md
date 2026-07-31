@@ -213,4 +213,4 @@ SQLAlchemy 默认不开启 SQLite 的 `PRAGMA foreign_keys`，本项目在 [db.p
 | 要改服务层 / graph_agent / LLM 调用 / 图谱存储 | [services/DEVELOPMENT.md](./services/DEVELOPMENT.md) |
 | 要看后端整体架构 / 启动流程 | [../DEVELOPMENT.md](../DEVELOPMENT.md) |
 | 要改前端 / 联调 | [../../frontend/DEVELOPMENT.md](../../frontend/DEVELOPMENT.md) |
-| 要做插件推送对接 | [../../plugin-sdk/DEVELOPMENT.md](../../plugin-sdk/DEVELOPMENT.md) |
+| 要做插件推送对接 | [../../web-ai-chat-collector/bg/DEVELOPMENT.md](../../web-ai-chat-collector/bg/DEVELOPMENT.md)（`bg/local-app.js` 段落） |

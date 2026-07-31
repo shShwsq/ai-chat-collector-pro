@@ -7,8 +7,7 @@
 本目录是 collector 在宿主页面渲染的"采集侧 UI"，与软件侧 [knowledge-work-assistant](../../../knowledge-work-assistant/DEVELOPMENT.md) 的关系如下：
 
 - **两套独立 UI**：本目录的悬浮球（`#ai-chat-ball`）+ 列表面板 + 查看器是 collector 本地 UI，与 KWA 前端 [frontend/src/components/](../../../knowledge-work-assistant/frontend/src/components/DEVELOPMENT.md) 的图谱 UI（GraphView / NodeDetailCard 等）是**两套完全独立的 UI**，互不依赖、互不通信。
-- **UI 风格统一 patch**：应用 [plugin-sdk/secondary-dev/styles.patch.js](../../../knowledge-work-assistant/plugin-sdk/secondary-dev/styles.patch.js) patch 后，本目录 `styles.js` 中硬编码的主色（如 `#4f46e5` 紫色）会被替换为 CSS 变量 `var(--kwa-accent)`，并 `<link>` 引入 [plugin-sdk/ui/kwa-plugin.css](../../../knowledge-work-assistant/plugin-sdk/ui/kwa-plugin.css)；之后悬浮球颜色会随 KWA 模式（study 墨绿 / work 琥珀）联动。
-- **patch 不破坏原 UI**：`styles.patch.js` 是**覆盖式 patch**（替换整个 `styles.js` 文件），不修改 `floating-ball.js`/`viewer.js` 的逻辑；patch 后 `FloatingBall`/`ConversationViewer` 的实例化流程、拖拽逻辑、删除回调等不变。
+- **UI 风格独立**：本目录悬浮球用硬编码主色（如 `#4f46e5` 紫色），与 KWA 前端图谱 UI 完全独立，无样式联动。
 - **本地查看器与 KWA 报告**：本目录的 `ConversationViewer` 用于查看 collector 采集的原始对话；KWA 后端的"工作报告"（[services/report_service.py](../../../knowledge-work-assistant/backend/app/services/report_service.py)）是另一回事——后者基于图谱节点生成周期性报告，不读 collector 数据。
 - **删除对话的级联**：`FloatingBall` 删除对话时调 `chrome.runtime.sendMessage({ type: 'DELETE_CONVERSATION' })`，由 [bg/conversations.js](../../bg/conversations.js) 的 `dbDeleteConversation` 删本地 IndexedDB + 触发 `VectorStore.deleteByConvId`；**不会**通知 KWA 后端删除已推送的 `Observation`（KWA 后端的 `Observation` 需在软件侧手动删除）。
 

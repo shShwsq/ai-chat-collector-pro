@@ -4,7 +4,7 @@
 > - **web-ai-chat-collector**（插件侧）：MV3 浏览器扩展，采集多平台 AI 对话 → RAG 知识库 + 推送给软件侧
 > - **knowledge-work-assistant**（软件侧）：Electron + FastAPI 桌面软件，双模式（Study / Work）知识图谱软件，接收并沉淀插件推送的对话
 >
-> 两者通过 `POST /api/plugin/conversations` 接口与 `plugin-sdk/kwa-push.js` 形成"采集 → 沉淀 → 抽取 → 图谱化"的数据闭环，开发时需联合调试，发布时分别打包。
+> 两者通过 collector 的 `bg/local-app.js` 与 `POST /api/plugin/conversations` 接口形成"采集 → 沉淀 → 抽取 → 图谱化"的数据闭环，开发时需联合调试，发布时分别打包。
 
 ## 工作区全景
 
@@ -30,18 +30,12 @@
 │   │       ├── models/            #     SQLAlchemy ORM + Pydantic schema
 │   │       ├── routers/           #     FastAPI 路由（health/graphs/nodes/quiz/work/plugin/stream/...）
 │   │       └── services/          #     业务服务层（graph_store / graph_agent / llm_client / ...）
-│   ├── frontend/                  #   Electron + React + TS + Vite 前端（端口 5174）
-│   │   ├── electron/              #     主进程 / preload / launcher
-│   │   └── src/
-│   │       ├── components/        #     React 组件（含 graph/ 子目录：图谱可视化与节点编辑）
-│   │       ├── lib/               #     api / ws / types
-│   │       └── store/             #     Zustand 全局状态
-│   └── plugin-sdk/                #   推送 SDK + UI 样式包 + 二次开发 patch（桥梁层）
-│       ├── kwa-push.js            #     UMD 推送 SDK
-│       ├── kwa-push.d.ts          #     类型定义
-│       ├── ui/                    #     统一样式包 + 视觉规范
-│       ├── example/               #     最小可运行 Chrome MV3 示例扩展
-│       └── secondary-dev/         #     对原 collector 的二次开发 patch
+│   └── frontend/                  #   Electron + React + TS + Vite 前端（端口 5174）
+│       ├── electron/              #     主进程 / preload / launcher
+│       └── src/
+│           ├── components/        #     React 组件（含 graph/ 子目录：图谱可视化与节点编辑）
+│           ├── lib/               #     api / ws / types
+│           └── store/             #     Zustand 全局状态
 │
 ├── .trae/                         # TRAE 规格文档（spec.md / tasks.md / checklist.md），勿手动改
 ├── 用户要求.md                    # 本工作区的高层约束（不应推送到主仓库）
@@ -64,7 +58,7 @@
 | 测试 | `npm test`（Vitest + jsdom） | 暂无统一测试 |
 | 打包 | GitHub Actions `release.yml` | `pnpm dist`（electron-builder + NSIS） |
 | 数据存储 | IndexedDB（本地）+ 可选远程向量库 | SQLite（`backend/data/app.db`）+ FTS5 |
-| **联动接口** | **不主动推送（默认）**；二次开发后通过 `kwa-push.js` 推送 | **接收 `POST /api/plugin/conversations`**，落库为 `Observation` |
+| **联动接口** | 通过 `bg/local-app.js` 主动推送（默认关闭，可在设置页启用） | **接收 `POST /api/plugin/conversations`**，落库为 `Observation` |
 
 ### 数据闭环
 
@@ -74,8 +68,8 @@
 web-ai-chat-collector 采集（DOM 提取 / 网络拦截二选一）
         ↓
 本地 IndexedDB + 向量库（RAG 浮球就地问答）
-        ↓ （二次开发后启用 kwa-push-handler.js）
-plugin-sdk/kwa-push.js → POST /api/plugin/conversations
+        ↓ （启用"本地应用对接"后由 bg/local-app.js 触发）
+bg/local-app.js → POST /api/plugin/conversations
         ↓
 knowledge-work-assistant 后端：observations 表（source='plugin'）
         ↓
@@ -115,26 +109,18 @@ Study 模式：测验 / 费曼解释    Work 模式：风口推荐 / 工作报�
 │   └── tests/DEVELOPMENT.md
 └── knowledge-work-assistant/DEVELOPMENT.md
     ├── backend/DEVELOPMENT.md
-    │   ├── app/DEVELOPMENT.md
-    │   │   ├── models/DEVELOPMENT.md
-    │   │   ├── routers/DEVELOPMENT.md
-    │   │   └── services/DEVELOPMENT.md
-    │   │       └── tools/DEVELOPMENT.md
-    │   └── tests/DEVELOPMENT.md
-    ├── frontend/DEVELOPMENT.md
-    │   ├── electron/DEVELOPMENT.md
-    │   └── src/DEVELOPMENT.md
-    │       ├── components/DEVELOPMENT.md
-    │       │   └── graph/DEVELOPMENT.md
-    │       ├── lib/DEVELOPMENT.md
-    │       │   └── __tests__/DEVELOPMENT.md
-    │       ├── store/DEVELOPMENT.md
-    │       │   └── __tests__/DEVELOPMENT.md
-    │       └── styles/DEVELOPMENT.md
-    └── plugin-sdk/DEVELOPMENT.md
-        ├── example/DEVELOPMENT.md
-        ├── secondary-dev/DEVELOPMENT.md
-        └── ui/DEVELOPMENT.md
+    │   └── app/DEVELOPMENT.md
+    │       ├── models/DEVELOPMENT.md
+    │       ├── routers/DEVELOPMENT.md
+    │       └── services/DEVELOPMENT.md
+    └── frontend/DEVELOPMENT.md
+        ├── electron/DEVELOPMENT.md
+        └── src/DEVELOPMENT.md
+            ├── components/DEVELOPMENT.md
+            │   └── graph/DEVELOPMENT.md
+            ├── lib/DEVELOPMENT.md
+            ├── store/DEVELOPMENT.md
+            └── styles/DEVELOPMENT.md
 ```
 
 > 本地参考素材目录（如前期项目骨架）**不入仓库**，其内部的 DEVELOPMENT.md 仅作参考用途，不出现在本目录树中。
@@ -184,18 +170,17 @@ pnpm dev:electron                  # 同时拉起 Vite (5174) + Electron
 
 ### 联调：插件 → 软件 推送链路
 1. 软件侧后端先启动（监听 8788）
-2. 将 `plugin-sdk/secondary-dev/` 下的 patch 应用到 collector 副本（参考 [plugin-sdk/secondary-dev/PATCH-GUIDE.md](./knowledge-work-assistant/plugin-sdk/secondary-dev/PATCH-GUIDE.md)）
-3. 加载 patched 后的 collector 扩展
-4. 在任意受支持的 AI 平台发起一次对话 → collector 采集 → 自动推送 → 软件侧前端会收到 WebSocket 事件 `plugin.conversation_received` 并弹 Toast
-5. 在软件侧 study 模式图谱视图打开"待抽取"侧栏，确认 Observation 进入了候选列表
+2. 加载 collector 扩展，在 popup 设置页"本地应用对接"分区勾选"启用对接"，可点"连通性测试"确认后端可达
+3. 在任意受支持的 AI 平台发起一次对话 → collector 采集保存 → `bg/local-app.js` 自动 POST 到 `http://127.0.0.1:8788/api/plugin/conversations` → 软件侧前端会收到 WebSocket 事件 `plugin.conversation_received` 并弹 Toast
+4. 在软件侧 study 模式图谱视图打开"待抽取"侧栏，确认 Observation 进入了候选列表
 
-详见 [plugin-sdk/DEVELOPMENT.md](./knowledge-work-assistant/plugin-sdk/DEVELOPMENT.md)。
+详见 [web-ai-chat-collector/bg/DEVELOPMENT.md](./web-ai-chat-collector/bg/DEVELOPMENT.md) 的 `bg/local-app.js` 段落。
 
 ## 跨子工程协作场景
 
 | 场景 | 联动方式 |
 |------|---------|
-| 让 collector 把采集的对话沉淀到 KWA 图谱 | 应用 `plugin-sdk/secondary-dev/` patch 到 collector 副本，启用 `kwa-push-handler.js`，对话采集后自动 POST 到 `http://127.0.0.1:8788/api/plugin/conversations` |
+| 让 collector 把采集的对话沉淀到 KWA 图谱 | 在 collector 设置页"本地应用对接"分区启用对接，`bg/local-app.js` 在保存对话时即时 POST 到 `http://127.0.0.1:8788/api/plugin/conversations`，可选定时推送 |
 | 在 KWA 中复用 collector 的 RAG 检索能力 | collector 启用远程向量库（Chroma / Milvus / Qdrant 等），KWA 后端通过 `docs/skills/query_knowledge.py` 脚本检索（参考 [web-ai-chat-collector/docs/skill-setup.md](./web-ai-chat-collector/docs/skill-setup.md)） |
 | 共享 LLM 凭据 | 两侧均支持 OpenAI 兼容协议，同一套 API Key 可在 collector 的 `popup/settings.html` 与 KWA 后端 `backend/.env` 或前端 SettingsPanel 复用 |
 | 同步新增 LLM 厂商 | collector 侧改 `models.json` + `lib/llm.js`；KWA 侧改 `backend/app/services/model_config.py` + `backend/.env.example`，两端各自跑流式对话验证 |
@@ -214,11 +199,11 @@ pnpm dev:electron                  # 同时拉起 Vite (5174) + Electron
 ### 任务 2：扩展 collector 的推送能力到 KWA
 **场景**：希望 collector 在采集对话后自动推送到 KWA 后端。
 **步骤**：
-1. 备份 collector：`Copy-Item -Recurse web-ai-chat-collector web-ai-chat-collector-patched`
-2. 按 [plugin-sdk/secondary-dev/PATCH-GUIDE.md](./knowledge-work-assistant/plugin-sdk/secondary-dev/PATCH-GUIDE.md) 应用 patch（4 个文件：`kwa-push.js` / `kwa-plugin.css` / `styles.patch.js` / `kwa-push-handler.js` + settings 页 patch）
-3. 启动 KWA 后端（端口 8788），用 `curl http://127.0.0.1:8788/api/plugin/health` 自检
-4. 在 patched collector 的设置页填入推送 URL（默认 `http://127.0.0.1:8788/api/plugin/conversations`），勾选启用
-5. 访问任一受支持 AI 平台发起对话，观察 collector SW 日志与 KWA 后端日志
+1. 启动 KWA 后端（端口 8788），用 `curl http://127.0.0.1:8788/api/plugin/health` 自检
+2. 加载 collector 扩展，打开 popup 设置页"本地应用对接"分区，勾选"启用对接"开关
+3. 可选：勾选"自动推送"并选择间隔（1/5/10/30 分钟）；调整 `baseUrl`（默认 `http://127.0.0.1:8788`）
+4. 点"连通性测试"确认能连上后端
+5. 访问任一受支持 AI 平台发起对话，观察 collector SW 日志（`[LocalApp]` 前缀）与 KWA 后端日志
 
 **验证**：KWA 前端图谱视图（study 模式）打开"待抽取"侧栏，能看到刚才推送的对话作为 Observation 出现。
 
@@ -255,7 +240,7 @@ pnpm dev:electron                  # 同时拉起 Vite (5174) + Electron
 工作区根的 `.trae/` 是 TRAE IDE 的规格文档区，包含 `spec.md`、`tasks.md`、`checklist.md` 等，由工具链管理。手动修改会被下次 TRAE 会话覆盖。
 
 ### 5. 推送链路的鉴权风险
-`POST /api/plugin/conversations` 当前**不做 token / Origin / 签名校验**，仅适用于本机 loopback（`127.0.0.1:8788`）。若将 KWA 后端绑定到 `0.0.0.0` 或部署到公网 / 局域网，请务必自行在反向代理层加 token / Origin 白名单 / IP 限制。详见 [plugin-sdk/README.md](./knowledge-work-assistant/plugin-sdk/README.md) 的"风险提示"章节。
+`POST /api/plugin/conversations` 当前**不做 token / Origin / 签名校验**，仅适用于本机 loopback（`127.0.0.1:8788`）。若将 KWA 后端绑定到 `0.0.0.0` 或部署到公网 / 局域网，请务必自行在反向代理层加 token / Origin 白名单 / IP 限制。详见 [knowledge-work-assistant/backend/app/routers/plugin.py](./knowledge-work-assistant/backend/app/routers/plugin.py) 顶部注释。
 
 ### 6. 端口隔离约定
 KWA 后端固定 8788、前端固定 5174，与可能的本地其他项目（如其他参考素材项目用 8787 / 5173）相互隔离。**改端口需同步改 4 处**：`backend/app/config.py`、`backend/.env.example`、`frontend/vite.config.ts`、`frontend/electron/launcher.ts`，否则 dev / 生产 / 代理 / IPC 任一环失配都会让前端连不上后端。
@@ -269,7 +254,7 @@ KWA 后端固定 8788、前端固定 5174，与可能的本地其他项目（如
 | 要改桌面软件（图谱侧） | [knowledge-work-assistant/DEVELOPMENT.md](./knowledge-work-assistant/DEVELOPMENT.md) |
 | 要改后端 API / 图谱服务 | [knowledge-work-assistant/backend/DEVELOPMENT.md](./knowledge-work-assistant/backend/DEVELOPMENT.md) |
 | 要改前端图谱可视化 | [knowledge-work-assistant/frontend/DEVELOPMENT.md](./knowledge-work-assistant/frontend/DEVELOPMENT.md) |
-| 要做插件 → 软件推送对接 | [knowledge-work-assistant/plugin-sdk/DEVELOPMENT.md](./knowledge-work-assistant/plugin-sdk/DEVELOPMENT.md) |
+| 要做插件 → 软件推送对接 | [web-ai-chat-collector/bg/DEVELOPMENT.md](./web-ai-chat-collector/bg/DEVELOPMENT.md) 的 `bg/local-app.js` 段落 |
 | 要打包发布 | [knowledge-work-assistant/frontend/package.json](./knowledge-work-assistant/frontend/package.json) 的 `dist` script（electron-builder + NSIS）和 [web-ai-chat-collector/.github/workflows/release.yml](./web-ai-chat-collector/.github/workflows/release.yml) |
 | 要看规格文档 | [.trae/specs/](./.trae/specs/) 下的 spec.md / tasks.md / checklist.md |
 | 要看高层约束 | [用户要求.md](./用户要求.md) 与 [设计方案.md](./设计方案.md) |

@@ -22,8 +22,9 @@
 | 千问 (www.qianwen.com) | ✅ | ✅ |
 | 复旦智汇岛 (aiagent.fudan.edu.cn) | ✅ | ✅ |
 | 豆包 (www.doubao.com) | ✅ | ✅ |
-| Kimi (www.kimi.com) | ✅ | — （WebSocket + protobuf，仅 DOM） |
-| 腾讯元宝 (yuanbao.tencent.com) | ✅ | — （WebSocket + 自定义协议，仅 DOM） |
+| Kimi (www.kimi.com) | ✅ | — （暂未开发） |
+| 腾讯元宝 (yuanbao.tencent.com) | ✅ | — （暂未开发） |
+| 百度文心 (chat.baidu.com / wenxin.baidu.com) | ✅ | — （暂未开发） |
 
 ## 模式说明
 
@@ -31,9 +32,9 @@
 
 通过解析渲染后的页面 DOM 提取对话内容。兼容性最好、对平台 API 变更不敏感，并通过 `turndown.js` + `turndown-plugin-gfm` 完整保留 Markdown 格式（标题、列表、表格、代码块、数学公式 KaTeX 等）。
 
-- 六个平台开箱即用，覆盖最广
+- 七个平台开箱即用，覆盖最广
 - 从渲染后的 HTML 还原 Markdown 格式 —— 标题、列表、**GFM 表格**、删除线、任务列表、围栏代码块、KaTeX 数学公式（行内 `$...$` / 块级 `$$...$$`）
-- 各平台深度思考过程和联网搜索引用均支持提取（Kimi/DeepSeek/千问/豆包/复旦/元宝）
+- 各平台深度思考过程和联网搜索引用均支持提取（Kimi/DeepSeek/千问/豆包/复旦/元宝/文心）
 - 不依赖平台 API 协议（REST / WebSocket / protobuf 均可）
 - 持续优化中 —— 思考块、搜索引用的提取精度仍在进一步提升
 
@@ -44,7 +45,7 @@
 **权衡：**
 
 - 与各平台 API 契约强耦合，平台更新接口时易失效
-- Kimi / 元宝无法使用（WebSocket + protobuf / 自定义协议传输）
+- Kimi / 元宝 / 文心暂未开发网络拦截模式
 - 仅在需要 DOM 尚未覆盖的原始流式数据时启用
 
 ## 合规与隐私
@@ -166,7 +167,7 @@ ai-plugin/
 │   ├── exporter-base.js       # ChatExporterBase（网络 / DOM 分派）
 │   ├── network-interceptor.js # 共享网络钩子（MAIN world）
 │   ├── ai-ball.js             # AI 问答悬浮球 + 面板
-│   ├── kimi.js / yuanbao.js   # Kimi / 元宝入口（仅 DOM，无网络适配器）
+│   ├── kimi.js / yuanbao.js / wenxin.js   # Kimi / 元宝 / 文心入口（仅 DOM，无网络适配器）
 │   ├── deepseek.js / qianwen.js / fudan.js / doubao.js  # 各平台入口
 │   ├── network/               # 各平台网络适配器（REST 解析）
 │   │   ├── common.js
@@ -174,7 +175,7 @@ ai-plugin/
 │   ├── dom/                   # 各平台 DOM 适配器
 │   │   ├── html-to-markdown.js  # 统一的 HTML→Markdown 包装（turndown.js + GFM）
 │   │   ├── katex-html-to-latex.js # KaTeX HTML→LaTeX 反向解析（Kimi 降级路径）
-│   │   ├── kimi.js / deepseek.js / qianwen.js / fudan.js / doubao.js / yuanbao.js
+│   │   ├── kimi.js / deepseek.js / qianwen.js / fudan.js / doubao.js / yuanbao.js / wenxin.js
 │   └── ui/                    # 悬浮球 / 查看器 / 样式
 │       ├── floating-ball.js / viewer.js / styles.js
 ├── lib/                       # 共享服务（SW 与 content 共用）

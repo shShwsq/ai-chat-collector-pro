@@ -224,9 +224,9 @@ API 请求 / 响应模型，与 [../../../frontend/src/lib/types.ts](../../../fr
 3. 在 [../routers/plugin.py](../routers/plugin.py) 的 `POST /api/plugin/conversations` 实现中，把 `metadata.user_tags` 原样存入 `observations.metadata_json`（无需特殊处理，已透明序列化）。
 4. 在 [../services/graph_agent.py](../services/graph_agent.py) 的 `extract_candidates_from_observation` 中，把 `user_tags` 加入 prompt 上下文（如"用户已标注此对话为：xxx"）。
 5. 在 [../../../frontend/src/components/graph/PendingNodes.tsx](../../../frontend/src/components/graph/PendingNodes.tsx) 的待抽取列表项中显示 `metadata.user_tags`（如有）。
-6. 同步更新 [../../../plugin-sdk/kwa-push.d.ts](../../../plugin-sdk/kwa-push.d.ts) 的 `metadata` 类型注释与 [../../../plugin-sdk/README.md](../../../plugin-sdk/README.md) 的"请求字段说明"表。
+6. 同步更新 [../../routers/plugin.py](../../routers/plugin.py) 的 `_validate_metadata` 中新字段的类型校验，并在 [../../../web-ai-chat-collector/bg/local-app.js](../../../web-ai-chat-collector/bg/local-app.js) 的 `PLATFORM_MAP` 与 metadata 构造处补齐字段。
 
-**验证**：用 `kwa-push.js` 推送一条带 `user_tags` 的对话 → 后端落库 → 前端待抽取列表显示标签 → 抽取候选节点时 prompt 含标签。
+**验证**：通过 collector 的 `bg/local-app.js` 推送一条带 `user_tags` 的对话 → 后端落库 → 前端待抽取列表显示标签 → 抽取候选节点时 prompt 含标签。
 
 ## 扩展点
 
@@ -289,5 +289,5 @@ SQLite 的 `ALTER TABLE` 仅支持 `ADD COLUMN`，无法修改 / 删除已有列
 | 要改服务层 / graph_agent / LLM 调用 / 图谱存储 | [../services/DEVELOPMENT.md](../services/DEVELOPMENT.md) |
 | 要看应用入口 / 配置 / DB 初始化 | [../DEVELOPMENT.md](../DEVELOPMENT.md) |
 | 要改前端 React 组件 / 图谱可视化 | [../../../frontend/DEVELOPMENT.md](../../../frontend/DEVELOPMENT.md) |
-| 要做插件推送对接 | [../../../plugin-sdk/DEVELOPMENT.md](../../../plugin-sdk/DEVELOPMENT.md) |
+| 要做插件推送对接 | [../../../web-ai-chat-collector/bg/DEVELOPMENT.md](../../../web-ai-chat-collector/bg/DEVELOPMENT.md)（`bg/local-app.js` 段落） |
 | 要看后端整体架构 | [../../DEVELOPMENT.md](../../DEVELOPMENT.md) |

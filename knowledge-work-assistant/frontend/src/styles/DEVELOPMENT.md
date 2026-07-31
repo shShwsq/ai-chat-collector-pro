@@ -189,7 +189,7 @@ styles/
 
 1. 修改 `:root` 的 `--accent` / `--accent-soft` 默认值（study 模式色）。
 2. 修改 `.app-shell[data-mode="study"]` / `.app-shell[data-mode="work"]` 的覆写值。
-3. 同步更新 [plugin-sdk/ui/kwa-plugin.css](../../../plugin-sdk/ui/kwa-plugin.css) 的 `--kwa-accent` / `--kwa-accent-soft`（插件 UI 保持一致）。
+3. （插件侧 UI 已不再由本项目维护，若 collector 扩展后续接入主题色，需在 `web-ai-chat-collector` 内部自行管理，不与本项目联动）
 
 ## 代码约定
 
@@ -201,7 +201,7 @@ styles/
 6. **字重**：仅用 `400`（常规）/ `500`（次强调）/ `600`（强调）三档，避免 `700+`。
 7. **z-index 分层**：`--header: 100` / `--sidebar: 90` / `--floating-panel: 200` / `--toast: 9999` / `--modal: 9998`（如需新增层级，先在 `:root` 定义变量）。
 8. **响应式**：当前未做移动端适配，仅桌面端；如需响应式，用 `@media (max-width: 768px)` 等断点。
-9. **暗色模式**：当前未启用，仅 [plugin-sdk/ui/kwa-plugin.css](../../../plugin-sdk/ui/kwa-plugin.css) 预留了 `@media (prefers-color-scheme: dark)` 变量覆写；主应用暂不启用。
+9. **暗色模式**：当前未启用，主应用 styles 暂未预留 `@media (prefers-color-scheme: dark)` 变量覆写；如需启用，在 `app.css` 的 `:root` 后追加暗色变量覆写块即可。
 10. **不使用 CSS-in-JS**：所有样式集中在 `app.css` / `animations.css`，组件内不写 `style={{}}` 内联样式（除动态计算的位置 / 尺寸外）。
 
 ## 常见任务
