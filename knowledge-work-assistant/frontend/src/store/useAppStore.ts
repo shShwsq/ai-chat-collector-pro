@@ -2183,7 +2183,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       get().pushToast(
         resp.message
           ? `配置已保存：${resp.message}`
-          : 'LLM 配置已保存（部分变更可能需重启后端生效）',
+          : 'LLM 配置已保存，新配置将在下次调用时生效',
         'success',
       )
       return true

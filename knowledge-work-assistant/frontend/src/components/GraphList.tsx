@@ -20,29 +20,14 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { Icon } from './Icon'
+import { ConfirmDialog } from './graph/ConfirmDialog'
 import { useAppStore } from '../store/useAppStore'
 import type { Graph, Mode } from '../lib/types'
+import { formatShortTime } from '../lib/date'
 
 const MODE_LABEL: Record<Mode, string> = {
   study: '学习模式',
   work: '工作模式',
-}
-
-/** 格式化 ISO 时间为简短的本地展示（月/日 时:分）。 */
-function formatTime(iso: string): string {
-  try {
-    const d = new Date(iso)
-    if (Number.isNaN(d.getTime())) return ''
-    return new Intl.DateTimeFormat('zh-CN', {
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    }).format(d)
-  } catch {
-    return ''
-  }
 }
 
 export function GraphList() {
@@ -68,6 +53,9 @@ export function GraphList() {
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const renameRef = useRef<HTMLInputElement | null>(null)
+
+  // 删除确认弹窗
+  const [deleteTarget, setDeleteTarget] = useState<Graph | null>(null)
 
   // 新建输入框使用 autoFocus 在挂载阶段同步聚焦，
   // 不再依赖 useEffect([creating]) 手动 focus —— 后者只在 creating 变化时触发，
@@ -132,12 +120,18 @@ export function GraphList() {
     }
   }
 
-  const handleDelete = async (g: Graph) => {
-    const yes = window.confirm(
-      `确定删除图谱「${g.name}」？\n该操作会级联清理其下所有节点、边与测验，且不可恢复。`,
-    )
-    if (!yes) return
-    await deleteGraph(g.id)
+  const handleDelete = (g: Graph) => {
+    setDeleteTarget(g)
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    await deleteGraph(deleteTarget.id)
+    setDeleteTarget(null)
+  }
+
+  const cancelDelete = () => {
+    setDeleteTarget(null)
   }
 
   const handleTogglePending = () => {
@@ -211,7 +205,7 @@ export function GraphList() {
                         {g.name}
                       </span>
                       <span className="graph-list__item-meta">
-                        更新于 {formatTime(g.updated_at)}
+                        更新于 {formatShortTime(g.updated_at)}
                       </span>
                     </button>
                   )}
@@ -236,7 +230,7 @@ export function GraphList() {
                         title="删除"
                         onClick={(e) => {
                           e.stopPropagation()
-                          void handleDelete(g)
+                          handleDelete(g)
                         }}
                       >
                         删除
@@ -307,6 +301,22 @@ export function GraphList() {
           </button>
         </div>
       )}
+
+      {/* 删除图谱确认弹窗 */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="删除图谱"
+        message={
+          deleteTarget
+            ? `确定删除图谱「${deleteTarget.name}」？该操作会级联清理其下所有节点、边与测验记录，且不可恢复。`
+            : ''
+        }
+        confirmText="确认删除"
+        cancelText="取消"
+        danger
+        onConfirm={() => void confirmDelete()}
+        onCancel={cancelDelete}
+      />
     </aside>
   )
 }

@@ -33,6 +33,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useAppStore } from '../../store/useAppStore'
+import { parseDate } from '../../lib/date'
 import { renderMarkdown } from '../../lib/markdown'
 import type {
   ExtensionDirection,
@@ -157,8 +158,8 @@ function fieldToString(val: unknown): string {
  * 解析失败时回退为「已设提醒」，避免空徽标。
  */
 function formatRemind(isoString: string): string {
-  const d = new Date(isoString)
-  if (Number.isNaN(d.getTime())) return '已设提醒'
+  const d = parseDate(isoString)
+  if (!d) return '已设提醒'
   const pad = (n: number) => String(n).padStart(2, '0')
   const mm = pad(d.getMonth() + 1)
   const dd = pad(d.getDate())
@@ -172,8 +173,8 @@ function formatRemind(isoString: string): string {
  * （格式 ``YYYY-MM-DDTHH:mm``），用于编辑提醒时预填当前值。
  */
 function toDatetimeLocalValue(isoString: string): string {
-  const d = new Date(isoString)
-  if (Number.isNaN(d.getTime())) return ''
+  const d = parseDate(isoString)
+  if (!d) return ''
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }

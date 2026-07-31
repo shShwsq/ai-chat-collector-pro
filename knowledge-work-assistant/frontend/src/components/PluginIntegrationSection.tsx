@@ -17,6 +17,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import { useAppStore } from '../store/useAppStore'
+import { formatShortTime } from '../lib/date'
 
 /** 兜底平台列表（与后端 SUPPORTED_PLATFORMS 白名单对齐）。 */
 const FALLBACK_PLATFORMS = [
@@ -49,22 +50,6 @@ function resolveBackendOrigin(): string {
     return window.electronAPI?.backend?.getUrl() ?? FALLBACK_BACKEND_ORIGIN
   }
   return FALLBACK_BACKEND_ORIGIN
-}
-
-/** 把 ISO 时间字符串格式化为「MM-DD HH:mm」展示。 */
-function formatTime(ts: string | null | undefined): string {
-  if (!ts) return '-'
-  try {
-    const d = new Date(ts)
-    if (Number.isNaN(d.getTime())) return '-'
-    const MM = String(d.getMonth() + 1).padStart(2, '0')
-    const DD = String(d.getDate()).padStart(2, '0')
-    const HH = String(d.getHours()).padStart(2, '0')
-    const mm = String(d.getMinutes()).padStart(2, '0')
-    return `${MM}-${DD} ${HH}:${mm}`
-  } catch {
-    return '-'
-  }
 }
 
 export function PluginIntegrationSection() {
@@ -249,7 +234,7 @@ export function PluginIntegrationSection() {
                 className="plugin-recent-list__time"
                 title={item.created_at}
               >
-                {formatTime(item.timestamp)}
+                {formatShortTime(item.timestamp) || '-'}
               </span>
             </li>
           ))}

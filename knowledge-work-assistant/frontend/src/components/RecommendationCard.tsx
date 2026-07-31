@@ -24,6 +24,7 @@
 
 import { forwardRef } from 'react'
 
+import { parseDate } from '../lib/date'
 import type { RecommendationItem } from '../lib/types'
 
 export interface RecommendationCardProps {
@@ -50,8 +51,8 @@ export interface RecommendationCardProps {
 /** 把 ISO 时间字符串格式化为 "MM/DD HH:mm"，解析失败时回退原值。 */
 function formatRemindAt(iso: string | null | undefined): string {
   if (!iso) return ''
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
+  const d = parseDate(iso)
+  if (!d) return iso
   const mm = String(d.getMonth() + 1).padStart(2, '0')
   const dd = String(d.getDate()).padStart(2, '0')
   const hh = String(d.getHours()).padStart(2, '0')

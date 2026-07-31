@@ -60,6 +60,7 @@ import {
   clampScale,
   edgePath,
   estimateTextWidth,
+  isSameGraphStructure,
   NODE_HEIGHT,
   NODE_WIDTH,
   truncateText,
@@ -218,8 +219,14 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
     const edgeElsRef = useRef<Map<string, SVGPathElement>>(new Map())
     /** 节点最新坐标快照，React 重渲染时读取以保证 transform 一致。 */
     const positionsRef = useRef<Map<string, { x: number; y: number }>>(new Map())
+    /** 已初始化 transform 的节点 id 集合：避免重渲染时 ref callback 用过期 pos 覆盖 d3 tick 写入的 DOM。 */
+    const nodeInitRef = useRef<Set<string>>(new Set())
+    /** 已初始化 d 属性的边 id 集合：同上，避免重渲染覆盖 d3 tick 写入的 path。 */
+    const edgeInitRef = useRef<Set<string>>(new Set())
     /** 当前拖拽状态。 */
     const dragRef = useRef<DragState>({ kind: 'none' })
+    /** 上一次用于重建 simulation 的图谱结构快照，用于判断是字段更新还是结构更新。 */
+    const lastGraphSnapshotRef = useRef<{ nodeIds: string[]; edgeKeys: string[] } | null>(null)
     /** 最新画布尺寸（避免尺寸变化重建 simulation）。 */
     const sizeRef = useRef<{ width: number; height: number }>({ width: 800, height: 600 })
     /** 最新 transform（供 mousemove 闭包读取）。 */
@@ -292,7 +299,28 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
         nodeElsRef.current.clear()
         edgeElsRef.current.clear()
         positionsRef.current.clear()
+        nodeInitRef.current.clear()
+        edgeInitRef.current.clear()
+        lastGraphSnapshotRef.current = null
         return
+      }
+
+      // 若已有 simulation 且结构未变，仅 React 重渲染更新节点文本/样式，
+      // 不重建 simulation，避免点击节点生成详情时整图受力重排抽动。
+      if (simRef.current && lastGraphSnapshotRef.current) {
+        // 用上一个 displayGraph 快照与新 displayGraph 比较结构
+        const prevGraph: FullGraph = {
+          graph: displayGraph.graph,
+          stats: displayGraph.stats,
+          nodes: lastGraphSnapshotRef.current.nodeIds.map((id) => ({ id } as Node)),
+          edges: lastGraphSnapshotRef.current.edgeKeys.map((k) => {
+            const [src, dst] = k.split('->')
+            return { id: k, src_id: src, dst_id: dst } as Edge
+          }),
+        }
+        if (isSameGraphStructure(prevGraph, displayGraph)) {
+          return
+        }
       }
 
       const { width, height } = sizeRef.current
@@ -320,7 +348,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
         target: e.dst_id,
       }))
 
-      const sim = forceSimulation<SimNode>(nodes)
+      const newSim = forceSimulation<SimNode>(nodes)
         .force(
           'link',
           forceLink<SimNode, SimEdge>(edges)
@@ -354,10 +382,14 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
           }
         })
 
-      simRef.current = sim
+      simRef.current = newSim
+      lastGraphSnapshotRef.current = {
+        nodeIds: displayGraph.nodes.map((n) => n.id),
+        edgeKeys: displayGraph.edges.map((e) => `${e.src_id}->${e.dst_id}`),
+      }
 
       return () => {
-        sim.stop()
+        newSim.stop()
       }
       // 仅在图谱切换时重建；尺寸变化通过 center force 更新
     }, [displayGraph])
@@ -387,26 +419,25 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
             y: drag.startTranslateY + dy,
           }))
         } else if (drag.kind === 'node') {
+          const dx = ev.clientX - drag.startClientX
+          const dy = ev.clientY - drag.startClientY
+          // 位移未超过阈值时视为点击，不设 fx/fy、不重启 simulation，
+          // 避免微移误触发力导向重排导致整图抽动
+          if (Math.abs(dx) <= 3 && Math.abs(dy) <= 3) return
           const { k } = transformRef.current
-          // 屏幕位移转 svg 位移
-          const dxSvg = (ev.clientX - drag.startClientX) / k
-          const dySvg = (ev.clientY - drag.startClientY) / k
-          const nx = drag.startNodeX + dxSvg
-          const ny = drag.startNodeY + dySvg
+          const nx = drag.startNodeX + dx / k
+          const ny = drag.startNodeY + dy / k
           const sim = simRef.current
           if (!sim) return
           const node = sim.nodes().find((n) => n.id === drag.nodeId)
           if (!node) return
           node.fx = nx
           node.fy = ny
-          // 更新快照与 DOM
           positionsRef.current.set(node.id, { x: nx, y: ny })
           const el = nodeElsRef.current.get(node.id)
           if (el) el.setAttribute('transform', `translate(${nx},${ny})`)
-          // 重启模拟以让相关边跟随；forceLink 在 tick 时自动读取最新坐标
           sim.alphaTarget(0.3).restart()
-          if (!drag.moved && (Math.abs(ev.clientX - drag.startClientX) > 3 ||
-            Math.abs(ev.clientY - drag.startClientY) > 3)) {
+          if (!drag.moved) {
             dragRef.current = { ...drag, moved: true }
           }
         }
@@ -774,9 +805,11 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
                     ref={(el) => {
                       if (el) {
                         edgeElsRef.current.set(e.id, el)
-                        // 设置初始路径；后续 d 由 d3 tick handler 独占更新，
-                        // 避免 React 重渲染覆盖导致连线跳动
-                        el.setAttribute('d', d)
+                        // 仅首次挂载设置初始路径；后续 d 由 d3 tick handler 独占更新
+                        if (!edgeInitRef.current.has(e.id)) {
+                          edgeInitRef.current.add(e.id)
+                          el.setAttribute('d', d)
+                        }
                       } else {
                         edgeElsRef.current.delete(e.id)
                       }
@@ -807,9 +840,13 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
                     ref={(el) => {
                       if (el) {
                         nodeElsRef.current.set(n.id, el)
-                        // 设置初始位置；后续 transform 由 d3 tick handler 独占更新，
-                        // 避免 React 重渲染时用过期位置覆盖 tick 的 DOM 写入导致节点跳动
-                        el.setAttribute('transform', `translate(${pos.x},${pos.y})`)
+                        // 仅首次挂载设置初始位置；后续 transform 由 d3 tick handler 独占更新。
+                        // 注意：ref(null) 时不清除 nodeInitRef，否则 React 重渲染的 null→el 循环
+                        // 会误判为"首次挂载"再次 setAttribute，用过期 pos 覆盖 tick 写入的 DOM
+                        if (!nodeInitRef.current.has(n.id)) {
+                          nodeInitRef.current.add(n.id)
+                          el.setAttribute('transform', `translate(${pos.x},${pos.y})`)
+                        }
                       } else {
                         nodeElsRef.current.delete(n.id)
                       }

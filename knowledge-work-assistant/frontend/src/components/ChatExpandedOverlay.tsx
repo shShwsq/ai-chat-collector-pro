@@ -13,6 +13,7 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 
 import { useAppStore } from '../store/useAppStore'
+import { parseDate } from '../lib/date'
 import type { Node, RecommendationItem } from '../lib/types'
 
 interface ChatExpandedOverlayProps {
@@ -285,10 +286,15 @@ export function ChatExpandedOverlay(_props: ChatExpandedOverlayProps) {
                 <div className="expanded-card__meta-item">
                   <span className="expanded-card__meta-label">提醒时间</span>
                   <span className="expanded-card__meta-value">
-                    {new Date(node.remind_at).toLocaleString('zh-CN', {
-                      month: '2-digit', day: '2-digit',
-                      hour: '2-digit', minute: '2-digit',
-                    })}
+                    {(() => {
+                      const d = parseDate(node.remind_at)
+                      return d
+                        ? d.toLocaleString('zh-CN', {
+                            month: '2-digit', day: '2-digit',
+                            hour: '2-digit', minute: '2-digit',
+                          })
+                        : ''
+                    })()}
                   </span>
                 </div>
               )}
@@ -296,7 +302,12 @@ export function ChatExpandedOverlay(_props: ChatExpandedOverlayProps) {
                 <div className="expanded-card__meta-item">
                   <span className="expanded-card__meta-label">创建时间</span>
                   <span className="expanded-card__meta-value">
-                    {new Date(node.created_at).toLocaleDateString('zh-CN')}
+                    {(() => {
+                      const d = parseDate(node.created_at)
+                      return d
+                        ? d.toLocaleDateString('zh-CN')
+                        : ''
+                    })()}
                   </span>
                 </div>
               )}

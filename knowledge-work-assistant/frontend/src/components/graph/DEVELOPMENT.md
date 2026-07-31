@@ -124,6 +124,10 @@ graph/
 - 受控组件：`open` / `title` / `message` / `onConfirm` / `onCancel` props。
 - 用于删除节点 / 删除图谱 / 撤销延伸等需要二次确认的场景。
 - ESC 键 / 遮罩层点击触发 `onCancel`。
+- **焦点管理与无障碍**：
+  - 弹窗打开时自动聚焦到第一个按钮，关闭时将焦点恢复到触发元素（`triggerRef`）。
+  - Tab 键循环：在弹窗内的按钮间循环 Tab 焦点（`Shift+Tab` 反向），避免焦点泄漏到弹窗外。
+  - 使用 `dialogRef` 引用弹窗 DOM，查询可聚焦按钮实现焦点循环。
 
 ### `graphUtils.ts`（纯函数工具）
 
