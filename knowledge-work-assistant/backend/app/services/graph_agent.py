@@ -41,6 +41,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.config import settings
 from app.db import AsyncSessionLocal
 from app.models.node_types import (
     GRAPH_TYPE_STUDY,
@@ -60,6 +61,7 @@ from app.services.llm_client import LLMClient
 from app.services.llm_errors import LLMError
 from app.services.llm_factory import get_llm_client
 from app.services.llm_request_registry import llm_request_registry
+from app.services.model_config import get_model_config
 from app.services.ws_notify import notify_session
 
 logger = logging.getLogger(__name__)
@@ -82,11 +84,23 @@ _EXTENSION_DIRECTIONS_MAX = 6
 # 标题相似度归一化：用于去重时的小写 + 去空白比较
 _SIMILAR_THRESHOLD = 0.8  # 简单子串包含或归一化相等即视为重复
 
-# 长对话分块抽取参数（避免单次 LLM 调用上下文溢出导致后段节点静默丢失，
+# 长对话分块抽取参数（块大小动态由 _resolve_chunk_config 按 context_window 计算，
 # 修复 Issue #9：graph_agent 长对话静默截断丢失节点）
-_CONVERSATION_CHUNK_SIZE = 6000   # 每块字符数（中文约 3000-4000 token，留出 prompt 余量）
-_CHUNK_OVERLAP = 500              # 块间重叠字符数（保证跨块节点连续性）
 _MAX_EXISTING_NODES_HINT = 50     # 注入 prompt 的已有节点标题上限（用于同义归一）
+
+# 动态块大小计算的兜底与边界
+_FALLBACK_CONTEXT_WINDOW = 8192   # context_window 解析失败时的兜底值
+_MIN_CHUNK_CHARS = 2000           # 块字符数下限（避免块过小导致调用次数爆炸）
+_MAX_CHUNK_CHARS = 200_000        # 块字符数上限（避免极端配置导致单块过大 LLM 卡死）
+_EXTRACT_SYSTEM_PROMPT_TOKENS = 1500  # 抽取 system prompt 的 token 估算
+_CHARS_PER_TOKEN = 1.5            # 中文约 1.5 字符/token（保守值）
+_CONTEXT_SAFETY_RATIO = 0.85      # 上下文安全系数（扣除 system prompt + 角色边界开销）
+
+# 角色标记正则：兼容 H2/H3、有无 emoji、有无粗体（生产格式 ### **🧑 用户** / 兜底 ## 用户）
+_ROLE_MARKER_PATTERN = re.compile(
+    r'^(?:#{2,3}\s*\**\s*(?:🧑\s*)?用户|#{2,3}\s*\**\s*(?:🤖\s*)?助手)',
+    re.MULTILINE,
+)
 
 
 # ============================================================================
@@ -144,34 +158,217 @@ def _extract_json_object(text: str) -> str:
     return text[start : end + 1]
 
 
-def _split_conversation(text: str) -> list[str]:
-    """将长对话按 :data:`_CONVERSATION_CHUNK_SIZE` 切分为多块，块间保留
-    :data:`_CHUNK_OVERLAP` 重叠字符以保证跨块节点连续性。
+def _resolve_chunk_config(client: LLMClient) -> tuple[int, int]:
+    """根据当前 LLM 上下文窗口动态计算切块参数。
 
-    短于一块则返回单元素列表。按字符切分（中文场景比 token 切分更可控），
-    优先在换行处断开避免割裂句子。空文本返回空列表。
+    优先级链与 :mod:`app.services.main_agent` 保持一致：
+    ``settings.llm_context_window`` → ``model_config.json`` 中该模型 → 兜底 8192。
+
+    Returns:
+        ``(chunk_chars, overlap_chars)``：
+        - ``chunk_chars``：每块字符数上限（下限 2000，上限 200000）。
+        - ``overlap_chars``：块间重叠字符数（约 10%，上限 1000）。
+    """
+    model_cfg = get_model_config(client.model)
+    context_window = (
+        settings.llm_context_window
+        or model_cfg.get("context_window")
+        or _FALLBACK_CONTEXT_WINDOW
+    )
+    max_output_tokens = model_cfg.get("max_output_tokens") or 4096
+
+    # 可用 token = 上下文 × 安全系数 - system prompt - 输出预留
+    usable_tokens = max(
+        1024,
+        int(context_window * _CONTEXT_SAFETY_RATIO)
+        - _EXTRACT_SYSTEM_PROMPT_TOKENS
+        - max_output_tokens,
+    )
+    # 中文约 1.5 字符/token（保守值）
+    chunk_chars = int(usable_tokens * _CHARS_PER_TOKEN)
+    chunk_chars = max(_MIN_CHUNK_CHARS, min(_MAX_CHUNK_CHARS, chunk_chars))
+    overlap_chars = min(chunk_chars // 10, 1000)
+    return chunk_chars, overlap_chars
+
+
+def _split_by_char_fallback(
+    text: str, chunk_chars: int, overlap_chars: int
+) -> list[str]:
+    """纯字符切分兜底（无角色标记或单单元超限时使用）。
+
+    优先在换行处断开避免割裂句子。短于一块返回单元素列表。空文本返回空列表。
     """
     if not text:
         return []
-    if len(text) <= _CONVERSATION_CHUNK_SIZE:
+    if len(text) <= chunk_chars:
         return [text]
 
     chunks: list[str] = []
     start = 0
     n = len(text)
     while start < n:
-        end = min(start + _CONVERSATION_CHUNK_SIZE, n)
-        # 优先在换行处断开（向前回溯半块找最近的 \n，避免割裂句子）
+        end = min(start + chunk_chars, n)
+        # 优先在换行处断开（向前回溯半块找最近的 \n）
         if end < n:
-            look_back_start = start + _CONVERSATION_CHUNK_SIZE // 2
+            look_back_start = start + chunk_chars // 2
             nl = text.rfind("\n", look_back_start, end)
             if nl > look_back_start:
                 end = nl + 1
         chunks.append(text[start:end])
         if end >= n:
             break
-        # 下一块从 end - overlap 开始，保证重叠
-        start = max(0, end - _CHUNK_OVERLAP)
+        start = max(0, end - overlap_chars)
+    return chunks
+
+
+def _parse_messages(text: str) -> list[tuple[str, str]]:
+    """按角色标记把对话切分成消息列表。
+
+    兼容生产格式（``### **🧑 用户**``）与兜底格式（``## 用户``）。
+    每条消息返回 ``(role, content)``，role 为 ``"user"`` / ``"assistant"``。
+    首条消息前的头部元信息（``# 标题`` / ``> 平台:...``）归到首条消息前导，
+    单独成块时并入第一条。
+
+    无任何角色标记时返回空列表（调用方回退到字符切分）。
+    """
+    matches = list(_ROLE_MARKER_PATTERN.finditer(text))
+    if not matches:
+        return []
+
+    messages: list[tuple[str, str]] = []
+    for i, m in enumerate(matches):
+        # 判定角色：包含"用户" → user，包含"助手" → assistant
+        line = m.group(0)
+        role = "user" if "用户" in line else "assistant"
+        start = m.start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        # 首条消息前的头部归入首条消息内容前导
+        if i == 0 and start > 0:
+            content = text[:end]
+        else:
+            # content 含角色行本身（便于 LLM 识别角色）
+            content = text[start:end]
+        messages.append((role, content))
+    return messages
+
+
+def _pair_qa_units(
+    messages: list[tuple[str, str]],
+) -> list[str]:
+    """把消息列表按 Q&A 配对组装成原子单元。
+
+    规则：
+    - 「用户消息 + 紧随的助手回复」合并为一个单元。
+    - 用户消息后无助手回复 → 单独成单元。
+    - 首条是助手消息（无配对用户）→ 单独成单元。
+    - 连续多条同角色消息 → 合并到当前单元（不强制配对）。
+
+    Returns:
+        单元文本列表（每个单元含角色标记与正文）。
+    """
+    if not messages:
+        return []
+
+    units: list[str] = []
+    i = 0
+    n = len(messages)
+    while i < n:
+        role, content = messages[i]
+        if role == "user":
+            # 贪心吸收后续连续的 user 消息
+            parts = [content]
+            j = i + 1
+            while j < n and messages[j][0] == "user":
+                parts.append(messages[j][1])
+                j += 1
+            # 若紧随 assistant 消息，也吸收进同一单元
+            if j < n and messages[j][0] == "assistant":
+                parts.append(messages[j][1])
+                j += 1
+                # 继续吸收连续的 assistant 消息
+                while j < n and messages[j][0] == "assistant":
+                    parts.append(messages[j][1])
+                    j += 1
+            units.append("".join(parts))
+            i = j
+        else:
+            # 首条是 assistant（无配对 user）→ 单独成单元
+            parts = [content]
+            j = i + 1
+            while j < n and messages[j][0] == "assistant":
+                parts.append(messages[j][1])
+                j += 1
+            units.append("".join(parts))
+            i = j
+    return units
+
+
+def _split_conversation(
+    text: str, chunk_chars: int, overlap_chars: int
+) -> list[str]:
+    """将长对话切分为多块，块间保留若干完整 Q&A 单元作为重叠。
+
+    切分策略：
+    1. 按角色标记解析消息列表（兼容 H2/H3、有无 emoji/粗体）。
+    2. 按 Q&A 配对组装原子单元（用户消息 + 紧随助手回复）。
+    3. 贪心打包：当前块加入下一单元后 ≤ ``chunk_chars`` 则加入，否则开新块。
+    4. 重叠区 = 上一块末尾的若干完整单元（按 ``overlap_chars`` 反推，至少 1 个）。
+    5. 单个单元本身超过 ``chunk_chars`` 时，对该单元回退字符切分。
+
+    无角色标记时回退到 :func:`_split_by_char_fallback`（保持向后兼容）。
+    短于一块返回单元素列表。空文本返回空列表。
+    """
+    if not text:
+        return []
+    if len(text) <= chunk_chars:
+        return [text]
+
+    messages = _parse_messages(text)
+    if not messages:
+        # 无角色标记 → 回退字符切分
+        return _split_by_char_fallback(text, chunk_chars, overlap_chars)
+
+    units = _pair_qa_units(messages)
+    if not units:
+        return _split_by_char_fallback(text, chunk_chars, overlap_chars)
+
+    # 单个单元超限 → 对该单元字符切分，sub 块各自独立参与打包
+    expanded_units: list[list[str]] = []
+    for unit in units:
+        if len(unit) > chunk_chars:
+            sub = _split_by_char_fallback(unit, chunk_chars, overlap_chars)
+            expanded_units.append(sub)
+        else:
+            expanded_units.append([unit])
+
+    # 贪心打包：把所有 sub 块拍平成序列，逐个加入当前块
+    flat_parts: list[str] = []
+    for parts in expanded_units:
+        flat_parts.extend(parts)
+
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for part in flat_parts:
+        part_len = len(part)
+        if current and current_len + part_len > chunk_chars:
+            # 收尾当前块
+            chunks.append("".join(current))
+            # 重叠：保留当前块末尾若干部分填满 overlap_chars
+            overlap_parts: list[str] = []
+            ov_len = 0
+            for back in reversed(current):
+                if ov_len >= overlap_chars:
+                    break
+                overlap_parts.insert(0, back)
+                ov_len += len(back)
+            current = list(overlap_parts) if overlap_parts else []
+            current_len = sum(len(p) for p in current)
+        current.append(part)
+        current_len += part_len
+
+    if current:
+        chunks.append("".join(current))
     return chunks
 
 
@@ -426,9 +623,11 @@ class GraphAgent:
         """从一条 Observation 对话中抽取候选节点。
 
         对长对话采用**分块抽取 + 合并去重**策略（修复 Issue #9：长对话静默
-        截断丢失节点）：对话按 :data:`_CONVERSATION_CHUNK_SIZE` 切分为多块，
-        每块独立调用 LLM 抽取，最后用 :func:`_titles_similar` 跨块去重合并。
-        短对话（<= 一块）走单次调用原路径，行为与历史版本一致。
+        截断丢失节点）：块大小由 :func:`_resolve_chunk_config` 按当前 LLM 上下文
+        窗口动态计算，按 Q&A 配对切分（保证消息不被切断），每块独立调用 LLM 抽取，
+        最后用 :func:`_titles_similar` 跨块去重合并，再由
+        :meth:`_merge_candidates_with_existing` 与图谱已有节点做语义合并。
+        短对话（<= 一块）走单次调用原路径。
 
         同义归一：抽取前从 :meth:`store.list_nodes` 加载当前图谱已有节点标题
         （最多 :data:`_MAX_EXISTING_NODES_HINT` 个）注入 prompt，要求 LLM 优先
@@ -509,8 +708,17 @@ class GraphAgent:
                 )
                 existing_titles = []
 
-        # 分块：短对话返回单元素列表，长对话切分为多块
-        chunks = _split_conversation(conversation)
+        # 动态计算块大小（按 LLM 上下文窗口）
+        chunk_chars, overlap_chars = _resolve_chunk_config(client)
+        logger.info(
+            "GraphAgent: 块配置 chunk_chars=%d overlap_chars=%d model=%s",
+            chunk_chars,
+            overlap_chars,
+            client.model,
+        )
+
+        # 分块：短对话返回单元素列表，长对话按 Q&A 配对切分为多块
+        chunks = _split_conversation(conversation, chunk_chars, overlap_chars)
         truncated = len(chunks) > 1
         if not chunks:
             return {
@@ -537,7 +745,7 @@ class GraphAgent:
             )
             chunk_results.append(cleaned)
 
-        # 合并去重
+        # 跨块规则去重（标题子串包含兜底）
         if len(chunk_results) == 1:
             nodes = chunk_results[0]
         else:
@@ -548,6 +756,12 @@ class GraphAgent:
                 len(chunks),
                 sum(len(c) for c in chunk_results),
                 len(nodes),
+            )
+
+        # 与图谱已有节点语义合并（LLM agent 决策 keep/merge_into/drop）
+        if nodes and graph_id:
+            nodes = await self._merge_candidates_with_existing(
+                client, nodes, graph_id
             )
 
         return {
@@ -687,6 +901,281 @@ class GraphAgent:
                 }
             )
         return cleaned
+
+    async def _merge_candidates_with_existing(
+        self,
+        client: LLMClient,
+        candidates: list[dict[str, Any]],
+        graph_id: str,
+    ) -> list[dict[str, Any]]:
+        """用 LLM agent 对候选节点与图谱已有节点做语义合并去重。
+
+        对每个候选节点决定：
+        - ``keep``：作为新节点保留。
+        - ``merge_into``：补充到已有节点（合并 detail_payload 字段，不覆盖已有内容），
+          候选节点不入图，已有节点 ``incr_mention``。
+        - ``drop``：丢弃重复候选节点。
+        - ``need_detail``：需查看指定已有节点的 detail_payload 才能决策（触发二次调用）。
+
+        prompt 约束避免合并出超大卡片（merge_fields 仅补充空字段、每字段 ≤200 字、
+        重叠度高优先 drop）。
+
+        LLM 不可用或解析失败时回退到 :func:`_merge_nodes` + :func:`_titles_similar`
+        纯规则去重（返回 candidates 原样，仅做跨候选去重）。
+        """
+        if not candidates:
+            return candidates
+
+        # 加载已有节点（前 N 个），构造 brief 供 LLM 决策
+        try:
+            existing_nodes = await self.store.list_nodes(graph_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "GraphAgent: 合并 agent 加载已有节点失败 graph=%s: %s",
+                graph_id,
+                exc,
+            )
+            return self._rule_based_dedup(candidates)
+
+        existing_brief: list[dict[str, Any]] = []
+        title_to_node: dict[str, dict[str, Any]] = {}
+        for n in existing_nodes[:_MAX_EXISTING_NODES_HINT]:
+            title = n.get("title", "")
+            if not title:
+                continue
+            existing_brief.append(
+                {
+                    "title": title,
+                    "summary": (n.get("summary") or "")[:200],
+                    "type": n.get("type", ""),
+                }
+            )
+            title_to_node[title] = n
+
+        # 无已有节点 → 无需合并，直接返回（仍做候选间去重）
+        if not existing_brief:
+            return self._rule_based_dedup(candidates)
+
+        # 截断候选 detail_payload 避免 prompt 过长
+        candidates_brief = []
+        for i, c in enumerate(candidates):
+            dp = c.get("detail_payload") or {}
+            dp_brief = {
+                k: (str(v)[:200] if v else "") for k, v in dp.items()
+            } if isinstance(dp, dict) else {}
+            candidates_brief.append(
+                {
+                    "index": i,
+                    "title": c.get("title", ""),
+                    "summary": (c.get("summary") or "")[:200],
+                    "type": c.get("type", ""),
+                    "detail_payload": dp_brief,
+                }
+            )
+
+        system_prompt = (
+            "你是一个「知识图谱节点合并决策器」。对每个候选节点，判断它与已有节点"
+            "是否指代同一概念，给出决策。输出严格 JSON，不要解释文字或代码块。\n\n"
+            "输出格式：{\"decisions\": [{\"candidate_index\", \"action\", ...}]}\n"
+            "action 取值：\n"
+            "- \"keep\": 候选是新概念，作为新节点保留\n"
+            "- \"merge_into\": 候选与已有节点指代同一对象但有补充信息，合并到已有节点\n"
+            "  （需提供 target_title 与 merge_fields）\n"
+            "- \"drop\": 候选与已有节点完全重复，丢弃\n"
+            "- \"need_detail\": 需查看指定已有节点的完整 detail_payload 才能判断\n"
+            "  （需提供 target_title）\n\n"
+            "重要约束（避免合并出超大卡片）：\n"
+            "1. merge_fields 仅在已有节点该字段为空或明显不完整时才补充，"
+            "不要合并已有内容。\n"
+            "2. 单次 merge_fields 的每个字段值不超过 200 字。\n"
+            "3. 若候选与已有节点内容重叠度高，优先 drop 而非 merge_into。\n"
+            "4. 宁可 keep 两个相近但不同的节点，也不要 merge_into 出一个信息过载的"
+            "超级卡片。\n"
+            "5. merge_fields 的 key 必须来自已有节点的 detail_payload 现有字段。\n"
+            "6. target_title 必须精确匹配已有节点标题列表中的某一项。\n"
+        )
+        user_prompt = (
+            f"已有节点列表（前 {len(existing_brief)} 个）：\n"
+            f"{json.dumps(existing_brief, ensure_ascii=False, indent=2)}\n\n"
+            f"候选节点列表（共 {len(candidates_brief)} 个）：\n"
+            f"{json.dumps(candidates_brief, ensure_ascii=False, indent=2)}\n\n"
+            "请对每个候选节点给出决策，输出 JSON："
+        )
+
+        result = await self._call_llm_json(
+            client,
+            system_prompt,
+            user_prompt,
+            temperature=0.2,
+            request_id=await llm_request_registry.register(
+                "merge_candidates",
+                graph_id=graph_id,
+                meta={
+                    "candidate_count": len(candidates),
+                    "existing_count": len(existing_brief),
+                },
+            ),
+        )
+        if result is None:
+            logger.warning(
+                "GraphAgent: 合并 agent 首轮调用失败，回退规则去重"
+            )
+            return self._rule_based_dedup(candidates)
+
+        decisions_raw = result.get("decisions") if isinstance(result, dict) else None
+        if not isinstance(decisions_raw, list):
+            logger.warning(
+                "GraphAgent: 合并 agent 返回 decisions 非列表，回退规则去重"
+            )
+            return self._rule_based_dedup(candidates)
+
+        # 解析首轮决策
+        decisions: list[dict[str, Any]] = []
+        for d in decisions_raw:
+            if not isinstance(d, dict):
+                continue
+            decisions.append(d)
+
+        # 处理 need_detail：二次调用补全
+        need_detail_items = [
+            d for d in decisions if d.get("action") == "need_detail"
+        ]
+        if need_detail_items:
+            # 收集需要查看详情的已有节点
+            detail_map: dict[str, dict[str, Any]] = {}
+            for d in need_detail_items:
+                t = (d.get("target_title") or "").strip()
+                if t and t in title_to_node:
+                    node = title_to_node[t]
+                    dp = node.get("detail_payload") or {}
+                    # 截断每个字段值避免 prompt 过长
+                    detail_map[t] = {
+                        k: (str(v)[:300] if v else "")
+                        for k, v in dp.items()
+                    } if isinstance(dp, dict) else {}
+
+            if detail_map:
+                second_prompt = (
+                    "以下是需查看的已有节点完整 detail_payload，请对每个 need_detail "
+                    "候选给出最终决策（keep / merge_into / drop）：\n\n"
+                    f"已有节点详情：\n{json.dumps(detail_map, ensure_ascii=False, indent=2)}\n\n"
+                    f"待决策候选（need_detail 项）：\n"
+                    f"{json.dumps(need_detail_items, ensure_ascii=False, indent=2)}\n\n"
+                    "请输出 JSON：{\"decisions\": [{\"candidate_index\", \"action\", ...}]}，"
+                    "action 仅限 keep / merge_into / drop。"
+                )
+                second_result = await self._call_llm_json(
+                    client,
+                    system_prompt,
+                    second_prompt,
+                    temperature=0.2,
+                    request_id=await llm_request_registry.register(
+                        "merge_candidates_detail",
+                        graph_id=graph_id,
+                        meta={"need_detail_count": len(need_detail_items)},
+                    ),
+                )
+                if second_result is not None:
+                    second_decisions = second_result.get("decisions")
+                    if isinstance(second_decisions, list):
+                        # 用二次决策替换 need_detail 项
+                        second_by_idx = {
+                            d.get("candidate_index"): d
+                            for d in second_decisions
+                            if isinstance(d, dict)
+                        }
+                        decisions = [
+                            second_by_idx.get(d.get("candidate_index"), d)
+                            if d.get("action") == "need_detail"
+                            else d
+                            for d in decisions
+                        ]
+
+        # 应用决策
+        kept: list[dict[str, Any]] = []
+        merged_count = 0
+        dropped_count = 0
+        for d in decisions:
+            idx = d.get("candidate_index")
+            if not isinstance(idx, int) or idx < 0 or idx >= len(candidates):
+                continue
+            candidate = candidates[idx]
+            action = d.get("action", "keep")
+            if action == "keep":
+                kept.append(candidate)
+            elif action == "merge_into":
+                target_title = (d.get("target_title") or "").strip()
+                merge_fields = d.get("merge_fields") or {}
+                if not isinstance(merge_fields, dict):
+                    merge_fields = {}
+                # 截断每个字段值到 200 字
+                merge_fields = {
+                    k: (str(v)[:200] if v else "")
+                    for k, v in merge_fields.items()
+                }
+                target_node = title_to_node.get(target_title)
+                if target_node and merge_fields:
+                    try:
+                        await self.store.update_node(
+                            target_node["id"],
+                            detail_payload=merge_fields,
+                        )
+                        await self.store.incr_mention(target_node["id"])
+                        merged_count += 1
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "GraphAgent: 合并 agent update_node 失败 target=%s: %s",
+                            target_title,
+                            exc,
+                        )
+                        # 合并失败则保留候选作为新节点
+                        kept.append(candidate)
+                else:
+                    # target 不存在或无 merge_fields → 保留候选
+                    kept.append(candidate)
+            elif action == "drop":
+                dropped_count += 1
+            else:
+                # 未知 action → 保留
+                kept.append(candidate)
+
+        # 决策数与候选数不匹配时，未覆盖的候选默认保留
+        decided_indices = {
+            d.get("candidate_index")
+            for d in decisions
+            if isinstance(d.get("candidate_index"), int)
+        }
+        for i, c in enumerate(candidates):
+            if i not in decided_indices:
+                kept.append(c)
+
+        logger.info(
+            "GraphAgent: 合并 agent 完成 graph=%s candidates=%d kept=%d "
+            "merged=%d dropped=%d",
+            graph_id,
+            len(candidates),
+            len(kept),
+            merged_count,
+            dropped_count,
+        )
+        return kept
+
+    def _rule_based_dedup(
+        self, candidates: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """规则兜底去重（合并 agent 不可用时使用）。
+
+        复用 :func:`_titles_similar` 对候选列表内部去重，前优先保留。
+        """
+        if not candidates:
+            return []
+        kept: list[dict[str, Any]] = []
+        for c in candidates:
+            title = c.get("title", "")
+            if any(_titles_similar(title, k.get("title", "")) for k in kept):
+                continue
+            kept.append(c)
+        return kept
 
     # ------------------------------------------------------------------
     # 2. 节点详情生成
