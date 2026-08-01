@@ -16,9 +16,17 @@ import ReactDOM from 'react-dom/client'
 import './styles/animations.css'
 import './styles/app.css'
 import App from './App'
+import { resolveStoredTheme } from './lib/themes'
+import { MotionProvider } from './lib/motion'
+
+const initialTheme = resolveStoredTheme(typeof window === 'undefined' ? null : window.localStorage)
+document.documentElement.dataset.theme = initialTheme
+document.documentElement.style.colorScheme = initialTheme === 'simple-black' ? 'dark' : 'light'
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    <App />
+    <MotionProvider>
+      <App />
+    </MotionProvider>
   </React.StrictMode>,
 )

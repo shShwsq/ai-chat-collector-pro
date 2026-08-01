@@ -1648,8 +1648,22 @@
   flex: 1;
   min-width: 0;
   min-height: 0;
-  display: flex;
+  position: relative;
+  overflow: hidden;
   view-transition-name: mode-slide;
+}
+
+.nav-view {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.nav-view--graph {
+  display: flex;
 }
 
 /* study → work：旧 study 向右滑出（被推向右屏外），新 work 从左滑入 */
@@ -2305,6 +2319,36 @@
   flex-direction: column;
 }
 
+/* Graph/Card 始终挂载：保留 d3 simulation、缩放位置与卡片滚动位置。 */
+.content-stage__view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity var(--motion-fast) var(--ease), visibility 0s linear var(--motion-fast);
+}
+
+.content-stage__view.is-active {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+
+html[data-motion-quality='standard'] .gv-container.gv-transitioning .gv-svg,
+html[data-motion-quality='reduced'] .gv-container.gv-transitioning .gv-svg {
+  filter: opacity(0.5);
+}
+
+html[data-motion-quality='reduced'] .content-stage__view,
+html[data-motion-quality='reduced'] .gv-container .gv-svg {
+  transition: none;
+}
+
 .content-loading {
   flex: 1;
   display: flex;
@@ -2321,6 +2365,7 @@
 .gv-container {
   position: absolute;
   inset: 0;
+  isolation: isolate;
   overflow: hidden;
   background: var(--surface-soft);
   /* 极轻的网格点背景，增强画布感 */
@@ -2417,6 +2462,8 @@
 }
 
 .gv-svg {
+  position: relative;
+  z-index: 1;
   display: block;
   cursor: grab;
   user-select: none;
@@ -2754,6 +2801,7 @@
 .node-detail-card {
   position: absolute;
   z-index: 60;
+  pointer-events: auto;
   display: flex;
   flex-direction: column;
   background: var(--surface);
@@ -6869,6 +6917,22 @@
 }
 
 .side-nav__btn.is-active::before {
+  display: none;
+}
+
+.side-nav__active-rail {
+  position: absolute;
+  left: 0;
+  top: 16%;
+  bottom: 16%;
+  width: 3px;
+  border-radius: 0 999px 999px 0;
+  background: var(--accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 42%, transparent);
+  pointer-events: none;
+}
+
+.side-nav__btn.is-active::before {
   content: '';
   position: absolute;
   left: 0;
@@ -8114,7 +8178,9 @@
   border: none;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: opacity var(--transition-fast), transform var(--transition-fast),
+    background-color var(--transition-fast), color var(--transition-fast),
+    box-shadow var(--transition-fast);
   font-family: inherit;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
   z-index: 1;
@@ -8653,7 +8719,8 @@
   border: 1px solid var(--accent);
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: background-color var(--transition-fast), color var(--transition-fast),
+    border-color var(--transition-fast), opacity var(--transition-fast);
   font-family: inherit;
 }
 
@@ -9363,8 +9430,8 @@
 }
 
 .rec-card--overdue:hover {
-  background: linear-gradient(to right, #fee9e9, var(--surface));
-  border-color: rgba(220, 38, 38, 0.3);
+  background: linear-gradient(to right, var(--danger-soft), var(--surface));
+  border-color: var(--danger-border);
 }
 
 /* 临近卡片：左边框橙色 */
@@ -9574,10 +9641,6 @@
   pointer-events: none;
 }
 
-/* ============================================================
-   卡片飞出浮层（expanded-overlay）：fixed 中央定位 + FLIP动画
-   ============================================================ */
-
 .expanded-overlay {
   position: fixed;
   inset: 0;
@@ -9586,32 +9649,25 @@
   align-items: center;
   justify-content: center;
   padding: 24px;
+  /* Motion 根层只负责视觉与布局，命中区域由 backdrop/card 精确声明。 */
   pointer-events: none;
-  opacity: 0;
-  transition: opacity 200ms ease;
-}
-
-.expanded-overlay.is-playing {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.expanded-overlay.is-transitioning {
-  opacity: 0;
+  isolation: isolate;
 }
 
 .expanded-overlay__backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(15, 23, 42, 0.5);
+  z-index: 0;
+  background: color-mix(in srgb, var(--bg) 68%, transparent);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
+  pointer-events: auto;
+  will-change: opacity, backdrop-filter;
 }
 
 .expanded-overlay__card {
-  position: relative;
-  width: min(560px, 92vw);
-  max-height: 85vh;
+  position: fixed;
+  z-index: 1;
   background: var(--surface, #fff);
   border-radius: 20px;
   box-shadow:
@@ -9621,25 +9677,138 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  transform:
-    translate(var(--flip-x, 0), var(--flip-y, 0))
-    scale(var(--flip-scale, 0.8))
-    rotate(var(--flip-rot, -6deg));
-  transform-origin: center center;
-  transition:
-    transform 520ms cubic-bezier(0.16, 1, 0.3, 1),
-    box-shadow 520ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.expanded-overlay.is-playing .expanded-overlay__card {
-  transform: translate(0, 0) scale(1) rotate(0deg);
+  pointer-events: auto;
   box-shadow:
     0 40px 100px rgba(0, 0, 0, 0.3),
     0 16px 40px rgba(0, 0, 0, 0.15);
+  will-change: transform, opacity, border-radius;
 }
 
-.expanded-overlay.is-closing .expanded-overlay__card {
-  transition-duration: 380ms;
+.expanded-overlay[data-overlay-phase='handoff'] .expanded-overlay__backdrop,
+.expanded-overlay[data-overlay-phase='handoff'] .expanded-overlay__card {
+  pointer-events: none;
+}
+
+.expanded-overlay[data-overlay-phase='handoff'] .expanded-overlay__backdrop {
+  opacity: 1;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.expanded-overlay[data-handoff-phase='graph-ready'] .expanded-overlay__backdrop {
+  opacity: 0;
+  backdrop-filter: blur(0);
+  -webkit-backdrop-filter: blur(0);
+  transition:
+    opacity var(--expanded-transition-duration, 340ms) var(--ease),
+    backdrop-filter var(--expanded-transition-duration, 340ms) var(--ease);
+}
+
+.expanded-overlay[data-handoff-phase='graph-ready'] .expanded-overlay__card {
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+}
+
+.expanded-overlay[data-handoff-timeout='true'] .expanded-overlay__backdrop,
+.expanded-overlay[data-handoff-timeout='true'] .expanded-overlay__card {
+  opacity: 0;
+  backdrop-filter: blur(0);
+  -webkit-backdrop-filter: blur(0);
+  transition: opacity 260ms var(--ease), backdrop-filter 260ms var(--ease);
+}
+
+.expanded-overlay[data-overlay-phase='closing'] .expanded-overlay__backdrop {
+  opacity: 0;
+  backdrop-filter: blur(0);
+  -webkit-backdrop-filter: blur(0);
+  transition:
+    opacity var(--expanded-transition-duration, 340ms) var(--ease),
+    backdrop-filter var(--expanded-transition-duration, 340ms) var(--ease);
+}
+
+.expanded-card__source-proxy {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  opacity: 0;
+  pointer-events: none;
+  color: var(--text);
+}
+
+.expanded-card__source-head,
+.expanded-card__source-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.expanded-card__source-title {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.expanded-card__source-tag {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.expanded-card__source-reason {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.expanded-card__source-meta {
+  margin-top: auto;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.expanded-overlay[data-overlay-phase='closing'] .expanded-card__source-proxy {
+  opacity: 1;
+  transition: opacity 150ms ease 70ms;
+}
+
+.expanded-overlay[data-overlay-phase='closing'] .expanded-overlay__close,
+.expanded-overlay[data-overlay-phase='closing'] .expanded-card__header,
+.expanded-overlay[data-overlay-phase='closing'] .expanded-card__body,
+.expanded-overlay[data-overlay-phase='closing'] .expanded-card__footer {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 110ms ease;
+}
+
+.expanded-overlay[data-overlay-phase='handoff'] .expanded-overlay__close,
+.expanded-overlay[data-overlay-phase='handoff'] .expanded-card__footer {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.expanded-overlay[data-overlay-phase='handoff'] .expanded-card__header,
+.expanded-overlay[data-overlay-phase='handoff'] .expanded-card__body {
+  transform-origin: center;
+}
+
+.expanded-overlay[data-handoff-phase='graph-ready'] .expanded-card__header,
+.expanded-overlay[data-handoff-phase='graph-ready'] .expanded-card__body {
+  opacity: 0;
+  transition: opacity 180ms ease;
 }
 
 .expanded-overlay__close {
@@ -9654,18 +9823,38 @@
   font-size: 22px;
   line-height: 1;
   color: var(--text-secondary, #64748b);
-  background: var(--surface-hover, rgba(0,0,0,0.04));
+  background: var(--hover);
   border: none;
   border-radius: 50%;
   cursor: pointer;
   z-index: 10;
+  pointer-events: auto;
   transition: background 150ms ease, color 150ms ease, transform 150ms ease;
   font-family: inherit;
 }
 
+.expanded-overlay__card > .expanded-card__header,
+.expanded-overlay__card > .expanded-card__body,
+.expanded-overlay__card > .expanded-card__footer {
+  position: relative;
+  z-index: 0;
+  pointer-events: auto;
+}
+
+.expanded-overlay__card > .expanded-card__footer {
+  z-index: 1;
+}
+
+.expanded-overlay[data-overlay-phase='handoff'] .expanded-overlay__close,
+.expanded-overlay[data-overlay-phase='handoff'] .expanded-card__header,
+.expanded-overlay[data-overlay-phase='handoff'] .expanded-card__body,
+.expanded-overlay[data-overlay-phase='handoff'] .expanded-card__footer {
+  pointer-events: none;
+}
+
 .expanded-overlay__close:hover {
-  background: rgba(0, 0, 0, 0.08);
-  color: var(--text, #1e293b);
+  background: var(--surface-soft);
+  color: var(--text);
   transform: scale(1.1);
 }
 
@@ -9697,7 +9886,7 @@
   font-size: 12px;
   font-weight: 600;
   color: var(--accent, #3b82f6);
-  background: rgba(59, 130, 246, 0.1);
+  background: var(--accent-soft);
   border-radius: 6px;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -9800,7 +9989,7 @@
   flex-direction: column;
   gap: 4px;
   padding: 12px;
-  background: var(--bg, #f8fafc);
+  background: var(--surface-soft);
   border-radius: 10px;
 }
 

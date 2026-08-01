@@ -96,7 +96,15 @@ services/
 - Work 候选抽取：`extract_work_objects_from_observation`（Work）
 - 测验：`generate_quiz` / `grade_quiz_answer`
 - Work 业务：`get_trends` / `generate_report` / `generate_report_stream` / `answer_question` / `answer_question_stream`
-- 内部工具：`_get_llm_client` / `_call_llm_json` / `_build_context` / `_stream_llm` / `_split_conversation` / `_merge_nodes` / `_extract_nodes_from_chunk`
+- 内部工具：`_get_llm_client` / `_call_llm_json` / `_build_context` / `_stream_llm` / `_split_conversation` / `_merge_nodes` / `_extract_nodes_from_chunk` / `_fallback_quiz`（**降级测验占位题生成**）
+
+**测验降级逻辑（新增）**：
+
+`_fallback_quiz(quiz_type, primary_node)` 在 LLM 不可用时生成占位题，避免前端白屏：
+- **选择题降级**：返回 4 个占位选项（A/B/C/D），正确答案固定为 A，明确标注"【占位题】"；提示用户配置 LLM 后重试。
+- **费曼题降级**：返回占位提示"请用自己的话解释..."，同样标注为占位题。
+- **返回字段**：`degraded: True` + `degrade_reason: "LLM 服务暂不可用，当前为占位题。配置好 LLM 后重新生成即可获得正常题目。"`。
+- **前端协作**：前端检测到 `degraded=true` 时显示降级横幅，但允许用户作答（固定判分结果）。
 
 ### `llm_client.py`：OpenAI 兼容 LLM 客户端
 
@@ -206,7 +214,15 @@ services/
 
 **连接健康检查**：`_is_connected(ws)` 同时校验 `ws.client_state` 与 `ws.application_state` 均为 `WebSocketState.CONNECTED`，过滤"半关闭但尚未清理"的僵尸连接，避免向已关闭 socket 推送导致异常。
 
-**并发安全**：`asyncio.Lock` 保护内部 `dict`。`notify_session` / `broadcast` 在持锁阶段仅做"复制连接列表到局部变量"，释放锁后再 `await ws.send_json(...)`，避免长时间持锁阻塞其他 `register` / `unregister`。
+**事件预序列化（修复 Bug：含 datetime / UUID 的事件静默失败）**：
+
+`_dumps_event(event) -> str` 在 `notify_session` / `broadcast` 入口处将事件预序列化为 JSON 字符串：
+- 调用 `json.dumps(event, ensure_ascii=False, default=str)`，**用 `default=str` 兜底**把 datetime / UUID / ORM 对象等非 JSON 原生类型转字符串；与持久化层（`main_agent` 落库 `tool_calls`）的 `default=str` 策略保持一致。
+- 然后用 `ws.send_text(payload)` 发送，**不再用 `ws.send_json(event)`**。
+- **修复背景**：旧实现 `send_json` 内部 `json.dumps` 遇到 datetime / UUID 抛 `TypeError`，被 `except Exception` 静默吞掉——既丢消息又会把仍开着的连接误判为死连接并 `unregister`，导致该 session 后续所有 WS 事件都丢失（典型场景：`graph_generate_quiz` 返回的 quiz 记录含 `created_at` datetime 字段，`chat_tool_result` 事件无法送达前端，测验卡需刷新才显示）。
+- **回归覆盖**：[`backend/tests/test_ws_notify.py`](../../../tests/test_ws_notify.py) 提供三条用例：含 datetime 的 `notify_session` 成功送达、含 datetime 的 `broadcast` 成功送达、真正断开的连接仍按原逻辑被清理。
+
+**并发安全**：`asyncio.Lock` 保护内部 `dict`。`notify_session` / `broadcast` 在持锁阶段仅做"复制连接列表到局部变量 + 预序列化 JSON 字符串"，释放锁后再 `await ws.send_text(payload)`，避免长时间持锁阻塞其他 `register` / `unregister`。预序列化在持锁外执行不会影响并发安全（每个 event 独立生成 payload 字符串）。
 
 ### `session_queue.py`：会话队列
 

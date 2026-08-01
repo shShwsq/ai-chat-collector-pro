@@ -92,7 +92,14 @@ export interface GraphViewHandle {
    * 用于对话首页大卡无缝切换到图谱视图时把目标节点居中。
    * 节点不存在或位置未就绪时静默返回。
    */
-  focusNodeAtCenter: (nodeId: string) => void
+  /** 程序聚焦完成后 resolve；节点不存在或动画被新的交互取消时 resolve(false)。 */
+  focusNodeAtCenter: (nodeId: string) => Promise<boolean>
+  /** 指定节点的坐标与 DOM 是否均已落位。 */
+  isNodeReady: (nodeId: string) => boolean
+  /** 等待指定节点落位；超时返回 false，避免跨视图接力永久挂起。 */
+  waitForNodeReady: (nodeId: string, timeoutMs?: number) => Promise<boolean>
+  /** 获取节点变换后的视口矩形，供跨视图大卡精确飞入 SVG 节点。 */
+  getNodeScreenRect: (nodeId: string) => DOMRect | null
 }
 
 export interface GraphViewProps {
@@ -142,6 +149,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
     const fullGraph = useAppStore((s) => s.fullGraph)
     const selectedNodeId = useAppStore((s) => s.selectedNodeId)
     const setSelectedNode = useAppStore((s) => s.setSelectedNode)
+    const graphHandoffPhase = useAppStore((s) => s.graphHandoffPhase)
     const mode = useAppStore((s) => s.mode)
     const deleteNode = useAppStore((s) => s.deleteNode)
     // 当前图谱 ID：用于在切换时触发固定时长的过渡动画，
@@ -231,6 +239,11 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
     const sizeRef = useRef<{ width: number; height: number }>({ width: 800, height: 600 })
     /** 最新 transform（供 mousemove 闭包读取）。 */
     const transformRef = useRef({ x: 0, y: 0, k: 1 })
+    /** 当前程序聚焦平移；用户开始交互时立即取消，避免拖拽被动画接管。 */
+    const focusAnimationRef = useRef<{
+      frame: number
+      resolve: (completed: boolean) => void
+    } | null>(null)
     /** Task 7：悬停/离开延时计时器 + 卡片悬停标记。 */
     const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const leaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -269,6 +282,16 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
     useEffect(() => {
       transformRef.current = transform
     }, [transform])
+
+    const cancelFocusAnimation = useCallback(() => {
+      const animation = focusAnimationRef.current
+      if (!animation) return
+      cancelAnimationFrame(animation.frame)
+      focusAnimationRef.current = null
+      animation.resolve(false)
+    }, [])
+
+    useEffect(() => () => cancelFocusAnimation(), [cancelFocusAnimation])
 
     // ===== 容器尺寸观察 =====
     useEffect(() => {
@@ -464,6 +487,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
     // ===== 滚轮缩放（以光标为中心）=====
     const onWheel = useCallback((ev: React.WheelEvent<SVGSVGElement>) => {
       ev.preventDefault()
+      cancelFocusAnimation()
       const svg = svgRef.current
       if (!svg) return
       const rect = svg.getBoundingClientRect()
@@ -480,13 +504,14 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
       const nx = cx - svgX * nk
       const ny = cy - svgY * nk
       setTransform({ x: nx, y: ny, k: nk })
-    }, [])
+    }, [cancelFocusAnimation])
 
     // ===== 画布平移：在背景层 mousedown =====
     const onBackgroundMouseDown = useCallback(
       (ev: React.MouseEvent<SVGRectElement>) => {
         // 仅左键
         if (ev.button !== 0) return
+        cancelFocusAnimation()
         const { x, y } = transformRef.current
         dragRef.current = {
           kind: 'pan',
@@ -497,13 +522,14 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
         }
         if (svgRef.current) svgRef.current.style.cursor = 'grabbing'
       },
-      [],
+      [cancelFocusAnimation],
     )
 
     // ===== 节点 mousedown：开始拖拽节点 =====
     const onNodeMouseDown = useCallback(
       (ev: React.MouseEvent<SVGGElement>, node: Node) => {
         if (ev.button !== 0) return
+        cancelFocusAnimation()
         ev.stopPropagation()
         const svg = svgRef.current
         if (!svg) return
@@ -519,7 +545,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
         }
         svg.style.cursor = 'grabbing'
       },
-      [],
+      [cancelFocusAnimation],
     )
 
     // ===== Task 7/9：悬停详情卡 / 编辑 / 删除 =====
@@ -569,6 +595,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
     // 悬停进入：300-500ms 后显示详情卡
     const handleNodeMouseEnter = useCallback(
       (node: Node) => {
+        if (graphHandoffPhase !== 'idle') return
         clearLeaveTimer()
         if (hoveredNode?.id === node.id) {
           clearHoverTimer()
@@ -580,7 +607,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
           setHoveredNode(node)
         }, 400)
       },
-      [hoveredNode?.id, clearHoverTimer, clearLeaveTimer],
+      [graphHandoffPhase, hoveredNode?.id, clearHoverTimer, clearLeaveTimer],
     )
 
     // 悬停离开：200-300ms 后清除悬停态（卡片悬停时保持）
@@ -593,6 +620,13 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
         setHoveredNode(null)
       }, 250)
     }, [clearHoverTimer, clearLeaveTimer])
+
+    useEffect(() => {
+      if (graphHandoffPhase === 'idle') return
+      clearHoverTimer()
+      clearLeaveTimer()
+      setHoveredNode(null)
+    }, [graphHandoffPhase, clearHoverTimer, clearLeaveTimer])
 
     const handleCardMouseEnter = useCallback(() => {
       isCardHoveredRef.current = true
@@ -704,6 +738,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
       ref,
       () => ({
         relayout: () => {
+          cancelFocusAnimation()
           const sim = simRef.current
           if (!sim) return
           const { width, height } = sizeRef.current
@@ -725,23 +760,71 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
           forceRender()
         },
         resetView: () => {
-          setTransform({ x: 0, y: 0, k: 1 })
+          cancelFocusAnimation()
+          const reset = { x: 0, y: 0, k: 1 }
+          transformRef.current = reset
+          setTransform(reset)
         },
         focusNodeAtCenter: (nodeId: string) => {
+          cancelFocusAnimation()
           const pos = positionsRef.current.get(nodeId)
-          if (!pos) return
+          if (!pos) return Promise.resolve(false)
           const { width, height } = sizeRef.current
-          if (!width || !height) return
+          if (!width || !height) return Promise.resolve(false)
           // 保持当前缩放 k，平移让节点位于视口正中
           const cur = transformRef.current
-          setTransform({
+          const target = {
             x: width / 2 - pos.x * cur.k,
             y: height / 2 - pos.y * cur.k,
             k: cur.k,
+          }
+          const start = { ...cur }
+          const duration = 280
+          return new Promise<boolean>((resolve) => {
+            const startedAt = performance.now()
+            const step = (now: number) => {
+              if (focusAnimationRef.current?.resolve !== resolve) return
+              const progress = Math.min((now - startedAt) / duration, 1)
+              const eased = 1 - Math.pow(1 - progress, 3)
+              const next = {
+                x: start.x + (target.x - start.x) * eased,
+                y: start.y + (target.y - start.y) * eased,
+                k: start.k,
+              }
+              transformRef.current = next
+              setTransform(next)
+              if (progress >= 1) {
+                focusAnimationRef.current = null
+                resolve(true)
+                return
+              }
+              focusAnimationRef.current.frame = requestAnimationFrame(step)
+            }
+            focusAnimationRef.current = { frame: requestAnimationFrame(step), resolve }
           })
         },
+        isNodeReady: (nodeId: string) =>
+          positionsRef.current.has(nodeId) && nodeElsRef.current.has(nodeId),
+        waitForNodeReady: (nodeId: string, timeoutMs = 2000) =>
+          new Promise<boolean>((resolve) => {
+            const startedAt = performance.now()
+            const check = () => {
+              if (positionsRef.current.has(nodeId) && nodeElsRef.current.has(nodeId)) {
+                resolve(true)
+                return
+              }
+              if (performance.now() - startedAt >= timeoutMs) {
+                resolve(false)
+                return
+              }
+              requestAnimationFrame(check)
+            }
+            check()
+          }),
+        getNodeScreenRect: (nodeId: string) =>
+          nodeElsRef.current.get(nodeId)?.getBoundingClientRect() ?? null,
       }),
-      [],
+      [cancelFocusAnimation],
     )
 
     // ===== 点击空白取消选中 =====
@@ -837,6 +920,10 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
                 return (
                   <g
                     key={n.id}
+                    data-graph-node-id={n.id}
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`打开节点详情：${n.title || '无标题'}`}
                     ref={(el) => {
                       if (el) {
                         nodeElsRef.current.set(n.id, el)
@@ -863,6 +950,12 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
                     onMouseDown={(ev) => onNodeMouseDown(ev, n)}
                     onClick={(ev) => onNodeClickInner(ev, n)}
                     onDoubleClick={(ev) => onNodeDoubleClickInner(ev, n)}
+                    onKeyDown={(ev) => {
+                      if (ev.key === 'Enter' || ev.key === ' ') {
+                        ev.preventDefault()
+                        setSelectedNode(n.id)
+                      }
+                    }}
                     onMouseEnter={() => onNodeHoverInner(n)}
                     onMouseLeave={() => onNodeHoverInner(null)}
                   >
@@ -968,7 +1061,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
         )}
 
         {/* Task 7：节点悬停详情卡（悬停优先，回退到选中固定节点） */}
-        {displayedNode && (
+        {graphHandoffPhase === 'idle' && displayedNode && (
           <NodeDetailCard
             node={displayedNode}
             graphType={mode}

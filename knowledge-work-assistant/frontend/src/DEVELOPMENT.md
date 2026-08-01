@@ -18,11 +18,11 @@
 
 ```
 src/
-├── App.tsx                  # 根组件：布局 + 健康轮询 + WebSocket 订阅 + 浮层面板装配
-├── main.tsx                 # React 入口：挂载 <App /> 到 #root，导入全局样式
+├── App.tsx                  # 根组件：布局 + 健康轮询 + WebSocket 订阅 + 浮层面板装配 + motion 视图切换
+├── main.tsx                 # React 入口：挂载 <App /> 到 #root，导入全局样式；渲染前同步初始主题（防 FOUC）+ 包裹 MotionProvider
 │   ├── components/              # React 组件（详见 components/DEVELOPMENT.md）
 │   ├── graph/               #   图谱相关子组件（GraphView / NodeDetailCard / QuizPanel 等）
-│   ├── ChatExpandedOverlay.tsx  # 对话首页大卡浮层（FLIP 动画 + createPortal + 无缝切图谱）
+│   ├── ChatExpandedOverlay.tsx  # 对话首页大卡浮层（motion 共享元素 layoutId + handoffReducer 状态机 + 跨视图接力到图谱）
 │   ├── ChatHome.tsx         #   对话首页瀑布流主体组件（交互增强版）：study/work 双模式推荐卡片瀑布流 + 居中输入框 + sending 过渡；4 项交互增强：卡片飞入（由 node.id 哈希 seed 推导可复现的 delay/duration/x/y/rot，不用 Math.random，刷新/录屏一致）、滚轮覆盖（瀑布流上移盖住输入框 + 输入框渐进模糊用 requestAnimationFrame 节流，直接写 --input-blur CSS 变量不经 useState 重渲染）、点击展开（setChatExpandedNodeId 触发顶层 ChatExpandedOverlay）、sending 过渡（仅 work，含 prefers-reduced-motion 降级、sendTimerRef 防组件卸载后回调泄漏）；输入框补全 id/name/autoComplete/aria-label 可访问性属性；props: `{ mode: 'study'|'work', onAsk?: (q: string) => void }`
 │   ├── ChatPanel.tsx        #   多轮对话面板（Task 9 / Task 10，Study/Work 统一）
 │   ├── ContentToolbar.tsx   #   内容区顶栏：视图切换 / 重新布局 / 撤销延伸 / 开始测验
@@ -30,18 +30,21 @@ src/
 │   ├── Icon.tsx             #   内联 SVG 图标组件
 │   ├── ModeSwitch.tsx       #   Study / Work 模式切换开关
 │   ├── PluginIntegrationSection.tsx  # 设置页「插件对接」分区
-│   ├── RecommendationCard.tsx        # 推荐项卡片（forwardRef）：暴露 article DOM 供父组件做 FLIP First 测量；新增 props `enterDelay?` / `enterDuration?` / `isDimmed?`；study 模式底部显示'上次复习时间 + 错误率徽标'，work 模式显示'提醒时间 + 星标图标'；样式类扩展 rec-card--entering / rec-card--dimmed
+│   ├── RecommendationCard.tsx        # 推荐项卡片（forwardRef）：`motion.button` + `layoutId="recommendation-${id}"` 参与共享元素动效；新增 props `enterDelay?` / `enterDuration?` / `isDimmed?`；study 模式底部显示'上次复习时间 + 错误率徽标'，work 模式显示'提醒时间 + 星标图标'；样式类扩展 rec-card--entering / rec-card--dimmed
 │   ├── ReminderBanner.tsx   #   受控组件：仅 `count: number` + `onClick: () => void` 两个 props；count <= 0 返回 null；移除了关闭按钮和跳转节点逻辑；内联 BellIcon
 │   ├── SettingsPanel.tsx    #   设置面板：LLM 配置 + 请求队列 + 插件对接
 │   ├── SideNav.tsx          #   最左 56px 竖排导航：对话 / 图谱 / 设置
 │   ├── Toast.tsx            #   全局 Toast（成功 / 警告 / 错误）
 │   └── ToolConfirmDialog.tsx    #   高风险工具调用确认对话框（倒计时 + 同意/拒绝）
 │
-├── lib/                     # 通信层与类型契约（详见 lib/DEVELOPMENT.md）
+├── lib/                     # 通信层与类型契约 + 主题 / 时间 / 动效基建（详见 lib/DEVELOPMENT.md）
 │   ├── api.ts               #   HTTP 客户端：/api 前缀 + file:// 环境地址解析 + ApiError
 │   ├── ws.ts                #   WebSocket 客户端：TestSocket 类 + generateSessionId
 │   ├── types.ts             #   与 backend/app/models/schemas.py 一一对应的类型
+│   ├── themes.ts            #   外观主题定义 + resolveStoredTheme（启动前同步主题防 FOUC）
 │   ├── nodeTemplates.ts     #   节点模板镜像（与 backend node_types.py 对齐）
+│   ├── date.ts              #   时间解析与格式化（parseDate 把 naive ISO 当 UTC，修 8h 偏差）
+│   ├── motion.ts            #   动效运行时：MotionProvider（自适应画质降级）+ MOTION 常量 + handoffReducer
 │   ├── electron.d.ts        #   window.electronAPI 全局类型声明
 │   └── __tests__/           #   单元测试（vitest）
 │
@@ -58,8 +61,8 @@ src/
 
 | 文件 | 职责 | 关键内容 |
 |------|------|---------|
-| [App.tsx](./App.tsx) | 根组件 | 布局：`app-shell`（`data-mode`）+ `app-header`（标题 + 健康徽章 + ModeSwitch）+ `app-body`（SideNav + 主内容区）+ `Toast` + `<ChatExpandedOverlay graphViewRef={graphViewRef} />` + `app-footer`；`import ChatExpandedOverlay`；`.mode-slide-wrap` 容器包裹主内容区，配合 View Transitions API 实现横向滑动过渡；`useEffect` 启动时调 `loadGraphs()` + 健康检查轮询（5s）；`useEffect` 启动 WebSocket：生成 `sessionId` → `new TestSocket()` → `connect(sessionId)` → `onEvent` 订阅 `plugin.conversation_received` / `graph_agent_token` / `done` / `cancelled` / `error` / `chat_tool_call` / `chat_tool_result` / `chat_tool_call_confirmation` 事件；graph_agent_* 4 个事件按 `event.op === 'chat'` 分流到 `handleChat*` 系列，否则走原 `handleGraphAgent*` 路径；3 个新增 case：`chat_tool_call` → `handleChatToolCall`、`chat_tool_result` → `handleChatToolResult`、`chat_tool_call_confirmation` → `handleChatToolConfirmation`；按 `activeNav` 切换主内容区：`'chat'` → ChatPanel / `'settings'` → SettingsPanel / `'graph'` → GraphList + content-area（ContentToolbar + GraphView/CardView + PendingNodes/QuizPanel/WorkInput/TrendsSidebar/ReportPanel/QAPanel 浮层）；`<ChatExpandedOverlay>` 放在 Toast 之后、footer 之前，挂在 App 顶层是为了让大卡浮层在 activeNav 从 'chat' 切到 'graph' 时仍能存活 |
-| [main.tsx](./main.tsx) | React 入口 | `ReactDOM.createRoot(document.getElementById('root')).render(<React.StrictMode><App /></React.StrictMode>)`；导入 `./styles/animations.css` + `./styles/app.css` |
+| [App.tsx](./App.tsx) | 根组件 | 布局：`app-shell`（`data-mode`）+ `app-header`（标题 + 健康徽章 + ModeSwitch）+ `app-body`（SideNav + 主内容区）+ `Toast` + `<ChatExpandedOverlay graphViewRef={graphViewRef} />` + `app-footer`；`import ChatExpandedOverlay`；`.mode-slide-wrap` 容器包裹主内容区；**motion 视图切换**：主内容区用 `LayoutGroup` + `AnimatePresence(mode='sync')` 包裹，按 `activeNav` 切换 `motion.main`/`motion.div`（key=chat/settings/graph），进场 / 离场用 `navDirection` 决定横向位移方向；**Graph/Card 双视图常驻**：`content-stage` 内 Graph 与 Card 两个 `.content-stage__view` 始终挂载，靠 `.is-active` + `aria-hidden` 切换显形，保留 d3 simulation / 缩放 / 滚动状态；**主题多标签同步**：`useEffect` 监听 `window.storage` 事件，`THEME_STORAGE_KEY` 变更且合法时 `useAppStore.setState({ theme })`，实现多标签主题联动；`useEffect` 启动时调 `loadGraphs()` + 健康检查轮询（5s）；`useEffect` 启动 WebSocket：生成 `sessionId` → `new TestSocket()` → `connect(sessionId)` → `onEvent` 订阅 `plugin.conversation_received` / `graph_agent_token` / `done` / `cancelled` / `error` / `chat_tool_call` / `chat_tool_result` / `chat_tool_call_confirmation` 事件；graph_agent_* 4 个事件按 `event.op === 'chat'` 分流到 `handleChat*` 系列，否则走原 `handleGraphAgent*` 路径；3 个新增 case：`chat_tool_call` → `handleChatToolCall`、`chat_tool_result` → `handleChatToolResult`、`chat_tool_call_confirmation` → `handleChatToolConfirmation`；按 `activeNav` 切换主内容区：`'chat'` → ChatPanel / `'settings'` → SettingsPanel / `'graph'` → GraphList + content-area（ContentToolbar + GraphView/CardView + PendingNodes/QuizPanel/WorkInput/TrendsSidebar/ReportPanel/QAPanel 浮层）；`<ChatExpandedOverlay>` 放在 Toast 之后、footer 之前，挂在 App 顶层是为了让大卡浮层在 activeNav 从 'chat' 切到 'graph' 时仍能存活 |
+| [main.tsx](./main.tsx) | React 入口 | `ReactDOM.createRoot(...).render(<React.StrictMode><MotionProvider><App /></MotionProvider></React.StrictMode>)`；**渲染前同步初始主题**：调 `resolveStoredTheme(window.localStorage)` 把 `dataset.theme` 与 `colorScheme` 写到 `documentElement`，消除主题 FOUC；导入 `./styles/animations.css` + `./styles/app.css` |
 | [components/SideNav.tsx](./components/SideNav.tsx) | 竖排导航 | 56px 宽，三个图标按钮（对话 / 图谱 / 设置），订阅 `store.activeNav`，点击调 `setActiveNav` |
 | [components/ModeSwitch.tsx](./components/ModeSwitch.tsx) | 模式切换 | 顶部右上角开关，订阅 `store.mode`，点击调 `setMode`（自动重载新模式图谱列表 + 清空当前选中） |
 | [components/GraphList.tsx](./components/GraphList.tsx) | 图谱列表 | 左侧栏：图谱列表 + 新建按钮 + 重命名 / 删除（ConfirmDialog 二次确认）；订阅 `store.graphs` / `currentGraphId` |

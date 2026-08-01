@@ -183,9 +183,9 @@ pnpm dev:electron
 | `file_storage` | 已就位 | 原文件本地存储 |
 | `llm_factory` | 已就位 | 从 settings 表构造 LLMClient |
 | `sub_agent` | 已就位 | 任务型子 Agent + 生命周期管理 |
-| `main_agent` | **待移植** | 依赖步影 `context_manager` / `mcp_manager` / `tool_registry` / `multimodal.image_handler` / `tools.task_tools` 等模块，未拷贝；待后续 Task 移植这些依赖后补齐 |
+| `main_agent` | 已就位 | 多轮对话主循环 + Function Calling + Plan/Build 工具白名单 + 高风险工具拦截 + Study/Work 双模式；依赖已全部移植 |
 
-`main_agent` 当前未接入路由且不能被直接 import，但不影响骨架启动与联调。
+`main_agent` 已接入 `routers/chat.py`，由 `ChatService` 在多轮对话流式输出 / 工具调用阶段调用；不再需要"不能被直接 import"的保护。
 
 ## 后续路线
 
@@ -198,7 +198,7 @@ pnpm dev:electron
 - **Task 6–9**：双视图、悬停详情卡、节点延伸、节点编辑删除
 - **Task 10–12**：浏览器插件对接接口、Study 对话抽取、测验生成
 - **Task 13–16**：Work 图谱、风口推荐、工作报告、用户提问
-- **Task 17**：Agent 集成（移植 `main_agent` 依赖）
+- **Task 17**：Agent 集成（`main_agent` 已就位，依赖 `context_manager` / `mcp_manager` / `tool_registry` / `multimodal.image_handler` / `tools.task_tools` 等已全部移植，接入 `routers/chat.py`）
 - **Task 18**：联调验证与优化
 
 ## 插件对接接口（Task 10）

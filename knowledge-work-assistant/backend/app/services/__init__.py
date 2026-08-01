@@ -16,12 +16,9 @@
   - ``crypto`` / ``llm_errors`` / ``llm_client`` / ``model_config``
   - ``settings_store`` / ``ws_notify`` / ``session_queue``
   - ``tag_store`` / ``knowledge_store`` / ``file_storage``
-  - ``llm_factory`` / ``sub_agent``
-- 未就位（依赖步影其它未拷贝模块）：
-  - ``main_agent``：依赖步影的 ``context_manager`` / ``mcp_manager`` /
-    ``tool_registry`` / ``multimodal.image_handler`` / ``tools.task_tools``
-    等模块，这些尚未拷贝到本项目。因此 ``main_agent`` 当前**未接入路由**
-    且不能被直接 import；待后续 Task（Task 17）移植这些依赖后补齐。
+  - ``llm_factory`` / ``sub_agent`` / ``main_agent`` / ``writer_agent``
+  - ``context_manager`` / ``compaction`` / ``mcp_manager`` / ``tool_registry``
+  - ``graph_store`` / ``graph_agent`` / ``task_registry`` / ``skill_registry``
 
 数据目录指向本项目 backend/data/（由 config.ensure_dirs 创建 files/sessions 子目录）。
 

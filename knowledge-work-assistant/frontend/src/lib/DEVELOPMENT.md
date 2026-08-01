@@ -1,6 +1,6 @@
 # lib/ 通信层与类型契约开发指南
 
-> 一句话定位：本目录是 KWA 前端渲染进程的"通信层 + 类型契约层 + 外观主题层"，6 个文件分别承担 HTTP 客户端（`api.ts`）、WebSocket 客户端（`ws.ts`）、前后端类型契约（`types.ts`）、外观系统主题（`themes.ts`）、节点模板镜像（`nodeTemplates.ts`）、Electron 桥类型声明（`electron.d.ts`）。本目录**不写业务逻辑**，只做"通信封装 + 类型定义 + 主题常量"；业务态由 [`store/useAppStore.ts`](../store/useAppStore.ts) 管理，组件层通过 `useAppStore` 间接调用本目录 API。
+> 一句话定位：本目录是 KWA 前端渲染进程的"通信层 + 类型契约层 + 外观主题层 + 动效运行时层"，8 个文件分别承担 HTTP 客户端（`api.ts`）、WebSocket 客户端（`ws.ts`）、前后端类型契约（`types.ts`）、外观系统主题（`themes.ts`）、节点模板镜像（`nodeTemplates.ts`）、时间工具（`date.ts`）、动效运行时（`motion.ts`）、Electron 桥类型声明（`electron.d.ts`）。本目录**不写业务逻辑**，只做"通信封装 + 类型定义 + 主题常量 + 动效基建"；业务态由 [`store/useAppStore.ts`](../store/useAppStore.ts) 管理，组件层通过 `useAppStore` 间接调用本目录 API。
 
 ## 模块职责
 
@@ -11,6 +11,8 @@ lib/
 ├── types.ts             # 与 backend/app/models/schemas.py 一一对应的 TypeScript 类型定义
 ├── themes.ts            # 外观系统主题定义：Theme 类型 + THEMES 元信息 + localStorage 持久化
 ├── nodeTemplates.ts     # 与 backend/app/models/node_types.py 一一对应的节点模板镜像
+├── date.ts              # 时间解析与格式化工具：parseDate / formatDateTime / formatShortTime
+├── motion.ts            # 动效运行时：MotionProvider（自适应画质降级）+ MOTION 常量 + handoffReducer 状态机
 ├── electron.d.ts        # window.electronAPI 全局类型声明（与 electron/preload.ts 对齐）
 └── __tests__/           # 库测试套件，vitest 跑（详见 __tests__/DEVELOPMENT.md）
     └── kwa-push.test.ts # plugin-sdk/kwa-push.js SDK 单元测试
@@ -114,7 +116,8 @@ lib/
   - `THEME_STORAGE_KEY: string = 'kwa.theme'`：localStorage 持久化键名。
   - `THEMES: ThemeMeta[]`：全部可选主题，按设置面板展示顺序排列。
 - **类型守卫**：`isValidTheme(id: unknown): id is Theme`——localStorage 读取后的类型守卫，避免把非法字符串直接当作 Theme 使用；未命中时返回 `false`，调用方用 `DEFAULT_THEME` 回退。
-- **在 App 层的接入**：[App.tsx](../App.tsx) 启动时从 localStorage 读取并校验后写入 `store.theme`；`useEffect` 监听 `theme` 变化，把值写到 `document.documentElement.dataset.theme` 与 `<meta name="theme-color">`（PWA 顶栏色）；`.app-shell` 根节点同时带 `data-mode` 与 `data-theme` 两个属性，CSS 通过双重属性选择器定位。
+- **`resolveStoredTheme(storage)`**：从给定 `Storage`（或 `null`）安全读取并校验主题，非法 / 缺失 / 隐私模式禁用 localStorage 时回退 `DEFAULT_THEME`。抽离此函数是为了让 [main.tsx](../main.tsx) 在 React 首次渲染前同步设置 `document.documentElement.dataset.theme`（消除主题 FOUC），同时 [useAppStore.ts](../store/useAppStore.ts) 的 `loadInitialTheme` 复用同一逻辑；传入 `null` 时直接回退默认，便于 SSR / 非浏览器环境兜底。
+- **在 App 层的接入**：[main.tsx](../main.tsx) 在 `createRoot` 前同步设置 `dataset.theme` 与 `colorScheme`；[App.tsx](../App.tsx) 启动时从 localStorage 读取并校验后写入 `store.theme`；`useEffect` 监听 `theme` 变化，把值写到 `document.documentElement.dataset.theme` 与 `<meta name="theme-color">`（PWA 顶栏色）；`.app-shell` 根节点同时带 `data-mode` 与 `data-theme` 两个属性，CSS 通过双重属性选择器定位。
 
 ### `nodeTemplates.ts`（节点模板镜像）
 
@@ -135,6 +138,49 @@ lib/
 - **`ElectronAPI` 接口**：`{ backend: BackendApi }`。
 - **`Window` 接口扩展**：`electronAPI?: ElectronAPI`（非 Electron 环境下为 undefined，调用方需用可选链防御）。
 - 该文件无运行时代码（`export {}` 仅用于声明模块），仅提供 TS 类型支持。
+
+### `date.ts`（时间解析与格式化工具）（新增）
+
+- **一句话定位**：统一处理后端返回的 UTC 时间字符串，修复 naive ISO 字符串被错误按本地时区解析的问题。
+- **背景**：后端数据库存储 UTC 时间（`datetime.now(UTC)`），FastAPI 序列化为 ISO 8601 格式。对于带时区后缀的字符串（`+00:00` / `Z`），JS 的 `new Date()` 能正确识别；但对于无时区后缀的 naive 字符串，JS 会按**本地时区**解析，导致 UTC 时间被错误加上/减去时区偏差（东八区快 8 小时）。
+- **核心函数**：
+  - `parseDate(v: unknown): Date | null`：安全解析后端返回的时间值。
+    - `number` / 纯数字字符串：当作 Unix **秒** 时间戳（后端 `time.time()`）。
+    - ISO string：若末尾无时区标记（`Z` / `+HH:MM` / `-HH:MM`），追加 `'Z'` 当作 UTC。
+    - `Date`：直接返回。
+    - 其他 / 无效值：返回 `null`。
+  - `formatDateTime(v: unknown): string`：格式化为「YYYY-MM-DD HH:MM」本地时间（用于列表项、时间线等）。
+  - `formatShortTime(v: unknown): string`：格式化为「MM-DD HH:MM」简短本地时间（用于消息、最近记录）。
+  - `formatTime(v: unknown): string`：格式化为「HH:MM」时分（用于当日时间线）。
+- **使用场景**（当前已接入的 7 个组件 / 文件，统一替换早期各自实现的本地 `formatTime` / `new Date(...)`）：
+  - [`components/RecommendationCard.tsx`](../components/RecommendationCard.tsx)：work 模式提醒时间 `formatRemindAt`（用 `parseDate`）。
+  - [`components/PluginIntegrationSection.tsx`](../components/PluginIntegrationSection.tsx)：最近推送对话时间戳（用 `formatShortTime`）。
+  - [`components/ChatExpandedOverlay.tsx`](../components/ChatExpandedOverlay.tsx)：节点详情卡的提醒时间、创建时间（用 `parseDate`）。
+  - [`components/GraphList.tsx`](../components/GraphList.tsx)：图谱列表项的"更新于 ..."（用 `formatShortTime`）。
+  - [`components/graph/NodeDetailCard.tsx`](../components/graph/NodeDetailCard.tsx)：节点详情相关 ISO 字符串（用 `parseDate`）。
+  - [`components/graph/PendingNodes.tsx`](../components/graph/PendingNodes.tsx)：观察项时间显示（用 `formatShortTime`）。
+  - [`components/graph/QuizPanel.tsx`](../components/graph/QuizPanel.tsx)：测验生成时间 / 作答时间（用 `formatShortTime`）。
+  - 后续所有涉及后端时间显示的地方应统一使用此模块，避免直接 `new Date(iso_string)`。
+- **注意事项**：
+  - **不要直接 `new Date(iso_string)`**：对于无时区后缀的 naive 字符串，必须通过 `parseDate` 追加 `'Z'` 后再解析。
+  - **Unix 时间戳识别**：后端 `time.time()` 返回秒级时间戳，前端需乘 1000 转 ms；本模块自动判断数值范围（大于 1e12 认为已是 ms）。
+  - **类型安全**：入参为 `unknown`，调用方无需前置判断；返回 `null` 时调用方用空字符串兜底。
+
+### `motion.ts`（动效运行时）（新增）
+
+- **一句话定位**：统一 motion（Framer Motion）动效入口，提供自适应画质降级、统一时长常量与大卡生命周期状态机；组件层通过 `useMotionRuntime()` 读取当前画质并据此缩放时长，**不**在各组件自行 `requestAnimationFrame` 采样。
+- **依赖**：`motion@^12.43.0`（`motion/react`），由 [package.json](../../package.json) 声明。
+- **`MotionProvider`**：在 [main.tsx](../main.tsx) 顶层包裹 `<App />`，做三件事：
+  1. **初始画质**：`initialQuality()` 按 `navigator.hardwareConcurrency` / `deviceMemory` 决定起步画质（≤4 核或≤4GB 内存起步 `standard`，否则 `high`）。
+  2. **FPS 自适应降级**：用 `requestAnimationFrame` 采样 120 帧，统计 FPS 与长帧（>34ms）比例；FPS<30 或长帧>35% → `reduced`，FPS<48 或长帧>16%（且当前为 high）→ `standard`。采样仅在不隐藏页签时累积，避免后台空转。`prefers-reduced-motion` 命中时直接锁定 `reduced` 不再采样。
+  3. **写回 DOM**：把当前画质写到 `document.documentElement.dataset.motionQuality`，供 CSS 按 `html[data-motion-quality='standard'|'reduced']` 调整 / 关闭过渡（见 [styles/DEVELOPMENT.md](../styles/DEVELOPMENT.md)）；卸载时删除该属性。同时用 `MotionConfig` 把 `reducedMotion` / 默认 `transition` 下发给所有 motion 子树。
+- **`useMotionRuntime()`**：返回 `{ quality, reduceMotion, allowBlur, duration }`。`duration(seconds)` 在 `reduced` 画质返回 `0`、`standard` 返回 `seconds * 0.65`、`high` 原值返回；组件用它包裹 `MOTION.xxx` 常量得到实际渲染时长。`allowBlur` 在 `reduced` 或用户偏好减少动效时为 `false`，供高斯模糊类装饰据此跳过。
+- **`MOTION` 常量**：`fast=0.16` / `panel=0.22` / `expand=0.34` / `handoff=0.26`（秒）+ `ease` / `springEase` 两条缓动曲线。所有动效时长应取自此处，禁止散落硬编码。
+- **`handoffReducer` + `HandoffPhase` / `HandoffEvent`**：大卡生命周期的显式有限状态机（`closed → opening → open → handoff/closing → closed`），替代早期多个布尔值组合出非法状态的写法。由 [ChatExpandedOverlay.tsx](../components/ChatExpandedOverlay.tsx) `useReducer` 持有，非法 / 重复事件保持当前状态。
+- **注意事项**：
+  - **降级只影响装饰性动画**：位移、淡入、布局动画的时长会被缩放或归零，但**不影响交互回调**（如 `onLayoutAnimationComplete` 仍会触发），保证接力完成逻辑不被降级卡死。
+  - **不要在组件内自行采样 FPS**：统一由 `MotionProvider` 采样并下发，组件只读 `useMotionRuntime()`。
+  - **`MotionProvider` 必须在 `App` 之外**：在 [main.tsx](../main.tsx) 包裹，确保 `useMotionRuntime` 在所有组件可用。
 
 ## 开发工作流
 

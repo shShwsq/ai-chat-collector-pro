@@ -32,7 +32,7 @@ components/
 │   ├── WorkInput.tsx                 #   Work 模式抽取入口浮层（Task 13）
 │   └── graphUtils.ts                 #   图谱纯函数工具（截断 / 换行 / 边路径 / 坐标转换）
 │
-├── ChatExpandedOverlay.tsx           # 对话首页大卡浮层（FLIP 动画 + createPortal + 无缝切图谱）
+├── ChatExpandedOverlay.tsx           # 对话首页大卡浮层（motion 共享元素 layoutId + handoffReducer 状态机 + 跨视图接力到图谱）
 ├── ChatHome.tsx                      # 对话首页瀑布流主体组件（交互增强版）：study/work 双模式推荐卡片瀑布流 + 居中输入框 + sending 过渡；4 项交互增强：卡片飞入（随机 delay/duration）、滚轮覆盖（瀑布流上移盖住输入框 + 输入框渐进模糊）、点击展开（setChatExpandedNodeId 触发顶层 ChatExpandedOverlay）、sending 过渡（仅 work）；props: `{ mode: 'study'|'work', onAsk?: (q: string) => void }`
 ├── ChatPanel.tsx                     # 多轮对话面板（Task 9 / Task 10，Study/Work 统一，activeNav='chat' 时显示）
 ├── ContentToolbar.tsx                # 内容区顶栏：视图切换 / 重新布局 / 撤销延伸 / 开始测验 / Work 入口
@@ -40,10 +40,10 @@ components/
 ├── Icon.tsx                          # 内联 SVG 图标组件（统一图标尺寸与 stroke）
 ├── ModeSwitch.tsx                    # Study / Work 模式切换开关
 ├── PluginIntegrationSection.tsx      # 设置页「插件对接」分区（最近推送 + 契约展示）
-├── RecommendationCard.tsx            # 推荐项卡片（forwardRef）：暴露 article DOM 供父组件做 FLIP First 测量；新增 props `enterDelay?` / `enterDuration?` / `isDimmed?`；study 模式底部显示'上次复习时间 + 错误率徽标'，work 模式显示'提醒时间 + 星标图标'；样式类扩展 rec-card--entering / rec-card--dimmed
+├── RecommendationCard.tsx            # 推荐项卡片（forwardRef）：`motion.button` + `layoutId="recommendation-${id}"` 参与共享元素动效；props `enterDelay?` / `enterDuration?` / `isDimmed?`；study 模式底部显示'上次复习时间 + 错误率徽标'，work 模式显示'提醒时间 + 星标图标'；样式类扩展 rec-card--entering / rec-card--dimmed
 ├── ReminderBanner.tsx                # 受控组件：仅 `count: number` + `onClick: () => void` 两个 props；count <= 0 返回 null；移除了关闭按钮和跳转节点逻辑；内联 BellIcon
 ├── SettingsPanel.tsx                 # 设置面板：LLM 配置 + 请求队列 + 插件对接分区
-├── SideNav.tsx                       # 最左 56px 竖排导航：对话 / 图谱 / 设置
+├── SideNav.tsx                       # 最左 56px 竖排导航：对话 / 图谱 / 设置；激活项用 `motion.span` + `layoutId="side-nav-active-rail"` 做共享布局高亮条
 ├── Toast.tsx                         # 全局 Toast（成功 / 警告 / 错误）
 └── ToolConfirmDialog.tsx             # 高风险工具调用确认对话框（倒计时 + 同意/拒绝）
 ```
@@ -52,16 +52,16 @@ components/
 
 | 文件 | 职责 | 关键内容 |
 |------|------|---------|
-| [SideNav.tsx](./SideNav.tsx) | 竖排导航 | 56px 宽，三个图标按钮（对话 `chat` / 图谱 `graph` / 设置 `settings`）；订阅 `store.activeNav`，点击调 `setActiveNav`；对话图标右上角红点（`store.reminderCount > 0` 时显示） |
+| [SideNav.tsx](./SideNav.tsx) | 竖排导航 | 56px 宽，三个图标按钮（对话 `chat` / 图谱 `graph` / 设置 `settings`）；订阅 `store.activeNav`，点击调 `setActiveNav`（同时计算 `navDirection` 供 App 视图切换方向化位移）；激活项渲染 `motion.span` + `layoutId="side-nav-active-rail"` 共享布局高亮条（spring 过渡）；对话图标右上角红点（`store.reminderCount > 0` 时显示） |
 | [ModeSwitch.tsx](./ModeSwitch.tsx) | 模式切换 | 顶部右上角 toggle 开关；订阅 `store.mode`，点击调 `setMode`（自动重载新模式图谱列表 + 清空当前选中）；study 显示墨绿色，work 显示琥珀色 |
 | [GraphList.tsx](./GraphList.tsx) | 图谱列表 | 左侧栏：图谱列表（订阅 `store.graphs`）+ 新建按钮（弹 inline 输入框）+ 重命名（inline 编辑）+ 删除（ConfirmDialog 二次确认）+ 选中（调 `selectGraph` → `loadFullGraph`） |
 | [ContentToolbar.tsx](./ContentToolbar.tsx) | 内容区顶栏 | 视图切换（graph / card，订阅 `store.view`）；重新布局（调 `props.onRelayout` → `graphViewRef.relayout()`）；撤销延伸（仅 `extensionBatchId` 存在时可见，调 `revokeExtend`）；开始测验（study 模式，调 `setQuizPanelOpen(true)`）；Work 模式入口（抽取 / 风口 / 报告 / 提问，调对应 `setWorkActivePanel`） |
-| [ChatExpandedOverlay.tsx](./ChatExpandedOverlay.tsx) | 大卡浮层 | FLIP 飞入动画 + `createPortal` 渲染到 `document.body` + 无缝切换到图谱视图（`setSelectedNode` + `setActiveNav('graph')` + `graphViewRef.focusNodeAtCenter`）；props: `{ graphViewRef: React.RefObject<GraphViewHandle | null> }` |
+| [ChatExpandedOverlay.tsx](./ChatExpandedOverlay.tsx) | 大卡浮层 | **motion 共享元素动效**：`motion.div` + `layoutId`（open 阶段 `recommendation-${id}`，handoff 阶段切换为 `node-detail-${id}` 与 [NodeDetailCard](./graph/NodeDetailCard.tsx) 接力）；生命周期由 [`handoffReducer`](../lib/motion.ts) 状态机管理（closed/opening/open/handoff/closing），替代早期多个布尔值；**跨视图接力**：点「延伸拓展」→ `setGraphHandoffPhase('preparing')` → 等 `selectGraph` + `fullGraph` 就绪 → `graphViewRef.waitForNodeReady(id)` 落位 → `focusNodeAtCenter` → `graph-ready` → 布局动画完成回调 `landing` 卸载浮层；3.5s 兜底超时（`HANDOFF_TIMEOUT_MS`）防永久挂起；props: `{ graphViewRef: React.RefObject<GraphViewHandle \| null> }` |
 | [ChatHome.tsx](./ChatHome.tsx) | 对话首页 | 对话首页瀑布流主体组件（交互增强版）：study/work 双模式推荐卡片瀑布流 + 居中输入框 + sending 过渡；4 项交互增强：卡片飞入（由 `node.id` 哈希 seed 推导可复现的 delay/duration/x/y/rot，不用 `Math.random`，刷新与录屏一致）、滚轮覆盖（瀑布流上移盖住输入框 + 输入框渐进模糊用 `requestAnimationFrame` 节流，直接写 `--input-blur` CSS 变量不经 `useState` 重渲染）、点击展开（`setChatExpandedNodeId` 触发顶层 `ChatExpandedOverlay`）、sending 过渡（仅 work，含 `prefers-reduced-motion` 降级、`sendTimerRef` 防组件卸载后回调泄漏）；输入框补 `id="chat-home-question"` / `name` / `autoComplete="off"` / `aria-label` 可访问性属性；props: `{ mode: 'study'|'work', onAsk?: (q: string) => void }` |
-| [ChatPanel.tsx](./ChatPanel.tsx) | 对话面板 | 多轮对话面板（Task 9 / Task 10）：Study/Work 双模式统一多轮对话；`chatMessages.length === 0` 时渲染 `<ChatHome mode={mode} onAsk={handleAsk} />`，否则渲染 `<ChatConversationView />`；顶层渲染 `pendingToolConfirmation && <ToolConfirmDialog />`；ChatConversationView 含带 onScroll 监听的消息列表（离底部 >= 96px 时显示"回到最新消息"悬浮按钮，滚到底部自动隐藏；新增消息时仅在 nearBottom 时才 auto-scroll-into-view，避免打断用户查看旧消息；aria-label="对话消息"）+ 底部输入框（补 name="chat-question" + aria-label） + header 工具栏（返回首页按钮 / 流式取消按钮）；Work 模式独有的 PlanBuildToggle 子组件；已移除左下角 `ChatPlusButton`（上传文件/Skills 入口占位），对应 DOM 位置保留带 `aria-hidden` 的空 `left-actions` 容器以维持布局；ChatMessageItem 区分 user/assistant 消息，assistant 流式占位态显示三点打字动画，工具调用过程渲染为 ChatToolCallItem 列表 |
+| [ChatPanel.tsx](./ChatPanel.tsx) | 对话面板 | 多轮对话面板（Task 9 / Task 10）：Study/Work 双模式统一多轮对话；`chatMessages.length === 0` 时渲染 `<ChatHome mode={mode} onAsk={handleAsk} />`，否则渲染 `<ChatConversationView />`；顶层渲染 `pendingToolConfirmation && <ToolConfirmDialog />`；ChatConversationView 含带 onScroll 监听的消息列表（离底部 >= 96px 时显示"回到最新消息"悬浮按钮，滚到底部自动隐藏；新增消息时仅在 nearBottom 时才 auto-scroll-into-view，避免打断用户查看旧消息；aria-label="对话消息"）+ 底部输入框（补 name="chat-question" + aria-label） + header 工具栏（返回首页按钮 / 流式取消按钮）；Work 模式独有的 PlanBuildToggle 子组件；已移除左下角 `ChatPlusButton`（上传文件/Skills 入口占位），对应 DOM 位置保留带 `aria-hidden` 的空 `left-actions` 容器以维持布局；ChatMessageItem 区分 user/assistant 消息，assistant 流式占位态显示三点打字动画，工具调用过程渲染为 ChatToolCallItem 列表；**动效**：消息列表用 `AnimatePresence` + `motion.li`（layout="position" + 进入/离场位移淡入），工具调用项 `motion.div`（layout + 状态过渡），新消息插入时旧消息平滑下移 |
 | [SettingsPanel.tsx](./SettingsPanel.tsx) | 设置面板 | `activeNav='settings'` 时显示；**新增「外观」分区**：3 个主题卡片（simple-white / simple-black / angular-white），调 `THEMES` 元信息展示，点击调 `store.setTheme(id)`；当前激活项以 `data-active` 样式高亮，卡片右侧显示预览色块 `data-theme-preview`；LLM 配置区（**新增「测试连接」按钮**：用当前表单值向后端发 `POST /api/llm/test-connection` 验证连通性，无需保存；按钮旁以内联 status 条展示 ✓/✕ + `message` + `latency_ms` + 成功时附带 `reply` snippet；请求体字段（base_url/api_key/model）均可选，空时后端用已保存值；禁用条件：`llmTesting` 进行中或三项全为空；调用 `store.testLlmConnection` 实现）；LLM 配置（base_url / api_key / model / context_window，调 `api.updateLlmConfig`）；请求队列（活跃列表 + 取消按钮，调 `api.cancelLlmRequest`）；插件对接分区（懒加载 `PluginIntegrationSection`） |
 | [PluginIntegrationSection.tsx](./PluginIntegrationSection.tsx) | 插件对接分区 | 最近推送对话列表（调 `api.getPluginRecent`）+ 接口契约展示（调 `api.getPluginContract`）+ 复制推送 URL 按钮 |
-| [RecommendationCard.tsx](./RecommendationCard.tsx) | 推荐项卡片 | `forwardRef` 实现，暴露 article DOM 供父组件做 FLIP First 测量；新增 props `enterDelay?` / `enterDuration?` / `isDimmed?`；study 模式底部显示"上次复习时间 + 错误率徽标"，work 模式显示"提醒时间 + 星标图标"；样式类扩展 `rec-card--entering` / `rec-card--dimmed` |
+| [RecommendationCard.tsx](./RecommendationCard.tsx) | 推荐项卡片 | `forwardRef` 实现；渲染为 `motion.button` + `layoutId="recommendation-${node.id}"` + `layout="position"`，与 [ChatExpandedOverlay](./ChatExpandedOverlay.tsx) 共享元素动效（点击展开时卡片"飞"成大卡，关闭时飞回）；props `enterDelay?` / `enterDuration?` / `isDimmed?`；study 模式底部显示"上次复习时间 + 错误率徽标"，work 模式显示"提醒时间 + 星标图标"；样式类扩展 `rec-card--entering` / `rec-card--dimmed` |
 | [ReminderBanner.tsx](./ReminderBanner.tsx) | 提醒横幅 | 受控组件：仅 `count: number` + `onClick: () => void` 两个 props；`count <= 0` 返回 `null`；移除了关闭按钮和跳转节点逻辑；内联 BellIcon |
 | [Icon.tsx](./Icon.tsx) | 图标组件 | 内联 SVG 图标（chat / graph / settings / close / edit / delete / send / 等）；统一 `size` / `color` / `strokeWidth` props；不依赖图标库（避免 bundle 体积） |
 | [Toast.tsx](./Toast.tsx) | 全局提示 | 订阅 `store.toast`；类型：info（蓝）/ success（绿）/ warning（黄）/ error（红）；3s 后自动消失（调 `clearToast`）；单条覆盖（后到的覆盖前条） |
