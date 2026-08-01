@@ -182,6 +182,51 @@
     }
   });
 
+  // 自定义规则：百度文心代码块
+  // 结构：<pre>
+  //         <div class="code-header">
+  //           <span class="code-header-left">bash</span>          ← 语言标签
+  //           <span class="code-header-right"><i class="cos-icon cos-icon-copy"></i></span>  ← 复制按钮
+  //         </div>
+  //         <div class="code-wrapper">
+  //           <div class="code-left">
+  //             <div data-line-number="1" class="code-number"></div>  ← 行号占位（空，CSS 渲染数字）
+  //           </div>
+  //           <div class="code-right">
+  //             <code class="hljs language-bash">#!/bin/bash\necho "Hello"</code>  ← 真实代码
+  //           </div>
+  //         </div>
+  //       </pre>
+  // 问题：turndown 默认 codeBlock 规则匹配 <pre> 时会把 .code-header 内"bash"语言文字和
+  //       .code-left 行号占位 div 当作代码内容输出，导致代码块前多出"bash"文字和空白行
+  // 方案：匹配含 .code-header 的 <pre>，从 .code-header-left 提取语言，从 .code-right > code 提取代码
+  turndownService.addRule('wenxinCodeBlock', {
+    filter: function (node) {
+      return node.nodeName === 'PRE' && node.querySelector('.code-header');
+    },
+    replacement: function (content, node) {
+      // 语言标签在 .code-header-left
+      var lang = '';
+      var langEl = node.querySelector('.code-header-left');
+      if (langEl) {
+        lang = langEl.textContent.trim();
+      }
+      // 兜底：从 <code class="language-xxx"> 提取语言
+      if (!lang) {
+        var codeWithLang = node.querySelector('code[class*="language-"]');
+        if (codeWithLang) {
+          var m = codeWithLang.className.match(/language-(\S+)/);
+          if (m) lang = m[1];
+        }
+      }
+      // 代码在 .code-right > code（跳过 .code-left 行号占位和 .code-header 标题栏）
+      var codeEl = node.querySelector('.code-right code, code');
+      var code = codeEl ? (codeEl.textContent || '') : '';
+      code = code.replace(/^\n+|\n+$/g, '');
+      return '\n\n```' + lang + '\n' + code + '\n```\n\n';
+    }
+  });
+
   // 自定义规则：千问代码块
   // 结构：<div class="qw-md-code">
   //   <div class="h-[36px]..."><span class="font-medium mr-auto...">python</span><button>编辑/复制/...</button></div>
@@ -387,7 +432,10 @@
     '.agent-process-timeline_groupChevron',
     // 元宝文件卡片（.ybc-p--file-card，含文件图标 + 文件名 + 截断的代码预览）
     // 文件名已在正文中提及，代码预览不完整（被截断），文件图标为装饰性，整块过滤
-    '.ybc-p--file-card'
+    '.ybc-p--file-card',
+    // 文心表格工具栏（.cosd-markdown-table-header，含"表格"文字标签 + 复制/下载按钮图标）
+    // 真实表格在同级 <table> 元素中，工具栏非表格内容，整块过滤
+    '.cosd-markdown-table-header'
   ];
 
   window.HtmlToMarkdown = {

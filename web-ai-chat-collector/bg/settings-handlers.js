@@ -139,8 +139,9 @@ const DEFAULT_PLATFORM_MODES = {
   qianwen: 'dom',
   fudan: 'dom',
   doubao: 'dom',
-  kimi: 'dom',          // Kimi 使用 WS + protobuf，仅支持 DOM
-  yuanbao: 'dom'        // 元宝使用 WS + 自定义协议，仅支持 DOM
+  kimi: 'dom',
+  yuanbao: 'dom',
+  wenxin: 'dom'
 };
 
 async function getPlatformModes() {

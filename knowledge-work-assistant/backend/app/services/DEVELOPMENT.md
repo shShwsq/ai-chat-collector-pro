@@ -420,7 +420,7 @@ MiMo-Code 风格"显式存储 + 按需检索"上下文管理，四机制协同�
 **步骤**：
 1. 在 [graph_store.py](./graph_store.py) 加 `find_observation_by_custom_dedup(dedup_key, within_hours)` 方法。
 2. 在 [routers/plugin.py](../routers/plugin.py) 的 `POST /api/plugin/conversations` 实现中，若 `metadata.dedup_key` 存在则用它，否则用默认 `{platform}:{conversation_id}`。
-3. 同步更新 [../../../plugin-sdk/kwa-push.d.ts](../../../plugin-sdk/kwa-push.d.ts) 的 `metadata` 类型注释。
+3. 同步更新 [../../../web-ai-chat-collector/bg/local-app.js](../../../web-ai-chat-collector/bg/local-app.js) 中 metadata 字段的构造逻辑。
 
 **验证**：推送两条带相同 `dedup_key` 的对话 → 第二次返回 `deduplicated: true`。
 
@@ -505,5 +505,5 @@ MiMo-Code 风格"显式存储 + 按需检索"上下文管理，四机制协同�
 | 要改路由 / 新增 API 端点 | [../routers/DEVELOPMENT.md](../routers/DEVELOPMENT.md) |
 | 要看应用入口 / 配置 / DB 初始化 | [../DEVELOPMENT.md](../DEVELOPMENT.md) |
 | 要改前端 React 组件 / 图谱可视化 | [../../../frontend/DEVELOPMENT.md](../../../frontend/DEVELOPMENT.md) |
-| 要做插件推送对接 | [../../../plugin-sdk/DEVELOPMENT.md](../../../plugin-sdk/DEVELOPMENT.md) |
+| 要做插件推送对接 | [../../../web-ai-chat-collector/bg/DEVELOPMENT.md](../../../web-ai-chat-collector/bg/DEVELOPMENT.md)（`bg/local-app.js` 段落） |
 | 要看后端整体架构 | [../../DEVELOPMENT.md](../../DEVELOPMENT.md) |
