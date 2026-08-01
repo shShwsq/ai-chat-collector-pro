@@ -54,6 +54,8 @@ import {
   getTemplate,
   stripMetaKeys,
 } from '../../lib/nodeTemplates'
+import { motion } from 'motion/react'
+import { MOTION, useMotionRuntime } from '../../lib/motion'
 
 export interface NodeDetailCardProps {
   /** 待展示节点（用于取 id 等基础信息，实际数据从 store 读取最新）。 */
@@ -191,6 +193,7 @@ export function NodeDetailCard({
   onDelete,
   onRequestGraphSwitch,
 }: NodeDetailCardProps) {
+  const { duration } = useMotionRuntime()
   // 优先从 store 读取最新节点（生成 / 编辑 / 留白后会更新）。
   // 若外部传入的 node prop 自带 detail_payload 缓存（如推荐列表中的节点），
   // 而 fullGraph 中尚未同步，则合并 prop 中的缓存，避免切换视图后详情丢失。
@@ -530,8 +533,12 @@ export function NodeDetailCard({
   }
 
   return (
-    <div
+    <motion.div
       className={`node-detail-card${pinned ? ' is-pinned' : ''}`}
+      layoutId={`node-detail-${latestNode.id}`}
+      layout="position"
+      data-node-detail-id={latestNode.id}
+      transition={{ layout: { duration: duration(MOTION.expand), ease: MOTION.springEase } }}
       style={cardStyle}
       role="dialog"
       aria-label={`节点详情：${latestNode.title}`}
@@ -912,6 +919,6 @@ export function NodeDetailCard({
           </>
         )}
       </div>
-    </div>
+    </motion.div>
   )
 }

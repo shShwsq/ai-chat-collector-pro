@@ -56,7 +56,7 @@
 import { create } from 'zustand'
 
 import { api, ApiError } from '../lib/api'
-import { DEFAULT_THEME, isValidTheme, THEME_STORAGE_KEY, type Theme } from '../lib/themes'
+import { resolveStoredTheme, THEME_STORAGE_KEY, type Theme } from '../lib/themes'
 import type {
   AskSource,
   BatchCreateNodesRequest,
@@ -204,6 +204,8 @@ interface AppState {
 
   // 左侧竖排导航：当前激活视图（chat / graph / settings），默认 'graph'
   activeNav: ActiveNav
+  /** 普通导航切换方向：1 向右进入，-1 向左进入，0 不播放位移。 */
+  navDirection: -1 | 0 | 1
 
   // 当前外观主题 id，启动时从 localStorage 恢复
   theme: Theme
@@ -359,6 +361,8 @@ interface AppState {
   // 提升到全局是为了让大卡浮层（ChatExpandedOverlay）在 activeNav 从 'chat'
   // 切到 'graph'（无缝衔接图谱）时仍能存活——本地 state 会随 ChatHome 卸载而丢失。
   chatExpandedNodeId: string | null
+  /** 对话大卡到图谱详情卡的跨视图接力阶段。 */
+  graphHandoffPhase: 'idle' | 'preparing' | 'graph-ready' | 'landing'
 
   // ===== Task 9：多轮对话 chat 状态 =====
   /** 当前模式下的 chat 会话列表（按 created_at 倒序）。 */
@@ -399,6 +403,7 @@ interface AppState {
   setReminderCount: (n: number) => void
   /** 设置对话首页瀑布流中展开为大卡的节点 ID（null = 收回）。 */
   setChatExpandedNodeId: (id: string | null) => void
+  setGraphHandoffPhase: (phase: AppState['graphHandoffPhase']) => void
   /** 选中节点（传 null 取消选中），用于图谱视图与卡片视图间同步选中态。 */
   setSelectedNode: (id: string | null) => void
   /** 选中图谱（传 null 取消选中），自动加载完整图谱。 */
@@ -789,13 +794,7 @@ function _saveBoolSetting(key: string, value: boolean): void {
 
 /** 从 localStorage 读取已保存的主题，非法或缺失时回退到默认主题。 */
 function loadInitialTheme(): Theme {
-  try {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY)
-    if (isValidTheme(saved)) return saved
-  } catch {
-    // 隐私模式或 localStorage 被禁用：静默降级
-  }
-  return DEFAULT_THEME
+  return resolveStoredTheme(typeof localStorage === 'undefined' ? null : localStorage)
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -810,6 +809,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // 左侧竖排导航：默认进入图谱视图
   activeNav: 'graph',
+  navDirection: 0,
 
   // 当前外观主题：启动时从 localStorage 恢复（缺失 / 非法则回退默认）
   theme: loadInitialTheme(),
@@ -899,6 +899,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // 对话首页大卡浮层初始无展开
   chatExpandedNodeId: null,
+  graphHandoffPhase: 'idle',
 
   // ===== Task 9：多轮对话 chat 初始状态 =====
   chatSessions: [],
@@ -1114,8 +1115,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   setView: (view) => set({ view }),
 
   setActiveNav: (nav) => {
-    if (nav === get().activeNav) return
-    set({ activeNav: nav })
+    const current = get().activeNav
+    if (nav === current) return
+    const order: Record<ActiveNav, number> = { chat: 0, graph: 1, settings: 2 }
+    set({ activeNav: nav, navDirection: order[nav] > order[current] ? 1 : -1 })
     if (nav === 'chat') {
       // 进入对话视图：加载当前模式推荐 + 刷新角标计数 + 拉取 chat 会话列表
       void get().loadRecommendations(get().recommendationsMode)
@@ -1134,6 +1137,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   setChatExpandedNodeId: (id) => {
     if (id === get().chatExpandedNodeId) return
     set({ chatExpandedNodeId: id })
+  },
+
+  setGraphHandoffPhase: (phase) => {
+    if (phase === get().graphHandoffPhase) return
+    set({ graphHandoffPhase: phase })
   },
 
   setSelectedNode: (id) => {

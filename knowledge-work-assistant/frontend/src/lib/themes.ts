@@ -56,3 +56,12 @@ export function isValidTheme(id: unknown): id is Theme {
     typeof id === 'string' && THEMES.some((t) => t.id === id)
   )
 }
+
+export function resolveStoredTheme(storage: Pick<Storage, 'getItem'> | null = null): Theme {
+  try {
+    const value = storage?.getItem(THEME_STORAGE_KEY)
+    return isValidTheme(value) ? value : DEFAULT_THEME
+  } catch {
+    return DEFAULT_THEME
+  }
+}

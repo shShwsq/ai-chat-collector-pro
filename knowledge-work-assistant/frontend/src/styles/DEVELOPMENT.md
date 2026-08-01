@@ -102,9 +102,9 @@ styles/
 
 ##### 大卡浮层 ChatExpandedOverlay
 
-- `.chat-expanded-overlay` / `.chat-expanded-overlay__backdrop` / `.chat-expanded-overlay__card`
-- **状态类**：`is-open` / `is-playing` / `is-transitioning`。
-- **局部变量**：`.chat-expanded-overlay__card` 注入 `--flip-x` / `--flip-y` / `--flip-scale`，用于卡片翻转 / 缩放进场动效。
+- `.expanded-overlay` / `.expanded-overlay__backdrop` / `.expanded-overlay__card`
+- **动效由 motion 接管**：进场 / 退场 / 大卡↔图谱详情卡接力均由 `motion.div` 的 `layout` / `layoutId` 驱动（见 [components/ChatExpandedOverlay.tsx](../components/ChatExpandedOverlay.tsx)），CSS 不再维护 `--flip-x` / `is-playing` / `is-transitioning` 等 FLIP 相关状态类与变量。
+- **`data-overlay-phase` / `data-handoff-phase`**：浮层根节点与卡片暴露 phase 数据属性，供 CSS 按接力阶段微调（如 handoff 阶段提高 `z-index` / 调整 pointer-events）。
 
 ##### 工具确认 ToolConfirmDialog（Task 10）
 
@@ -137,6 +137,19 @@ styles/
 ##### 模式滑动
 
 - `.mode-slide-wrap`：View Transitions API 模式滑动容器，`view-transition-name: mode-slide`
+
+##### 导航视图切换 + 双视图常驻（motion）
+
+- `.nav-view`：`activeNav` 切换时各主内容视图（chat / settings / graph）的 motion 容器，`flex: 1; min-width: 0; min-height: 0`；由 [App.tsx](../App.tsx) 的 `AnimatePresence` + `motion.main`/`motion.div` 驱动进场 / 离场位移淡入（`x` 由 `navDirection` 决定方向）。
+- `.nav-view--graph`：图谱视图容器 `display: flex`，承载 GraphList + content-area。
+- `.content-stage__view`：**Graph / Card 双视图常驻挂载**——`position: absolute; inset: 0`，默认 `opacity:0; visibility:hidden; pointer-events:none`，`.is-active` 时显形；目的是保留 d3-force simulation / 缩放位置 / 卡片滚动位置，切换视图不重建。父级 `.content-stage` 用 `data-active-view` 标记当前视图，非激活视图 `aria-hidden`。
+- `.side-nav__active-rail`：SideNav 激活项的高亮竖条，由 `motion.span` + `layoutId="side-nav-active-rail"` 在导航项间共享布局滑动（spring 过渡）；`position: absolute; left:0; top:16%; bottom:16%; width:3px`，带 `box-shadow` 发光。`.side-nav__btn.is-active::before` 旧伪元素高亮已停用（`display:none`）。
+
+##### 动效画质降级门控
+
+- `html[data-motion-quality='standard'] .gv-container.gv-transitioning .gv-svg`、`html[data-motion-quality='reduced'] .gv-container.gv-transitioning .gv-svg`：standard / reduced 画质下图谱视图切换时 SVG 半透明降级（`filter: opacity(0.5)`）。
+- `html[data-motion-quality='reduced'] .content-stage__view`、`html[data-motion-quality='reduced'] .gv-container .gv-svg`：reduced 画质下关闭过渡（`transition: none`），避免低端设备动画卡顿。
+- 画质由 [lib/motion.ts](../lib/motion.ts) 的 `MotionProvider` 写入 `document.documentElement.dataset.motionQuality`（high / standard / reduced）。
 
 #### 全局重置
 

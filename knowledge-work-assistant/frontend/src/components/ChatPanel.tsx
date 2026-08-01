@@ -20,6 +20,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { AnimatePresence, motion } from 'motion/react'
 
 import { useAppStore } from '../store/useAppStore'
 import type { ChatMessage, ToolCall } from '../lib/types'
@@ -159,17 +160,19 @@ function ChatConversationView() {
           aria-label="对话消息"
         >
           <ul className="chat-panel__message-list">
-            {chatMessages.map((m, i) => (
-              <ChatMessageItem
-                key={m.id ?? i}
-                message={m}
-                streaming={
-                  chatStreamingActive &&
-                  i === chatMessages.length - 1 &&
-                  m.role === 'assistant'
-                }
-              />
-            ))}
+            <AnimatePresence initial={false}>
+              {chatMessages.map((m, i) => (
+                <ChatMessageItem
+                  key={m.id ?? `${m.role}-${i}`}
+                  message={m}
+                  streaming={
+                    chatStreamingActive &&
+                    i === chatMessages.length - 1 &&
+                    m.role === 'assistant'
+                  }
+                />
+              ))}
+            </AnimatePresence>
           </ul>
           <div ref={messagesEndRef} />
           {showLatest && (
@@ -340,11 +343,17 @@ function ChatMessageItem({ message, streaming }: ChatMessageItemProps) {
   const isUser = message.role === 'user'
   if (isUser) {
     return (
-      <li className="chat-msg chat-msg--user">
+      <motion.li
+        className="chat-msg chat-msg--user"
+        layout="position"
+        initial={{ opacity: 0, y: 8, scale: 0.985 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: -4 }}
+      >
         <div className="chat-msg__bubble chat-msg__bubble--user">
           {message.content}
         </div>
-      </li>
+      </motion.li>
     )
   }
 
@@ -356,7 +365,13 @@ function ChatMessageItem({ message, streaming }: ChatMessageItemProps) {
   const quizCardProps = extractQuizFromToolCalls(toolCalls)
 
   return (
-    <li className="chat-msg chat-msg--assistant">
+    <motion.li
+      className="chat-msg chat-msg--assistant"
+      layout="position"
+      initial={{ opacity: 0, y: 8, scale: 0.985 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -4 }}
+    >
       <div
         className={`chat-msg__bubble chat-msg__bubble--assistant${
           isStreamingPlaceholder ? ' chat-msg__bubble--loading' : ''
@@ -405,7 +420,7 @@ function ChatMessageItem({ message, streaming }: ChatMessageItemProps) {
           )
         )}
       </div>
-    </li>
+    </motion.li>
   )
 }
 
@@ -611,8 +626,11 @@ function ChatToolCallItem({ toolCall }: ChatToolCallItemProps) {
   const resultSummary = summarizeToolResult(tool, result)
 
   return (
-    <div
+    <motion.div
       className={`chat-tool-call chat-tool-call--${status}`}
+      layout
+      animate={{ opacity: 1, scale: status === 'pending' ? 0.99 : 1 }}
+      transition={{ duration: 0.18 }}
       title={`工具：${tool}\n状态：${status}`}
     >
       <span className="chat-tool-call__icon" aria-hidden="true">
@@ -634,7 +652,7 @@ function ChatToolCallItem({ toolCall }: ChatToolCallItemProps) {
           失败
         </span>
       )}
-    </div>
+    </motion.div>
   )
 }
 

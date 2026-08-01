@@ -8,11 +8,16 @@
 tests/
 ├── __init__.py                      # 空（仅标识为 Python 包）
 ├── conftest.py                      # pytest 全局 fixture：tmp_db / mock_llm / app / async_client
+├── test_chat_stream.py              # 多轮对话流式输出 + 工具调用测试
+├── test_ws_notify.py                # ws_notify 序列化兜底测试（3 个用例，修复 datetime/UUID 静默失败）
 └── e2e/
     ├── __init__.py                  # 空（仅标识为 Python 包）
     ├── test_plugin_webhook.py       # 浏览器插件 webhook 端点单元测试（8 个用例）
     ├── test_plugin_ws_broadcast.py  # WS 广播 + 完整链路 e2e 测试（2 个用例）
-    └── test_extract_long_conversation.py  # graph_agent 长对话分块抽取 + 同义归一验证（5 个用例）
+    ├── test_extract_long_conversation.py  # graph_agent 长对话分块抽取 + 同义归一验证（5 个用例）
+    ├── test_graph_tools.py          # graph 工具层（graph_agent 内部工具）测试
+    ├── test_p0_stability.py         # P0 稳定性回归套件
+    └── test_tool_registry.py        # 工具注册表测试
 ```
 
 **测试栈**：
@@ -145,6 +150,18 @@ _ASYNC_SESSION_IMPORTERS = (
 - `monkeypatch.setattr(agent, "_get_llm_client", AsyncMock(return_value=sentinel_client))` 拦截 LLM 客户端获取；
 - `monkeypatch.setattr(agent, "_call_llm_json", fake_call_llm_json)` 用闭包 `call_log` 记录 prompt，断言"已有节点A"、"第 2/"等分块提示确实注入；
 - 同时 monkeypatch `ga_module.llm_request_registry.register` 为 `AsyncMock` 避免真实注册。
+
+### `test_ws_notify.py`（3 个用例）
+
+回归覆盖 `ws_notify.py` 事件预序列化（`json.dumps(default=str)` + `send_text`）的修复，**防止** commit 0d5c252 修复、后被 28719e7 合并回退的回归问题。测试**不依赖 tmp_db / async_client**，用 `MagicMock` 构造虚拟 `WebSocket`（`send_text` / `send_json` 为 `AsyncMock`，`client_state / application_state = WebSocketState.CONNECTED`），直接调 `ws_notify.register` / `notify_session` / `broadcast` / `close_all` 验证行为：
+
+| # | 用例名 | 验证点 |
+|---|--------|--------|
+| 1 | `test_notify_session_delivers_event_with_datetime` | 含 `datetime` 的 `chat_tool_result` 事件（`quiz.created_at`）必须成功送达（`send_text.assert_awaited_once` + `send_json.assert_not_called`），连接不被误注销（`is_session_online == True`） |
+| 2 | `test_broadcast_delivers_event_with_datetime` | `broadcast` 同样必须能处理含 `datetime` 的事件（`plugin.conversation_received` 携带 `occurred_at`），连接不被误注销 |
+| 3 | `test_notify_session_unregisters_genuinely_dead_connection` | 真正断开的连接（`send_text.side_effect = RuntimeError`）仍按原逻辑被注销（`is_session_online == False`），确保预序列化未破坏原有清理逻辑 |
+
+**触发场景**：`graph_generate_quiz` 工具返回的 quiz 记录含 `created_at` datetime 字段，旧实现 `send_json` 内部 `json.dumps` 抛 `TypeError` 被 `except Exception` 静默吞掉——既丢消息又会把仍开着的连接误判为死连接并 `unregister`，导致该 session 后续所有 WS 事件都丢失。
 
 ## WS 测试技术要点
 
@@ -332,6 +349,7 @@ WS 连接是长连接，会占用 client 的 transport 状态。**不要**用同
 | 要看 `conftest.py` 的 fixture 实现 | [./conftest.py](./conftest.py) |
 | 要看 webhook 测试用例 | [./e2e/test_plugin_webhook.py](./e2e/test_plugin_webhook.py) |
 | 要看 WS 广播测试用例 | [./e2e/test_plugin_ws_broadcast.py](./e2e/test_plugin_ws_broadcast.py) |
+| 要看 ws_notify 序列化兜底测试 | [./test_ws_notify.py](./test_ws_notify.py) |
 | 要看被测的 plugin 路由 | [../app/routers/plugin.py](../app/routers/plugin.py) |
 | 要看被测的 graph_store | [../app/services/graph_store.py](../app/services/graph_store.py) |
 | 要看被测的 ws_notify | [../app/services/ws_notify.py](../app/services/ws_notify.py) |

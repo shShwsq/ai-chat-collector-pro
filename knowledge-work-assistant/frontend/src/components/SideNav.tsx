@@ -30,6 +30,7 @@
 
 import { useAppStore } from '../store/useAppStore'
 import type { ActiveNav } from '../store/useAppStore'
+import { motion } from 'motion/react'
 
 /** 导航项配置：value 用于切换 / icon 渲染 SVG 路径 / label 显示中文标签。 */
 interface NavItem {
@@ -140,6 +141,14 @@ export function SideNav() {
               className={`side-nav__btn${active ? ' is-active' : ''}`}
               onClick={() => setActiveNav(item.value)}
             >
+              {active && (
+                <motion.span
+                  className="side-nav__active-rail"
+                  layoutId="side-nav-active-rail"
+                  transition={{ type: 'spring', stiffness: 520, damping: 38 }}
+                  aria-hidden="true"
+                />
+              )}
               <span className="side-nav__icon">{item.icon}</span>
               <span className="side-nav__label">{item.label}</span>
               {/* 「对话」右上角红点角标 slot（count > 0 时显示） */}
@@ -166,6 +175,14 @@ export function SideNav() {
               className={`side-nav__btn${active ? ' is-active' : ''}`}
               onClick={() => setActiveNav(item.value)}
             >
+              {active && (
+                <motion.span
+                  className="side-nav__active-rail"
+                  layoutId="side-nav-active-rail"
+                  transition={{ type: 'spring', stiffness: 520, damping: 38 }}
+                  aria-hidden="true"
+                />
+              )}
               <span className="side-nav__icon">{item.icon}</span>
               <span className="side-nav__label">{item.label}</span>
             </button>

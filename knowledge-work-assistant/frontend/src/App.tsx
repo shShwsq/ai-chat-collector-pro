@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { AnimatePresence, LayoutGroup, motion } from 'motion/react'
 
 import { api, ApiError } from './lib/api'
 import { GraphList } from './components/GraphList'
@@ -20,6 +21,7 @@ import { Toast } from './components/Toast'
 import { useAppStore } from './store/useAppStore'
 import { generateSessionId, TestSocket } from './lib/ws'
 import type { HealthResponse } from './lib/types'
+import { isValidTheme, THEME_STORAGE_KEY } from './lib/themes'
 
 /**
  * 知识工作助手根组件（Task 5 / Task 6 / Task 8 / Task 11 / Task 12 落地版）。
@@ -59,6 +61,7 @@ export default function App() {
   const clearError = useAppStore((s) => s.clearError)
   const loadGraphs = useAppStore((s) => s.loadGraphs)
   const activeNav = useAppStore((s) => s.activeNav)
+  const navDirection = useAppStore((s) => s.navDirection)
 
   const graphViewRef = useRef<GraphViewHandle>(null)
   // 持有 WebSocket 实例，避免重渲染时重建连接
@@ -73,10 +76,16 @@ export default function App() {
     document.documentElement.dataset.theme = theme
     const themeColor = dark ? '#121212' : '#f6f6f2'
     document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute('content', themeColor)
-    return () => {
-      delete document.documentElement.dataset.theme
-    }
   }, [theme])
+
+  useEffect(() => {
+    const syncTheme = (event: StorageEvent) => {
+      if (event.key !== THEME_STORAGE_KEY || !isValidTheme(event.newValue)) return
+      useAppStore.setState({ theme: event.newValue })
+    }
+    window.addEventListener('storage', syncTheme)
+    return () => window.removeEventListener('storage', syncTheme)
+  }, [])
 
   const checkHealth = useCallback(async () => {
     try {
@@ -241,18 +250,41 @@ export default function App() {
             ModeSwitch 中 startViewTransition 捕获新旧快照，
             CSS ::view-transition-old/new 分别播放滑出/滑入动画。
             SideNav 不在此容器内，保持固定不参与滑动。 */}
+        <LayoutGroup>
         <div className="mode-slide-wrap" id="main-content" tabIndex={-1}>
           {/* 主内容区：按 activeNav 切换 */}
+          <AnimatePresence mode="wait" initial={false} custom={navDirection}>
           {activeNav === 'chat' ? (
-            <main className="content-area content-area--chat">
+            <motion.main
+              key="chat"
+              custom={navDirection}
+              className="content-area content-area--chat nav-view"
+              initial={{ opacity: 0, x: navDirection * 18 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: navDirection * -12 }}
+            >
               <ChatPanel />
-            </main>
+            </motion.main>
           ) : activeNav === 'settings' ? (
-            <main className="content-area content-area--settings">
+            <motion.main
+              key="settings"
+              custom={navDirection}
+              className="content-area content-area--settings nav-view"
+              initial={{ opacity: 0, x: navDirection * 18 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: navDirection * -12 }}
+            >
               <SettingsPanel />
-            </main>
+            </motion.main>
           ) : (
-            <>
+            <motion.div
+              key="graph"
+              custom={navDirection}
+              className="nav-view nav-view--graph"
+              initial={{ opacity: 0, x: navDirection * 18 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: navDirection * -12 }}
+            >
               <GraphList />
               <main className="content-area">
               {error && (
@@ -274,12 +306,19 @@ export default function App() {
                     graphName={fullGraph?.graph.name}
                     onRelayout={handleRelayout}
                   />
-                  <div className="content-stage">
-                    {view === 'graph' ? (
+                  <div className="content-stage" data-active-view={view}>
+                    <div
+                      className={`content-stage__view${view === 'graph' ? ' is-active' : ''}`}
+                      aria-hidden={view !== 'graph'}
+                    >
                       <GraphView ref={graphViewRef} />
-                    ) : (
+                    </div>
+                    <div
+                      className={`content-stage__view${view === 'card' ? ' is-active' : ''}`}
+                      aria-hidden={view !== 'card'}
+                    >
                       <CardView />
-                    )}
+                    </div>
                   </div>
                 </>
               ) : (
@@ -298,18 +337,16 @@ export default function App() {
               <ReportPanel />
               <QAPanel />
             </main>
-          </>
+          </motion.div>
           )}
+          </AnimatePresence>
         </div>
+        <ChatExpandedOverlay graphViewRef={graphViewRef} />
+        </LayoutGroup>
       </div>
 
       {/* 全局 Toast（成功 / 警告 / 错误提示） */}
       <Toast />
-
-      {/* 对话首页"点击卡片展开为大卡"的顶层浮层。
-          放在 App 顶层是为了让大卡浮层在 activeNav 从 'chat' 切到 'graph'
-          （无缝衔接图谱）时仍能存活——ChatHome 会随 ChatPanel 卸载而消失。 */}
-      <ChatExpandedOverlay graphViewRef={graphViewRef} />
 
       <footer className="app-footer">
         知识工作助手 · 后端端口 8788 · 前端端口 5174

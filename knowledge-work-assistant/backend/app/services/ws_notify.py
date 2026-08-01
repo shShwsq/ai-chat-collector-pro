@@ -101,7 +101,8 @@ async def notify_session(session_id: str, event: dict[str, Any]) -> int:
         return 0
 
     # 预序列化一次：避免 datetime / UUID 等非 JSON 原生类型导致 send_json
-    # 抛 TypeError 被静默吞掉（如 graph_generate_quiz 的 quiz.created_at）。
+    # 抛 TypeError 被静默吞掉（如 graph_generate_quiz 的 quiz.created_at），
+    # 进而误判连接已死并 unregister 仍开着的连接。
     payload = _dumps_event(event)
 
     count = 0

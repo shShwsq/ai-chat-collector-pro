@@ -30,7 +30,7 @@ store/
 
 #### 基础态
 
-- `mode: Mode`（study / work）、`view: ViewType`（graph / card）、`activeNav: ActiveNav`（chat / graph / settings）
+- `mode: Mode`（study / work）、`view: ViewType`（graph / card）、`activeNav: ActiveNav`（chat / graph / settings）、`navDirection: -1 | 0 | 1`（普通导航切换方向：1 向右进入 / -1 向左进入 / 0 不播放位移，由 `setActiveNav` 按 chat<graph<settings 顺序计算，供 [App.tsx](../App.tsx) 的 `AnimatePresence` 视图切换做方向化横向滑动）
 - `theme: Theme`（simple-white / simple-black / angular-white，由 [themes.ts](../lib/themes.ts) 定义；启动时从 localStorage 读取 `isValidTheme` 校验，非法回退 `DEFAULT_THEME`）
 - `currentGraphId: string | null`、`graphs: Graph[]`、`fullGraph: FullGraph | null`、`selectedNodeId: string | null`
 - `loading: boolean`、`error: string`、`reminderCount: number`
@@ -87,6 +87,7 @@ store/
 - `planMode: boolean`（Work 模式 Plan/Build 切换）
 - `pendingToolConfirmation: ToolConfirmation | null`（Task 10 高风险工具确认）
 - `chatExpandedNodeId: string | null`（对话首页大卡浮层展开态，提升到全局以跨视图存活）
+- `graphHandoffPhase: 'idle' | 'preparing' | 'graph-ready' | 'landing'`（对话大卡到图谱详情卡的跨视图接力阶段，由 [ChatExpandedOverlay](../components/ChatExpandedOverlay.tsx) 在「延伸拓展」流程中驱动：preparing → 等图谱/节点就绪 → graph-ready → 布局动画完成 → landing → idle）
 
 #### 通用 Toast
 
@@ -99,7 +100,7 @@ store/
 - `setMode(mode)`：清空当前模式相关状态（含延伸 / 候选 / 测验 / Work / 流式 / Chat 会话与消息 / 工具确认态 / 大卡浮层态 / Toast），重新加载新模式图谱列表。
 - `setTheme(theme)`：切换外观主题；写入 `theme` 状态并同步到 `localStorage.setItem(THEME_STORAGE_KEY, theme)`；App.tsx 的 `useEffect` 监听后会把值同步到 `document.documentElement.dataset.theme` 与 `theme-color` meta 标签。
 - `setView(view)`：切换内容区视图（graph / card）。
-- `setActiveNav(nav)`：切换左侧竖排导航；进入 `chat` 时加载推荐 + 刷新角标 + 调 `loadChatSessions()`，进入 `settings` 时懒加载 LLM 配置。
+- `setActiveNav(nav)`：切换左侧竖排导航；按 chat(0) < graph(1) < settings(2) 顺序计算 `navDirection`（向右进入=1 / 向左进入=-1）写入状态，供 [App.tsx](../App.tsx) 的 `AnimatePresence` 做方向化视图滑动；进入 `chat` 时加载推荐 + 刷新角标 + 调 `loadChatSessions()`，进入 `settings` 时懒加载 LLM 配置。
 - `setSelectedNode(id)`：选中节点（图谱视图与卡片视图间同步）。
 - `selectGraph(id)`：切换图谱，清空选中节点 / 延伸批次 / 候选 / 测验作答态 / Work 业务态 / 流式态 / Chat 会话与消息 / 工具确认态 / 大卡浮层态；自动加载完整图谱。
 
@@ -168,7 +169,7 @@ store/
 - **工具确认（Task 10）**：`confirmToolCall()` / `rejectToolCall(reason?)`
 - **Checkpoint**：`loadCheckpoint()` / `triggerCheckpoint()`
 - **Plan/Build**：`setPlanMode(plan)`
-- **大卡浮层**：`setChatExpandedNodeId(id)`
+- **大卡浮层**：`setChatExpandedNodeId(id)`、`setGraphHandoffPhase(phase)`（写入跨视图接力阶段，相同值 no-op 避免多余渲染）
 - **WS 事件处理**：`handleChatToken` / `handleChatToolCall` / `handleChatToolResult` / `handleChatToolConfirmation` / `handleChatDone` / `handleChatCancelled` / `handleChatError`
 
 #### 通用 Toast

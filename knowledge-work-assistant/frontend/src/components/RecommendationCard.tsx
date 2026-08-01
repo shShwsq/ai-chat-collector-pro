@@ -17,12 +17,12 @@
  * - ``enterDelay`` / ``enterDuration``：mount 时飞入动画的延迟与时长，
  *   由父组件 ChatHome 为每张卡片算出不均匀值（先有先后、有快有慢）。
  * - ``isDimmed``：其他卡片被展开为大卡时，本卡加高斯模糊 + 半透明。
- * - ``forwardRef``：暴露 article DOM，供父组件做 FLIP First 测量。
  *
  * 图标全部使用 inline SVG，不依赖外部图标库。
  */
 
 import { forwardRef } from 'react'
+import { motion } from 'motion/react'
 
 import { parseDate } from '../lib/date'
 import type { RecommendationItem } from '../lib/types'
@@ -119,7 +119,7 @@ export const RecommendationCard = forwardRef<HTMLButtonElement, RecommendationCa
   const remindText = formatRemindAt(node.remind_at)
 
   return (
-    <button
+    <motion.button
       type="button"
       ref={ref}
       className={cardCls}
@@ -165,7 +165,7 @@ export const RecommendationCard = forwardRef<HTMLButtonElement, RecommendationCa
           </>
         )}
       </div>
-    </button>
+    </motion.button>
   )
   },
 )

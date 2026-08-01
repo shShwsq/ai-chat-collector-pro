@@ -40,10 +40,13 @@ graph/
   - 悬停 400MS 显示 `NodeDetailCard`，移开 250ms 消失；单击节点固定（pinned）详情卡。
   - 双击节点触发 `store.extendNode(node.id, 'all')` 全部延伸。
   - 对话首页大卡无缝切换到图谱视图：由 `focusNodeAtCenter(nodeId)` 实现，配合 `setSelectedNode` + `setActiveNav('graph')` 完成从大卡浮层到图谱视图的平滑过渡。
-- **对外方法**：通过 `forwardRef` + `useImperativeHandle` 暴露三个方法：
+- **对外方法**：通过 `forwardRef` + `useImperativeHandle` 暴露五个方法：
   - `relayout()`：重启 d3-force 模拟，供 `ContentToolbar` 的"重新布局"按钮调用。
   - `resetView()`：`setTransform({ x: 0, y: 0, k: 1 })`，重置画布平移与缩放到初始状态。
   - `focusNodeAtCenter(nodeId)`：从 `positionsRef` 取节点位置，平移画布让该节点位于视口正中央，缩放保持不变；节点不存在或位置未就绪时静默返回。
+  - `isNodeReady(nodeId)`：同步判断指定节点的坐标（`positionsRef`）与 DOM（`nodeElsRef`）是否均已落位。
+  - `waitForNodeReady(nodeId, timeoutMs=2000)`：返回 Promise，轮询（`requestAnimationFrame`）等待节点落位后 resolve(true)，超时 resolve(false)；供 [ChatExpandedOverlay](../ChatExpandedOverlay.tsx) 跨视图接力时确认目标节点已渲染再 `focusNodeAtCenter`，避免接力落空。
+- **节点键盘可访问性**：节点 `<g>` 补 `tabIndex={0}` / `role="button"` / `aria-label` / `data-graph-node-id`，Enter / Space 选中节点（调 `setSelectedNode`）。
 - **闪烁高亮**：`store.flashNodeIds` 命中的节点添加 `is-flash` CSS 类触发动画（见 [styles/app.css](../../styles/app.css)）。
 
 ### `NodeDetailCard.tsx`（节点详情卡）
@@ -60,6 +63,7 @@ graph/
   2. 随后 NodeDetailCard 通过正常逻辑检测到 `detail_payload._important_points` 存在，直接渲染，跳过调用 `generateNodeDetail` 的 API；
   3. 兼容性：若 recommendations 中找不到同 id item 或该 item 无 detail_payload，`syncNodeDetailToGraph` 为安全 no-op，不会覆盖已存在的 detail_payload，NodeDetailCard 正常走生成路径。
 - **定位**：由父组件 `GraphView` 计算 `position`（left/top/width/maxHeight），卡片绝对定位、不超出视口、自身可滚动。
+- **共享元素动效**：渲染为 `motion.div` + `layoutId="node-detail-${latestNode.id}"` + `layout="position"`，与 [ChatExpandedOverlay](../ChatExpandedOverlay.tsx) 的 handoff 阶段共享 layoutId（浮层 `node-detail-${id}` → 图谱详情卡 `node-detail-${id}`），实现「大卡 → 图谱详情卡」跨视图接力动画；过渡时长取自 [`MOTION.expand`](../../lib/motion.ts) 经 `useMotionRuntime().duration()` 缩放；卡片暴露 `data-node-detail-id` 供测试 / 调试定位。
 - **props**：除 `node` / `position` 等基础字段外，新增可选 prop `onRequestGraphSwitch?: (nodeId: string) => void`，用于大卡浮层无缝切换到图谱视图；图谱视图内部渲染时该 prop 为 `undefined`，无副作用。
 - **Task 8 延伸接入**：
   - 单击"延伸方向推荐"项 → `store.extendNode(node.id, 'single', direction.name)`，仅生成该方向一个节点，不进 batch；同时触发 `onRequestGraphSwitch?.(latestNode.id)` 通知浮层切换。
@@ -81,8 +85,14 @@ graph/
 ### `PendingNodes.tsx`（Study 待抽取浮层）
 
 - 双栏布局：左栏 `pendingObservations` 列表（按时间倒序），右栏 `candidateNodes` 候选列表。
-- 用户点击左栏项 → `store.extractCandidates(observationId)`；右栏展示候选节点，可勾选。
+- **批量抽取功能（新增）**：
+  - 新增状态：`batchExtracting` / `batchExtractProgress`（记录当前进度 current/total）。
+  - "批量抽取全部"按钮 → `handleBatchExtractAll()` 依次抽取所有待抽取对话，自动全选入图。
+  - 抽取进度实时显示（"批量抽取中 2/5…"），完成后 Toast 提示成功/失败/入图节点数。
+  - **注意事项**：批量抽取期间禁用所有单条抽取、刷新、清空候选、确认入图按钮，避免并发冲突。
+- 单条抽取：用户点击左栏项 → `store.extractCandidates(observationId)`；右栏展示候选节点，可勾选。
 - "确认入图"按钮 → `store.batchCreateNodes(selectedNodes, observationId)`；成功后整图刷新、闪烁高亮新建节点、左栏自动刷新。
+- **时间显示修复（新增）**：观察项时间从本地 `formatTime` 函数改为统一使用 [`lib/date.ts`](../../lib/date.ts) 的 `formatShortTime`，修复 UTC 时间被错误按本地时区解析的问题。
 
 ### `QuizPanel.tsx`（Study 测验浮层）
 
@@ -90,8 +100,14 @@ graph/
   - `config`：选择题型（single_choice / multi_choice / feynman）+ 限定节点范围（null=全图随机）。
   - `answering`：渲染题目（选择题 options / 费曼题 prompt），提交答案。
   - `result`：显示判分结果（选择题正确答案 + 解析 / 费曼题理解度评分 + 反馈）。
+- **降级题目显示优化（新增）**：
+  - 后端 `_fallback_quiz` 在 LLM 不可用时返回占位题：
+    - 选择题：提供 4 个占位选项，正确答案固定为 A，明确标注"【占位题】"。
+    - 费曼题：提供占位提示"请用自己的话解释..."。
+  - 前端在 `answering` 阶段检测到 `payload.degraded=true` 时显示降级横幅，提示用户"LLM 服务暂不可用，当前为占位题。配置好 LLM 后重新生成即可获得正常题目"。
+  - 降级题仍可作答，答案判分固定返回正确（选择题）或默认分（费曼题），避免白屏。
 - 历史列表：点击进入 `reviewQuiz` 流程，复用 `result` 视图。
-- 降级题目（`payload.degraded=true`）显示提示横幅但仍可作答。
+- **UI 打磨（新增）**：`config` 阶段新增"测验主题关键词"输入框，供用户输入自定义主题关键词，扩展题目生成范围。
 
 ### `WorkInput.tsx`（Work 抽取入口浮层）
 
@@ -140,6 +156,7 @@ graph/
   - `edgePath(x1, y1, x2, y2, curvature=0.12)`：二次贝塞尔曲线，避免双向边重叠。
   - `screenToSvg(clientX, clientY, svg, translate, scale)`：屏幕坐标转 SVG 内部坐标。
   - `clampScale(k, min=0.2, max=3)`：限制缩放系数。
+  - **`isSameGraphStructure(a, b)`（新增）**：判断两图谱结构是否相同（节点 id 集合 + 边端点集合一致）。结构相同时仅字段（detail_payload/title/summary 等）变化，GraphView 不应重建 d3-force simulation，避免整图受力重排抽动；在 [`GraphView.tsx`](./GraphView.tsx) 的 `useEffect` 中通过此函数判断是否需要重新构建 simulation。
 
 ## 开发工作流
 
