@@ -1114,6 +1114,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       })
       void get().loadGraphs()
     }
+    // 切模式后若当前在 chat 视图，按新模式重新加载会话列表
+    // （上面两个分支都已清空 chatSessions，不重新加载会显示"暂无对话记录"）
+    if (get().activeNav === 'chat') void get().loadChatSessions()
   },
 
   setTheme: (theme) => {
