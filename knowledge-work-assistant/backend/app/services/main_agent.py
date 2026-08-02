@@ -770,12 +770,24 @@ class MainAgent:
         user_text: str,
         attachments: list[str] | None,
     ) -> bool:
-        """保存用户消息到 DB，返回会话是否存在。"""
+        """保存用户消息到 DB，返回会话是否存在。
+
+        若为首条用户消息（会话此前无 user 消息），用 user_text 截断作为
+        会话标题——替换创建时生成的"mode 对话 时间"占位，与主流对话产品
+        体验一致（首句问什么就叫什么）。
+        """
         now = _now()
         async with AsyncSessionLocal() as db:
             session = await db.get(SessionRow, self.session_id)
             if session is None:
                 return False
+            # 是否已有 user 消息：决定是否更新标题
+            existing_user = await db.scalar(
+                select(MessageRow.id)
+                .where(MessageRow.session_id == self.session_id)
+                .where(MessageRow.role == "user")
+                .limit(1)
+            )
             db.add(
                 MessageRow(
                     id=uuid.uuid4().hex,
@@ -786,6 +798,11 @@ class MainAgent:
                     created_at=now,
                 )
             )
+            # 首条用户消息：用截断后的文本作为新标题（最长 40 字符）
+            if not existing_user:
+                stripped = user_text.strip().replace("\n", " ")
+                if stripped:
+                    session.title = stripped[:40] + ("…" if len(stripped) > 40 else "")
             session.updated_at = now
             await db.commit()
         return True

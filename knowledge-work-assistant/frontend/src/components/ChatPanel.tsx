@@ -27,8 +27,9 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useAppStore } from '../store/useAppStore'
 import { useAutoGrowTextarea } from '../hooks/useAutoGrowTextarea'
 import { formatShortTime } from '../lib/date'
-import type { ChatMessage, ToolCall } from '../lib/types'
+import type { ChatMessage, ChatSession, ToolCall } from '../lib/types'
 import { ChatHome } from './ChatHome'
+import { ConfirmDialog } from './graph/ConfirmDialog'
 import { ToolConfirmDialog } from './ToolConfirmDialog'
 
 export function ChatPanel() {
@@ -264,8 +265,22 @@ function ChatSessionSidebar() {
   const currentChatSession = useAppStore((s) => s.currentChatSession)
   const selectChatSession = useAppStore((s) => s.selectChatSession)
   const createChatSession = useAppStore((s) => s.createChatSession)
+  const renameChatSession = useAppStore((s) => s.renameChatSession)
+  const deleteChatSession = useAppStore((s) => s.deleteChatSession)
   const loadChatSessions = useAppStore((s) => s.loadChatSessions)
   const chatAsking = useAppStore((s) => s.chatAsking)
+
+  // 重命名态（与 GraphList 模式一致：内联 input + Enter 确认 / Esc 取消）
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const renameRef = useRef<HTMLInputElement | null>(null)
+
+  // 删除确认弹窗
+  const [deleteTarget, setDeleteTarget] = useState<ChatSession | null>(null)
+
+  useEffect(() => {
+    if (renamingId) renameRef.current?.focus()
+  }, [renamingId])
 
   const handleNewSession = async () => {
     if (chatAsking) return
@@ -274,8 +289,47 @@ function ChatSessionSidebar() {
 
   const handleSelect = (sessionId: string) => {
     if (chatAsking) return
+    if (renamingId === sessionId) return // 重命名中点击同项不触发切换
     const target = chatSessions.find((s) => s.id === sessionId)
     if (target) void selectChatSession(target)
+  }
+
+  const startRename = (s: ChatSession) => {
+    setRenamingId(s.id)
+    setRenameValue(s.title)
+  }
+
+  const cancelRename = () => {
+    setRenamingId(null)
+    setRenameValue('')
+  }
+
+  const confirmRename = async () => {
+    const id = renamingId
+    if (!id) return
+    const title = renameValue.trim()
+    if (!title) {
+      cancelRename()
+      return
+    }
+    // 标题未变直接退出编辑态
+    if (title === chatSessions.find((s) => s.id === id)?.title) {
+      setRenamingId(null)
+      setRenameValue('')
+      return
+    }
+    const ok = await renameChatSession(id, title)
+    if (ok) {
+      setRenamingId(null)
+      setRenameValue('')
+    }
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    const id = deleteTarget.id
+    setDeleteTarget(null)
+    await deleteChatSession(id)
   }
 
   // 刷新：重载会话列表 + 当前会话消息 + 强制重置流式状态（解决 UI 卡死）
@@ -307,22 +361,76 @@ function ChatSessionSidebar() {
         ) : (
           chatSessions.map((s) => {
             const isActive = currentChatSession?.id === s.id
+            const isRenaming = renamingId === s.id
             return (
-              <button
+              <div
                 key={s.id}
-                type="button"
                 className={`chat-sidebar__item${
                   isActive ? ' chat-sidebar__item--active' : ''
-                }`}
-                onClick={() => handleSelect(s.id)}
-                disabled={chatAsking}
-                title={s.title}
+                }${isRenaming ? ' chat-sidebar__item--renaming' : ''}`}
               >
-                <span className="chat-sidebar__item-title">{s.title}</span>
-                <span className="chat-sidebar__item-time" aria-hidden="true">
-                  {formatShortTime(s.updated_at)}
-                </span>
-              </button>
+                {isRenaming ? (
+                  <input
+                    ref={renameRef}
+                    className="chat-sidebar__rename-input"
+                    name={`chat-title-${s.id}`}
+                    aria-label={`重命名对话：${s.title}`}
+                    autoComplete="off"
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') void confirmRename()
+                      if (e.key === 'Escape') cancelRename()
+                    }}
+                    onBlur={() => void confirmRename()}
+                    disabled={chatAsking}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className="chat-sidebar__select-btn"
+                    aria-current={isActive ? 'true' : undefined}
+                    onClick={() => handleSelect(s.id)}
+                    disabled={chatAsking}
+                    title={s.title}
+                  >
+                    <span className="chat-sidebar__item-title">{s.title}</span>
+                    <span className="chat-sidebar__item-time" aria-hidden="true">
+                      {formatShortTime(s.updated_at)}
+                    </span>
+                  </button>
+                )}
+                {!isRenaming && (
+                  <div className="chat-sidebar__item-actions">
+                    <button
+                      type="button"
+                      className="chat-sidebar__icon-btn"
+                      aria-label={`重命名对话：${s.title}`}
+                      title="重命名"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        startRename(s)
+                      }}
+                      disabled={chatAsking}
+                    >
+                      编辑
+                    </button>
+                    <button
+                      type="button"
+                      className="chat-sidebar__icon-btn chat-sidebar__icon-btn--danger"
+                      aria-label={`删除对话：${s.title}`}
+                      title="删除"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setDeleteTarget(s)
+                      }}
+                      disabled={chatAsking}
+                    >
+                      删除
+                    </button>
+                  </div>
+                )}
+              </div>
             )
           })
         )}
@@ -337,6 +445,22 @@ function ChatSessionSidebar() {
           刷新
         </button>
       </footer>
+
+      {/* 删除对话确认弹窗 */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="删除对话"
+        message={
+          deleteTarget
+            ? `确定删除对话「${deleteTarget.title}」？该操作会级联清理其下所有消息与 checkpoint，且不可恢复。`
+            : ''
+        }
+        confirmText="确认删除"
+        cancelText="取消"
+        danger
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </aside>
   )
 }
