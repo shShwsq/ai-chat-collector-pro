@@ -23,6 +23,7 @@ import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 
 import { useAppStore } from '../store/useAppStore'
+import { useAutoGrowTextarea } from '../hooks/useAutoGrowTextarea'
 import type { ChatMessage, ToolCall } from '../lib/types'
 import { ChatHome } from './ChatHome'
 import { ToolConfirmDialog } from './ToolConfirmDialog'
@@ -75,6 +76,10 @@ function ChatConversationView() {
   const [showLatest, setShowLatest] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
+  /** textarea 自适应撑高（与首页输入框行为一致） */
+  const textareaRef = useAutoGrowTextarea<HTMLTextAreaElement>(input, {
+    maxHeight: 120,
+  })
 
   useEffect(() => {
     const container = messagesRef.current
@@ -193,6 +198,7 @@ function ChatConversationView() {
         <footer className="chat-input-bar">
           <div className="chat-input-bar__inner">
             <textarea
+              ref={textareaRef}
               className="chat-input-bar__textarea"
               value={input}
               name="chat-question"
@@ -204,7 +210,7 @@ function ChatConversationView() {
                   ? '向学习助手提问，回车发送，Shift+Enter 换行…'
                   : '向工作助手提问，回车发送，Shift+Enter 换行…'
               }
-              rows={2}
+              rows={1}
               disabled={chatAsking}
             />
             <div className="chat-input-bar__toolbar">

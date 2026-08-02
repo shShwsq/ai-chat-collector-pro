@@ -26,6 +26,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { useAppStore } from '../store/useAppStore'
+import { useAutoGrowTextarea } from '../hooks/useAutoGrowTextarea'
 import type { RecommendationItem } from '../lib/types'
 import { RecommendationCard } from './RecommendationCard'
 import { ReminderBanner } from './ReminderBanner'
@@ -56,6 +57,10 @@ export function ChatHome({ mode, onAsk }: ChatHomeProps) {
   const [phase, setPhase] = useState<Phase>('idle')
   /** sending 时输入框下移距离（px），由提交时测量视口算出。 */
   const [slideY, setSlideY] = useState(0)
+  /** textarea 自适应撑高（最多 5 行左右） */
+  const textareaRef = useAutoGrowTextarea<HTMLTextAreaElement>(input, {
+    maxHeight: 120,
+  })
   // ===== refs =====
   const homeRef = useRef<HTMLDivElement>(null)
   const inputWrapRef = useRef<HTMLDivElement>(null)
@@ -149,10 +154,12 @@ export function ChatHome({ mode, onAsk }: ChatHomeProps) {
     if (sendTimerRef.current) window.clearTimeout(sendTimerRef.current)
   }, [])
 
-  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key !== 'Enter') return
-    e.preventDefault()
-    submitQuestion()
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Enter 提交、Shift+Enter 换行（与 ChatPanel 行为一致）
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      submitQuestion()
+    }
   }
 
   // ===== 发送按钮点击 =====
@@ -209,12 +216,13 @@ export function ChatHome({ mode, onAsk }: ChatHomeProps) {
       {/* 对话输入框（sticky 固定在视口中央偏下，瀑布流卡片从下方滑上覆盖） */}
       <div className="chat-home__input-wrap" ref={inputWrapRef}>
         <div className="chat-home__input-row">
-          <input
+          <textarea
+            ref={textareaRef}
             id="chat-home-question"
             className="chat-home__input"
-            type="text"
             name="chat-home-question"
             autoComplete="off"
+            rows={1}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleInputKeyDown}
@@ -228,8 +236,13 @@ export function ChatHome({ mode, onAsk }: ChatHomeProps) {
             onClick={handleSendClick}
             disabled={phase === 'sending' || !input.trim()}
             title="发送对话（Enter）"
+            aria-label="发送"
           >
-            {phase === 'sending' ? '…' : '发送'}
+            {phase === 'sending' ? (
+              <span className="chat-home__send-spinner" />
+            ) : (
+              <SendIcon />
+            )}
           </button>
         </div>
       </div>
@@ -283,6 +296,29 @@ export function ChatHome({ mode, onAsk }: ChatHomeProps) {
       {/* 底部渐变高斯模糊：sticky 钉在视口底部，卡片滑过时模糊 */}
       <div className="chat-home__bottom-blur" />
     </div>
+  )
+}
+
+// ============================================================================
+// 发送按钮 SVG 图标（与 ChatPanel 的 SendIcon 保持一致，统一视觉）
+// ============================================================================
+
+function SendIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <line x1="22" y1="2" x2="11" y2="13" />
+      <polygon points="22 2 15 22 11 13 2 9 22 2" />
+    </svg>
   )
 }
 
