@@ -474,7 +474,6 @@
 .app-shell[data-theme='angular-white'] .graph-list__item-meta,
 .app-shell[data-theme='angular-white'] .chat-panel__subtitle,
 .app-shell[data-theme='angular-white'] .app-header__subtitle,
-.app-shell[data-theme='angular-white'] .app-footer,
 .app-shell[data-theme='angular-white'] .settings-section__desc,
 .app-shell[data-theme='angular-white'] .health-badge {
   font-family: var(--font-mono);
@@ -574,16 +573,6 @@
 .app-shell[data-theme='angular-white'] .health-badge--ok .health-badge__dot {
   background: var(--kwa-cyan-500);
   box-shadow: 0 0 6px rgba(31, 209, 196, 0.5);
-}
-
-.app-shell[data-theme='angular-white'] .app-footer {
-  background: var(--surface);
-  border-top: 1px solid var(--border);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-secondary);
 }
 
 /* --- 左侧导航：工业侧边栏（参考稿 kwa-sidebar） --- */
@@ -1684,14 +1673,11 @@
   animation: none;
 }
 
-/* header / footer / SideNav 独立成组并禁用动画，确保过渡期间常驻不消失。
+/* header / SideNav 独立成组并禁用动画，确保过渡期间常驻不消失。
    关键：给它们设置高 z-index，避免被 .mode-slide-wrap 滑入内容
   （translateX(-100%)→0 会经过 SideNav 位置）覆盖。 */
 .app-header {
   view-transition-name: app-header;
-}
-.app-footer {
-  view-transition-name: app-footer;
 }
 .side-nav {
   view-transition-name: side-nav;
@@ -1699,15 +1685,12 @@
 
 ::view-transition-old(app-header),
 ::view-transition-new(app-header),
-::view-transition-old(app-footer),
-::view-transition-new(app-footer),
 ::view-transition-old(side-nav),
 ::view-transition-new(side-nav) {
   animation: none;
 }
 
 ::view-transition-group(app-header),
-::view-transition-group(app-footer),
 ::view-transition-group(side-nav) {
   z-index: 10;
 }
@@ -1734,15 +1717,6 @@
   from {
     transform: translateX(-100%);
   }
-}
-
-.app-footer {
-  padding: 10px 24px;
-  border-top: 1px solid var(--border);
-  background: var(--surface);
-  font-size: 12px;
-  color: var(--text-tertiary);
-  text-align: center;
 }
 
 /* ============================================================================

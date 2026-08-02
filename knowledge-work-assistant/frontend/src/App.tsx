@@ -347,10 +347,6 @@ export default function App() {
 
       {/* 全局 Toast（成功 / 警告 / 错误提示） */}
       <Toast />
-
-      <footer className="app-footer">
-        知识工作助手 · 后端端口 8788 · 前端端口 5174
-      </footer>
     </div>
   )
 }
