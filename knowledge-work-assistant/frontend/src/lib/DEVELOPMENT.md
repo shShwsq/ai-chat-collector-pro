@@ -14,8 +14,7 @@ lib/
 ├── date.ts              # 时间解析与格式化工具：parseDate / formatDateTime / formatShortTime
 ├── motion.ts            # 动效运行时：MotionProvider（自适应画质降级）+ MOTION 常量 + handoffReducer 状态机
 ├── electron.d.ts        # window.electronAPI 全局类型声明（与 electron/preload.ts 对齐）
-└── __tests__/           # 库测试套件，vitest 跑（详见 __tests__/DEVELOPMENT.md）
-    └── kwa-push.test.ts # plugin-sdk/kwa-push.js SDK 单元测试
+└── __tests__/           # 库测试套件，vitest 跑（暂无测试，按需新建 *.test.ts）
 ```
 
 ## 关键文件说明
