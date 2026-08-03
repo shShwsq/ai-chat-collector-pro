@@ -499,6 +499,15 @@ function ChatMessageItem({ message, streaming }: ChatMessageItemProps) {
   // 提取测验卡数据：若 graph_generate_quiz 已完成，渲染交互式测验卡
   const quizCardProps = extractQuizFromToolCalls(toolCalls)
 
+  // 仅当气泡内只有三点加载动画（无思维链、无工具调用、无测验卡）时，
+  // 才使用 --loading 的 inline-flex 居中布局；否则保持 block 布局，
+  // 让动画自然位于已流式输出的内容下方，而不是被横向 flex 挤到右侧。
+  const isPureLoadingBubble =
+    isStreamingPlaceholder &&
+    !thinking &&
+    toolCalls.length === 0 &&
+    !quizCardProps
+
   return (
     <motion.li
       className="chat-msg chat-msg--assistant"
@@ -509,7 +518,7 @@ function ChatMessageItem({ message, streaming }: ChatMessageItemProps) {
     >
       <div
         className={`chat-msg__bubble chat-msg__bubble--assistant${
-          isStreamingPlaceholder ? ' chat-msg__bubble--loading' : ''
+          isPureLoadingBubble ? ' chat-msg__bubble--loading' : ''
         }`}
       >
         {/* 思维链折叠区（在工具调用与正文之上，独立展示） */}
