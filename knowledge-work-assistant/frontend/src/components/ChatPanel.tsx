@@ -474,9 +474,21 @@ interface ChatMessageItemProps {
   streaming?: boolean
 }
 
+/** 解析 [quiz_answer] 指令文本，返回结构化作答信息；非该格式返回 null。 */
+function parseQuizAnswerMessage(
+  content: string,
+): { answer: string } | null {
+  // 格式：[quiz_answer] quiz_id=xxx answer=B  或  answer=A,C
+  const m = content.match(/^\[quiz_answer\]\s+quiz_id=\S+\s+answer=(.+)$/s)
+  if (!m) return null
+  return { answer: m[1].trim() }
+}
+
 function ChatMessageItem({ message, streaming }: ChatMessageItemProps) {
   const isUser = message.role === 'user'
   if (isUser) {
+    // 识别测验作答指令文本，渲染为友好卡片而非原始 [quiz_answer] 字符串
+    const quizAns = parseQuizAnswerMessage(message.content)
     return (
       <motion.li
         className="chat-msg chat-msg--user"
@@ -486,7 +498,16 @@ function ChatMessageItem({ message, streaming }: ChatMessageItemProps) {
         exit={{ opacity: 0, y: -4 }}
       >
         <div className="chat-msg__bubble chat-msg__bubble--user">
-          {message.content}
+          {quizAns ? (
+            <span className="chat-msg__quiz-answer">
+              <span className="chat-msg__quiz-answer-label">测验作答</span>
+              <span className="chat-msg__quiz-answer-value">
+                {quizAns.answer}
+              </span>
+            </span>
+          ) : (
+            message.content
+          )}
         </div>
       </motion.li>
     )
@@ -849,6 +870,22 @@ function QuizCard({ quizId, quizType, payload, answered, result }: QuizCardProps
     }
     return null
   })
+
+  // 历史回显：generate_quiz 工具结果中的 quiz.answered 不会随作答更新，
+  // 刷新后仍为 false。若 store 中存在匹配的 answer_quiz 工具结果，
+  // 说明已作答，需把 submitted 同步为 true，否则 QuizCard 会显示成未答状态。
+  useEffect(() => {
+    if (answerGrade && !submitted) {
+      setSubmitted(true)
+      // 同步本地选中态，便于已答单选题把用户选项标灰
+      const ua = (answerGrade as { user_answer?: string[] | string }).user_answer
+      if (Array.isArray(ua)) {
+        setSelected(ua.map(String))
+      } else if (typeof ua === 'string') {
+        setSelected([ua])
+      }
+    }
+  }, [answerGrade, submitted])
 
   // 优先用 answer_quiz 的实时判分；历史回显（已答题目）退回到 props.result
   const effectiveResult = (answerGrade ?? result) as

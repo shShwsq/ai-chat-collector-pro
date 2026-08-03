@@ -7181,6 +7181,22 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
   white-space: pre-wrap;
 }
 
+/* 用户消息中的测验作答标记（替代原始 [quiz_answer] 指令文本） */
+.chat-msg__quiz-answer {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.chat-msg__quiz-answer-label {
+  font-size: 11px;
+  opacity: 0.85;
+  letter-spacing: 0.5px;
+}
+.chat-msg__quiz-answer-value {
+  font-weight: 600;
+  font-size: 14px;
+}
+
 .chat-msg__degraded {
   margin: 8px 0 0;
   padding: 6px 10px;
