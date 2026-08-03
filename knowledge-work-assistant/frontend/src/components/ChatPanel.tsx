@@ -2,11 +2,13 @@
  * 对话面板（Task 9 / Task 10 重构 + 本土化适配）。
  *
  * 设计要点：
- * - **三栏布局**：左侧会话列表（240px）/ 中间消息区 / 底部输入区。
- *   会话列表显示历史对话，点击切换；选中态高亮，悬停显示删除按钮。
+ * - **三栏布局**：左侧会话列表（240px，常驻）/ 中间消息区 / 底部输入区。
+ *   会话列表常驻显示，无消息时（ChatHome 瀑布流）也能看到并切换历史会话，
+ *   解决「必须进入对话才能看到历史列表」的路径过深问题。
  * - **统一多轮对话**：Study / Work 模式都调用 ``store.sendMessage`` 触发后端
  *   ``POST /api/chat/sessions/{id}/stream``，复用同一份 ``chatMessages`` 状态。
- * - **首页瀑布流占位**：无消息时渲染 ``<ChatHome mode={mode} onAsk={handleAsk} />``。
+ * - **首页瀑布流占位**：无消息时主区渲染 ``<ChatHome mode={mode} onAsk={handleAsk} />``，
+ *   与左侧历史栏并排展示。
  * - **工具调用过程展示**：assistant 消息的 ``tool_calls`` 渲染为
  *   ``ChatToolCallItem`` 列表，pending 时显示「正在查询…」状态，
  *   done 后折叠为简短结果摘要。
@@ -23,8 +25,11 @@ import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 
 import { useAppStore } from '../store/useAppStore'
-import type { ChatMessage, ToolCall } from '../lib/types'
+import { useAutoGrowTextarea } from '../hooks/useAutoGrowTextarea'
+import { formatShortTime } from '../lib/date'
+import type { ChatMessage, ChatSession, ToolCall } from '../lib/types'
 import { ChatHome } from './ChatHome'
+import { ConfirmDialog } from './graph/ConfirmDialog'
 import { ToolConfirmDialog } from './ToolConfirmDialog'
 
 export function ChatPanel() {
@@ -46,17 +51,25 @@ export function ChatPanel() {
         <ToolConfirmDialog confirmation={pendingToolConfirmation} />
       )}
 
-      {chatMessages.length === 0 ? (
-        <ChatHome mode={mode} onAsk={handleAsk} />
-      ) : (
-        <ChatConversationView />
-      )}
+      <div className="chat-panel__conv">
+        {/* 左侧会话列表侧边栏（常驻：无消息时也可见，便于切换历史会话） */}
+        <ChatSessionSidebar />
+
+        {/* 右侧主区：无消息时渲染瀑布流首页，有消息时渲染对话视图 */}
+        <div className="chat-panel__main">
+          {chatMessages.length === 0 ? (
+            <ChatHome mode={mode} onAsk={handleAsk} />
+          ) : (
+            <ChatConversationView />
+          )}
+        </div>
+      </div>
     </div>
   )
 }
 
 // ============================================================================
-// 对话视图：左侧会话列表 + 右侧消息区 + 底部输入区
+// 对话视图：消息列表 + 底部输入区（会话列表已上移到 ChatPanel 顶层常驻）
 // ============================================================================
 
 function ChatConversationView() {
@@ -75,6 +88,10 @@ function ChatConversationView() {
   const [showLatest, setShowLatest] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
+  /** textarea 自适应撑高（与首页输入框行为一致） */
+  const textareaRef = useAutoGrowTextarea<HTMLTextAreaElement>(input, {
+    maxHeight: 120,
+  })
 
   useEffect(() => {
     const container = messagesRef.current
@@ -113,134 +130,129 @@ function ChatConversationView() {
   const sessionTitle = currentChatSession?.title ?? `${modeLabel}对话`
 
   return (
-    <div className="chat-panel__conv">
-      {/* 左侧会话列表侧边栏 */}
-      <ChatSessionSidebar />
-
-      {/* 右侧主区：消息列表 + 底部输入区 */}
-      <div className="chat-panel__main">
-        <header className="chat-panel__header">
-          <div className="chat-panel__title-row">
-            <h2 className="chat-panel__title">{sessionTitle}</h2>
-            <div className="chat-panel__actions">
-              {chatStreamingActive ? (
-                <button
-                  type="button"
-                  className="chat-panel__cancel-btn"
-                  onClick={cancelChat}
-                  title="取消当前流式生成"
-                >
-                  取消
-                </button>
-              ) : null}
+    <>
+      <header className="chat-panel__header">
+        <div className="chat-panel__title-row">
+          <h2 className="chat-panel__title">{sessionTitle}</h2>
+          <div className="chat-panel__actions">
+            {chatStreamingActive ? (
               <button
                 type="button"
-                className="chat-panel__back-btn"
-                onClick={clearChat}
-                disabled={chatAsking}
-                title="清空当前选择并返回首页"
+                className="chat-panel__cancel-btn"
+                onClick={cancelChat}
+                title="取消当前流式生成"
               >
-                返回首页
+                取消
               </button>
-            </div>
-          </div>
-          <p className="chat-panel__subtitle">
-            {mode === 'study'
-              ? '与学习助手多轮对话，可触发测验 / 节点查询 / 抽取等能力。'
-              : planMode
-                ? 'Plan 模式：只读分析，高风险操作将被拒绝。'
-                : 'Go 模式：可与图谱交互，高风险操作需确认。'}
-          </p>
-        </header>
-
-        <div
-          className="chat-panel__messages"
-          ref={messagesRef}
-          onScroll={handleMessagesScroll}
-          aria-label="对话消息"
-        >
-          <ul className="chat-panel__message-list">
-            <AnimatePresence initial={false}>
-              {chatMessages.map((m, i) => (
-                <ChatMessageItem
-                  key={m.id ?? `${m.role}-${i}`}
-                  message={m}
-                  streaming={
-                    chatStreamingActive &&
-                    i === chatMessages.length - 1 &&
-                    m.role === 'assistant'
-                  }
-                />
-              ))}
-            </AnimatePresence>
-          </ul>
-          <div ref={messagesEndRef} />
-          {showLatest && (
+            ) : null}
             <button
               type="button"
-              className="chat-panel__latest-btn"
-              onClick={() => {
-                messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
-                setShowLatest(false)
-              }}
-            >
-              回到最新消息
-            </button>
-          )}
-        </div>
-
-        {/* 底部输入区：长方形输入框 + 左下角+按钮 + 右下角发送 + Plan/Go 切换 */}
-        <footer className="chat-input-bar">
-          <div className="chat-input-bar__inner">
-            <textarea
-              className="chat-input-bar__textarea"
-              value={input}
-              name="chat-question"
-              aria-label="输入对话问题"
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={
-                mode === 'study'
-                  ? '向学习助手提问，回车发送，Shift+Enter 换行…'
-                  : '向工作助手提问，回车发送，Shift+Enter 换行…'
-              }
-              rows={2}
+              className="chat-panel__back-btn"
+              onClick={clearChat}
               disabled={chatAsking}
-            />
-            <div className="chat-input-bar__toolbar">
-              <div className="chat-input-bar__left-actions">
-                {mode === 'work' && (
-                  <PlanGoToggle
-                    planMode={planMode}
-                    onToggle={() => setPlanMode(!planMode)}
-                    disabled={chatAsking}
-                  />
-                )}
-              </div>
-            </div>
-            {/* 右下角发送按钮（悬浮在输入框内） */}
-            <button
-              type="button"
-              className="chat-input-bar__send-btn"
-              onClick={handleSend}
-              disabled={chatAsking || !input.trim()}
-              title={
-                !input.trim()
-                  ? '请输入问题'
-                  : '发送提问（Enter）'
-              }
-              aria-label="发送"
+              title="清空当前选择并返回首页"
             >
-              {chatAsking ? (
-                <span className="chat-input-bar__send-spinner" />
-              ) : (
-                <SendIcon />
-              )}
+              返回首页
             </button>
           </div>
-        </footer>
+        </div>
+        <p className="chat-panel__subtitle">
+          {mode === 'study'
+            ? '与学习助手多轮对话，可触发测验 / 节点查询 / 抽取等能力。'
+            : planMode
+              ? 'Plan 模式：只读分析，高风险操作将被拒绝。'
+              : 'Go 模式：可与图谱交互，高风险操作需确认。'}
+        </p>
+      </header>
+
+      <div
+        className="chat-panel__messages"
+        ref={messagesRef}
+        onScroll={handleMessagesScroll}
+        aria-label="对话消息"
+      >
+        <ul className="chat-panel__message-list">
+          <AnimatePresence initial={false}>
+            {chatMessages.map((m, i) => (
+              <ChatMessageItem
+                key={m.id ?? `${m.role}-${i}`}
+                message={m}
+                streaming={
+                  chatStreamingActive &&
+                  i === chatMessages.length - 1 &&
+                  m.role === 'assistant'
+                }
+              />
+            ))}
+          </AnimatePresence>
+        </ul>
+        <div ref={messagesEndRef} />
+        {showLatest && (
+          <button
+            type="button"
+            className="chat-panel__latest-btn"
+            onClick={() => {
+              messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
+              setShowLatest(false)
+            }}
+          >
+            回到最新消息
+          </button>
+        )}
       </div>
-    </div>
+
+      {/* 底部输入区：长方形输入框 + 左下角+按钮 + 右下角发送 + Plan/Go 切换 */}
+      <footer className="chat-input-bar">
+        <div className="chat-input-bar__inner">
+          <textarea
+            ref={textareaRef}
+            className="chat-input-bar__textarea"
+            value={input}
+            name="chat-question"
+            aria-label="输入对话问题"
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={
+              mode === 'study'
+                ? '向学习助手提问，回车发送，Shift+Enter 换行…'
+                : '向工作助手提问，回车发送，Shift+Enter 换行…'
+            }
+            rows={1}
+            disabled={chatAsking}
+          />
+          <div className="chat-input-bar__toolbar">
+            <div className="chat-input-bar__left-actions">
+              {mode === 'work' && (
+                <PlanGoToggle
+                  planMode={planMode}
+                  onToggle={() => setPlanMode(!planMode)}
+                  disabled={chatAsking}
+                />
+              )}
+            </div>
+          </div>
+          {/* 右下角发送按钮（悬浮在输入框内） */}
+          <button
+            type="button"
+            className="chat-input-bar__send-btn"
+            onClick={handleSend}
+            disabled={chatAsking || !input.trim()}
+            title={
+              !input.trim()
+                ? '请输入问题'
+                : '发送提问（Enter）'
+            }
+            aria-label="发送"
+          >
+            {chatAsking ? (
+              <span className="chat-input-bar__send-spinner" />
+            ) : (
+              <SendIcon />
+            )}
+          </button>
+        </div>
+      </footer>
+    </>
   )
 }
 
@@ -253,8 +265,22 @@ function ChatSessionSidebar() {
   const currentChatSession = useAppStore((s) => s.currentChatSession)
   const selectChatSession = useAppStore((s) => s.selectChatSession)
   const createChatSession = useAppStore((s) => s.createChatSession)
+  const renameChatSession = useAppStore((s) => s.renameChatSession)
+  const deleteChatSession = useAppStore((s) => s.deleteChatSession)
   const loadChatSessions = useAppStore((s) => s.loadChatSessions)
   const chatAsking = useAppStore((s) => s.chatAsking)
+
+  // 重命名态（与 GraphList 模式一致：内联 input + Enter 确认 / Esc 取消）
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const renameRef = useRef<HTMLInputElement | null>(null)
+
+  // 删除确认弹窗
+  const [deleteTarget, setDeleteTarget] = useState<ChatSession | null>(null)
+
+  useEffect(() => {
+    if (renamingId) renameRef.current?.focus()
+  }, [renamingId])
 
   const handleNewSession = async () => {
     if (chatAsking) return
@@ -263,8 +289,47 @@ function ChatSessionSidebar() {
 
   const handleSelect = (sessionId: string) => {
     if (chatAsking) return
+    if (renamingId === sessionId) return // 重命名中点击同项不触发切换
     const target = chatSessions.find((s) => s.id === sessionId)
     if (target) void selectChatSession(target)
+  }
+
+  const startRename = (s: ChatSession) => {
+    setRenamingId(s.id)
+    setRenameValue(s.title)
+  }
+
+  const cancelRename = () => {
+    setRenamingId(null)
+    setRenameValue('')
+  }
+
+  const confirmRename = async () => {
+    const id = renamingId
+    if (!id) return
+    const title = renameValue.trim()
+    if (!title) {
+      cancelRename()
+      return
+    }
+    // 标题未变直接退出编辑态
+    if (title === chatSessions.find((s) => s.id === id)?.title) {
+      setRenamingId(null)
+      setRenameValue('')
+      return
+    }
+    const ok = await renameChatSession(id, title)
+    if (ok) {
+      setRenamingId(null)
+      setRenameValue('')
+    }
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    const id = deleteTarget.id
+    setDeleteTarget(null)
+    await deleteChatSession(id)
   }
 
   // 刷新：重载会话列表 + 当前会话消息 + 强制重置流式状态（解决 UI 卡死）
@@ -296,22 +361,76 @@ function ChatSessionSidebar() {
         ) : (
           chatSessions.map((s) => {
             const isActive = currentChatSession?.id === s.id
+            const isRenaming = renamingId === s.id
             return (
-              <button
+              <div
                 key={s.id}
-                type="button"
                 className={`chat-sidebar__item${
                   isActive ? ' chat-sidebar__item--active' : ''
-                }`}
-                onClick={() => handleSelect(s.id)}
-                disabled={chatAsking}
-                title={s.title}
+                }${isRenaming ? ' chat-sidebar__item--renaming' : ''}`}
               >
-                <span className="chat-sidebar__item-icon" aria-hidden="true">
-                  {s.mode === 'study' ? '学' : '工'}
-                </span>
-                <span className="chat-sidebar__item-title">{s.title}</span>
-              </button>
+                {isRenaming ? (
+                  <input
+                    ref={renameRef}
+                    className="chat-sidebar__rename-input"
+                    name={`chat-title-${s.id}`}
+                    aria-label={`重命名对话：${s.title}`}
+                    autoComplete="off"
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') void confirmRename()
+                      if (e.key === 'Escape') cancelRename()
+                    }}
+                    onBlur={() => void confirmRename()}
+                    disabled={chatAsking}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className="chat-sidebar__select-btn"
+                    aria-current={isActive ? 'true' : undefined}
+                    onClick={() => handleSelect(s.id)}
+                    disabled={chatAsking}
+                    title={s.title}
+                  >
+                    <span className="chat-sidebar__item-title">{s.title}</span>
+                    <span className="chat-sidebar__item-time" aria-hidden="true">
+                      {formatShortTime(s.updated_at)}
+                    </span>
+                  </button>
+                )}
+                {!isRenaming && (
+                  <div className="chat-sidebar__item-actions">
+                    <button
+                      type="button"
+                      className="chat-sidebar__icon-btn"
+                      aria-label={`重命名对话：${s.title}`}
+                      title="重命名"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        startRename(s)
+                      }}
+                      disabled={chatAsking}
+                    >
+                      编辑
+                    </button>
+                    <button
+                      type="button"
+                      className="chat-sidebar__icon-btn chat-sidebar__icon-btn--danger"
+                      aria-label={`删除对话：${s.title}`}
+                      title="删除"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setDeleteTarget(s)
+                      }}
+                      disabled={chatAsking}
+                    >
+                      删除
+                    </button>
+                  </div>
+                )}
+              </div>
             )
           })
         )}
@@ -326,6 +445,22 @@ function ChatSessionSidebar() {
           刷新
         </button>
       </footer>
+
+      {/* 删除对话确认弹窗 */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="删除对话"
+        message={
+          deleteTarget
+            ? `确定删除对话「${deleteTarget.title}」？该操作会级联清理其下所有消息与 checkpoint，且不可恢复。`
+            : ''
+        }
+        confirmText="确认删除"
+        cancelText="取消"
+        danger
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </aside>
   )
 }
@@ -364,6 +499,15 @@ function ChatMessageItem({ message, streaming }: ChatMessageItemProps) {
   // 提取测验卡数据：若 graph_generate_quiz 已完成，渲染交互式测验卡
   const quizCardProps = extractQuizFromToolCalls(toolCalls)
 
+  // 仅当气泡内只有三点加载动画（无思维链、无工具调用、无测验卡）时，
+  // 才使用 --loading 的 inline-flex 居中布局；否则保持 block 布局，
+  // 让动画自然位于已流式输出的内容下方，而不是被横向 flex 挤到右侧。
+  const isPureLoadingBubble =
+    isStreamingPlaceholder &&
+    !thinking &&
+    toolCalls.length === 0 &&
+    !quizCardProps
+
   return (
     <motion.li
       className="chat-msg chat-msg--assistant"
@@ -374,7 +518,7 @@ function ChatMessageItem({ message, streaming }: ChatMessageItemProps) {
     >
       <div
         className={`chat-msg__bubble chat-msg__bubble--assistant${
-          isStreamingPlaceholder ? ' chat-msg__bubble--loading' : ''
+          isPureLoadingBubble ? ' chat-msg__bubble--loading' : ''
         }`}
       >
         {/* 思维链折叠区（在工具调用与正文之上，独立展示） */}

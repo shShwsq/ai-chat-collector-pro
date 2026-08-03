@@ -25,6 +25,7 @@ import type {
   ConfirmToolCallRequest,
   ConfirmToolCallResponse,
   CreateChatSessionRequest,
+  DeleteChatSessionResponse,
   DeleteResult,
   Edge,
   EdgeCreate,
@@ -42,6 +43,7 @@ import type {
   HealthResponse,
   ListChatMessagesResponse,
   ListChatSessionsResponse,
+  UpdateChatSessionRequest,
   LlmCancelResponse,
   LlmConfig,
   LlmConfigUpdate,
@@ -620,6 +622,26 @@ export const api = {
     request<ChatSession>('/chat/sessions', {
       method: 'POST',
       body: JSON.stringify(body),
+    }),
+  /**
+   * 更新会话字段（目前仅支持 title 重命名）。
+   * 字段全部可选，未传字段保持原值。返回更新后的会话快照。
+   */
+  updateChatSession: (
+    sessionId: string,
+    body: UpdateChatSessionRequest,
+  ): Promise<ChatSession> =>
+    request<ChatSession>(`/chat/sessions/${sessionId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  /**
+   * 删除会话（后端级联清理 messages / checkpoints）。
+   * 幂等：删除已不存在的会话也返回 ok=true。
+   */
+  deleteChatSession: (sessionId: string): Promise<DeleteChatSessionResponse> =>
+    request<DeleteChatSessionResponse>(`/chat/sessions/${sessionId}`, {
+      method: 'DELETE',
     }),
   /**
    * 列出 chat 会话（按 created_at 倒序，可按 mode / graph_id 过滤）。

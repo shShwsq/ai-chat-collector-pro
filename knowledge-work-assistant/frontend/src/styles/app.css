@@ -474,7 +474,6 @@
 .app-shell[data-theme='angular-white'] .graph-list__item-meta,
 .app-shell[data-theme='angular-white'] .chat-panel__subtitle,
 .app-shell[data-theme='angular-white'] .app-header__subtitle,
-.app-shell[data-theme='angular-white'] .app-footer,
 .app-shell[data-theme='angular-white'] .settings-section__desc,
 .app-shell[data-theme='angular-white'] .health-badge {
   font-family: var(--font-mono);
@@ -574,16 +573,6 @@
 .app-shell[data-theme='angular-white'] .health-badge--ok .health-badge__dot {
   background: var(--kwa-cyan-500);
   box-shadow: 0 0 6px rgba(31, 209, 196, 0.5);
-}
-
-.app-shell[data-theme='angular-white'] .app-footer {
-  background: var(--surface);
-  border-top: 1px solid var(--border);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-secondary);
 }
 
 /* --- 左侧导航：工业侧边栏（参考稿 kwa-sidebar） --- */
@@ -868,20 +857,6 @@
 .app-shell[data-theme='angular-white'] .chat-home__send-btn {
   border-radius: 0;
   clip-path: var(--chamfer-sm);
-  background: var(--kwa-amber-500);
-  color: var(--kwa-ink-900);
-  box-shadow: var(--shadow-btn);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  transition: transform .08s linear, box-shadow .08s linear;
-}
-
-.app-shell[data-theme='angular-white'] .chat-home__send-btn:active {
-  transform: translateY(1px);
-  box-shadow: 1px 1px 4px rgba(0, 0, 0, 0.12);
 }
 
 /* --- 对话面板输入框/发送按钮 --- */
@@ -915,6 +890,14 @@
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+/* disabled：透明背景（覆盖上方 amber 填充，与默认主题保持一致） */
+.app-shell[data-theme='angular-white'] .chat-input-bar__send-btn:disabled,
+.app-shell[data-theme='angular-white'] .chat-home__send-btn:disabled {
+  background: transparent;
+  color: var(--text-tertiary);
+  box-shadow: none;
 }
 
 /* --- 按钮：chamfer-sm 切角 + 工业边框 --- */
@@ -1117,7 +1100,7 @@
 
 /* 主按钮悬停：amber 变亮 */
 .app-shell[data-theme='angular-white'] .chat-input-bar__send-btn:hover:not(:disabled),
-.app-shell[data-theme='angular-white'] .chat-home__send-btn:hover,
+.app-shell[data-theme='angular-white'] .chat-home__send-btn:hover:not(:disabled),
 .app-shell[data-theme='angular-white'] .graph-list__new-btn:hover,
 .app-shell[data-theme='angular-white'] .tool-confirm__btn--approve:hover,
 .app-shell[data-theme='angular-white'] .settings-form__save-btn:not(:disabled):hover,
@@ -1133,7 +1116,6 @@
 .app-shell[data-theme='angular-white'] .chat-panel__hint-btn:active,
 .app-shell[data-theme='angular-white'] .expanded-card__btn:active,
 .app-shell[data-theme='angular-white'] .chat-input-bar__send-btn:active:not(:disabled),
-.app-shell[data-theme='angular-white'] .chat-home__send-btn:active,
 .app-shell[data-theme='angular-white'] .graph-list__new-btn:active,
 .app-shell[data-theme='angular-white'] .chat-sidebar__new-btn:active,
 .app-shell[data-theme='angular-white'] .settings-section__ghost-btn:active,
@@ -1691,14 +1673,11 @@
   animation: none;
 }
 
-/* header / footer / SideNav 独立成组并禁用动画，确保过渡期间常驻不消失。
+/* header / SideNav 独立成组并禁用动画，确保过渡期间常驻不消失。
    关键：给它们设置高 z-index，避免被 .mode-slide-wrap 滑入内容
   （translateX(-100%)→0 会经过 SideNav 位置）覆盖。 */
 .app-header {
   view-transition-name: app-header;
-}
-.app-footer {
-  view-transition-name: app-footer;
 }
 .side-nav {
   view-transition-name: side-nav;
@@ -1706,15 +1685,12 @@
 
 ::view-transition-old(app-header),
 ::view-transition-new(app-header),
-::view-transition-old(app-footer),
-::view-transition-new(app-footer),
 ::view-transition-old(side-nav),
 ::view-transition-new(side-nav) {
   animation: none;
 }
 
 ::view-transition-group(app-header),
-::view-transition-group(app-footer),
 ::view-transition-group(side-nav) {
   z-index: 10;
 }
@@ -1741,15 +1717,6 @@
   from {
     transform: translateX(-100%);
   }
-}
-
-.app-footer {
-  padding: 10px 24px;
-  border-top: 1px solid var(--border);
-  background: var(--surface);
-  font-size: 12px;
-  color: var(--text-tertiary);
-  text-align: center;
 }
 
 /* ============================================================================
@@ -7502,9 +7469,32 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
 
 .chat-sidebar__item {
   display: flex;
+  flex-direction: row;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
+  gap: 4px;
+  padding: 0 4px 0 0;
+  border-radius: var(--radius-sm);
+  position: relative;
+  transition: background var(--transition-fast);
+}
+
+.chat-sidebar__item:hover {
+  background: var(--hover);
+}
+
+.chat-sidebar__item--active {
+  background: var(--accent-soft, rgba(59, 130, 246, 0.1));
+}
+
+/* 列表项主按钮（标题 + 时间），撑满剩余宽度 */
+.chat-sidebar__select-btn {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 6px 8px 10px;
   background: transparent;
   border: none;
   border-radius: var(--radius-sm);
@@ -7513,52 +7503,88 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
   font-family: inherit;
   font-size: 12.5px;
   color: var(--text-secondary);
-  transition: background var(--transition-fast), color var(--transition-fast);
-  width: 100%;
+  transition: color var(--transition-fast);
 }
 
-.chat-sidebar__item:hover:not(:disabled) {
-  background: var(--hover);
-  color: var(--text);
-}
-
-.chat-sidebar__item--active {
-  background: var(--accent-soft, rgba(59, 130, 246, 0.1));
+.chat-sidebar__item--active .chat-sidebar__select-btn {
   color: var(--accent);
   font-weight: 600;
 }
 
-.chat-sidebar__item:disabled {
+.chat-sidebar__select-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.chat-sidebar__item-icon {
-  flex-shrink: 0;
-  width: 22px;
-  height: 22px;
+/* 悬停才显示的操作按钮组（编辑 / 删除） */
+.chat-sidebar__item-actions {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  font-weight: 700;
-  border-radius: 50%;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+  flex-shrink: 0;
 }
 
-.chat-sidebar__item--active .chat-sidebar__item-icon {
-  background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
+.chat-sidebar__item:hover .chat-sidebar__item-actions,
+.chat-sidebar__item--active .chat-sidebar__item-actions {
+  opacity: 1;
+}
+
+.chat-sidebar__icon-btn {
+  padding: 4px 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.chat-sidebar__icon-btn:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text);
+}
+
+.chat-sidebar__icon-btn--danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.chat-sidebar__icon-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 内联重命名输入框 */
+.chat-sidebar__rename-input {
+  flex: 1;
+  min-width: 0;
+  margin: 6px 6px 6px 10px;
+  padding: 4px 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  outline: none;
 }
 
 .chat-sidebar__item-title {
-  flex: 1;
+  width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.chat-sidebar__item-time {
+  font-size: 11px;
+  color: var(--text-muted, var(--text-secondary));
+  font-weight: 400;
+  line-height: 1.3;
 }
 
 .chat-sidebar__footer {
@@ -8128,6 +8154,8 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
   resize: none;
   min-height: 22px;
   max-height: 120px;
+  /* 撑高到 max-height 后内部滚动（由 useAutoGrowTextarea 控制 overflowY） */
+  overflow-y: auto;
   padding: 0;
   font-size: 13.5px;
   font-family: inherit;
@@ -8197,7 +8225,7 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
 }
 
 .chat-input-bar__send-btn:disabled {
-  background: var(--border);
+  background: transparent;
   color: var(--text-tertiary);
   cursor: not-allowed;
   box-shadow: none;
@@ -8213,6 +8241,8 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
 }
 
 .chat-input-bar__send-btn:disabled .chat-input-bar__send-spinner {
+  /* 透明背景下：整体淡灰边框 + 深灰 top，确保 spinner 可见 */
+  border-color: var(--border);
   border-top-color: var(--text-tertiary);
 }
 
@@ -9275,21 +9305,34 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
   filter: blur(var(--input-blur, 0px));
 }
 
+.chat-home__input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
 .chat-home__input {
-  width: 100%;
-  padding: 14px 24px;
+  flex: 1;
+  /* 多行 textarea：上下左右留呼吸感（发送按钮已移到输入框外） */
+  padding: 12px 22px;
   font-size: 14.5px;
   font-family: inherit;
+  line-height: 1.5;
   color: var(--text);
   background: var(--surface);
   border: 1.5px solid var(--border);
-  border-radius: 999px;
+  border-radius: 18px;
   outline: none;
+  resize: none;
+  min-height: 48px;
+  max-height: 120px;
+  overflow: hidden;
+  margin: 0;
+  box-sizing: border-box;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
   transition:
     border-color 200ms ease,
-    box-shadow 200ms ease,
-    transform 150ms ease;
+    box-shadow 200ms ease;
 }
 
 .chat-home__input::placeholder {
@@ -9303,6 +9346,58 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
 .chat-home__input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.12), var(--shadow-lift);
+}
+
+/* 发送按钮：输入框外右侧（独立元素，与输入框底部对齐） */
+.chat-home__send-btn {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  color: #fff;
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: opacity var(--transition-fast), background-color var(--transition-fast),
+    color var(--transition-fast), box-shadow var(--transition-fast);
+  font-family: inherit;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.chat-home__send-btn:hover:not(:disabled) {
+  opacity: 0.9;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.chat-home__send-btn:active:not(:disabled) {
+  opacity: 1;
+}
+
+.chat-home__send-btn:disabled {
+  background: var(--border);
+  color: var(--text-tertiary);
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.chat-home__send-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: chat-send-spin 0.6s linear infinite;
+}
+
+.chat-home__send-btn:disabled .chat-home__send-spinner {
+  /* 透明背景下：整体淡灰边框 + 深灰 top，确保 spinner 可见 */
+  border-color: var(--border);
+  border-top-color: var(--text-tertiary);
 }
 
 /* Study 模式下「在图谱视图中搜索」快捷按钮：小尺寸、轻量提示风格 */

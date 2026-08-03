@@ -845,6 +845,18 @@ export interface ListChatSessionsResponse {
   count: number
 }
 
+/** 更新会话请求（部分字段，目前仅支持 title）。 */
+export interface UpdateChatSessionRequest {
+  /** 新标题（可选，未传字段保持原值）。 */
+  title?: string
+}
+
+/** 删除会话响应。 */
+export interface DeleteChatSessionResponse {
+  ok: boolean
+  session_id: string
+}
+
 /** 单条 chat 消息（与后端 Message 表对齐）。 */
 export interface ChatMessage {
   /** 消息 ID（32 位 hex）。 */

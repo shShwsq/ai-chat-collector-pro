@@ -663,6 +663,19 @@ interface AppState {
    */
   selectChatSession: (session: ChatSession | null) => Promise<void>
   /**
+   * 重命名指定会话：调 PATCH /chat/sessions/{id} 更新 title，
+   * 同步更新 chatSessions 列表与 currentChatSession（若命中）。
+   * 返回是否成功。
+   */
+  renameChatSession: (sessionId: string, title: string) => Promise<boolean>
+  /**
+   * 删除指定会话：调 DELETE /chat/sessions/{id}，
+   * 同步从 chatSessions 列表移除；若删除的是 currentChatSession，
+   * 清空当前会话与消息（相当于 clearChat）。
+   * 返回是否成功。
+   */
+  deleteChatSession: (sessionId: string) => Promise<boolean>
+  /**
    * 发送消息：追加 user 消息 + 空 assistant 占位，触发后端 chat/stream。
    * - 自动确保 currentChatSession 存在（缺失时按当前 mode + graphId 自动创建）；
    * - 自动确保 streamingSessionId 存在（缺失时仅追加消息不触发流式）；
@@ -1101,6 +1114,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       })
       void get().loadGraphs()
     }
+    // 切模式后若当前在 chat 视图，按新模式重新加载会话列表
+    // （上面两个分支都已清空 chatSessions，不重新加载会显示"暂无对话记录"）
+    if (get().activeNav === 'chat') void get().loadChatSessions()
   },
 
   setTheme: (theme) => {
@@ -2681,6 +2697,63 @@ export const useAppStore = create<AppState>((set, get) => ({
       const msg = errMsg(e)
       set({ error: msg })
       get().pushToast(`加载消息历史失败：${msg}`, 'error')
+    }
+  },
+
+  renameChatSession: async (sessionId, title) => {
+    const trimmed = title.trim()
+    if (!trimmed) {
+      get().pushToast('标题不能为空', 'warning')
+      return false
+    }
+    set({ error: '' })
+    try {
+      const updated = await api.updateChatSession(sessionId, { title: trimmed })
+      set({
+        chatSessions: get().chatSessions.map((s) =>
+          s.id === sessionId ? updated : s,
+        ),
+        currentChatSession:
+          get().currentChatSession?.id === sessionId
+            ? updated
+            : get().currentChatSession,
+      })
+      return true
+    } catch (e) {
+      const msg = errMsg(e)
+      set({ error: msg })
+      get().pushToast(`重命名失败：${msg}`, 'error')
+      return false
+    }
+  },
+
+  deleteChatSession: async (sessionId) => {
+    set({ error: '' })
+    try {
+      await api.deleteChatSession(sessionId)
+      const wasCurrent = get().currentChatSession?.id === sessionId
+      set({
+        chatSessions: get().chatSessions.filter((s) => s.id !== sessionId),
+        // 若删除的是当前选中会话，清空当前会话与消息（回到首页瀑布流）
+        ...(wasCurrent
+          ? {
+              currentChatSession: null,
+              chatMessages: [],
+              chatStreamingActive: false,
+              chatStreamingText: '',
+              chatStreamingRequestId: null,
+              chatAsking: false,
+              currentCheckpoint: null,
+              pendingToolConfirmation: null,
+            }
+          : {}),
+      })
+      return true
+    } catch (e) {
+      const msg = errMsg(e)
+      set({ error: msg })
+      get().pushToast(`删除失败：${msg}`, 'error')
+      return false
     }
   },
 

@@ -4,6 +4,8 @@
 
 - ``POST /api/chat/sessions``                       创建会话（mode + graph_id?）
 - ``GET  /api/chat/sessions?mode=study|work``        列出当前模式会话
+- ``PATCH /api/chat/sessions/{id}``                 更新会话字段（重命名）
+- ``DELETE /api/chat/sessions/{id}``                 删除会话（级联清理）
 - ``GET  /api/chat/sessions/{id}/messages``          获取会话消息历史
 - ``POST /api/chat/sessions/{id}/stream``           流式对话（HTTP 立即返回 request_id）
 - ``POST /api/chat/sessions/{id}/checkpoint``       手动触发 writer_agent 生成 checkpoint
@@ -488,6 +490,24 @@ class ListSessionsResponse(BaseModel):
     count: int
 
 
+class UpdateSessionRequest(BaseModel):
+    """更新会话请求（部分字段更新，目前仅支持 title）。
+
+    字段全部可选，未传字段保持原值。为后续扩展其他可更新字段留口。
+    """
+
+    title: str | None = Field(
+        None, min_length=1, max_length=255, description="新会话标题"
+    )
+
+
+class DeleteSessionResponse(BaseModel):
+    """删除会话响应。"""
+
+    ok: bool = Field(..., description="是否成功删除")
+    session_id: str
+
+
 class StreamRequest(BaseModel):
     """流式对话请求。"""
 
@@ -683,6 +703,66 @@ async def list_messages(session_id: str) -> ListMessagesResponse:
         ],
         count=len(rows),
     )
+
+
+@router.patch("/sessions/{session_id}", response_model=SessionResponse)
+async def update_session(
+    session_id: str,
+    body: UpdateSessionRequest,
+) -> SessionResponse:
+    """更新会话字段（目前仅支持 title）。
+
+    字段全部可选，未传字段保持原值。返回更新后的会话快照。
+    """
+    async with AsyncSessionLocal() as db:
+        session = await db.get(SessionRow, session_id)
+        if session is None:
+            raise _not_found(f"会话不存在: {session_id}")
+        if body.title is not None:
+            title = body.title.strip()
+            if not title:
+                raise _bad_request("标题不能为空")
+            session.title = title[:255]
+        session.updated_at = _now()
+        await db.commit()
+        await db.refresh(session)
+        return SessionResponse(
+            id=session.id,
+            title=session.title,
+            mode=session.mode,
+            graph_id=session.graph_id,
+            created_at=session.created_at.isoformat() if session.created_at else "",
+            updated_at=session.updated_at.isoformat() if session.updated_at else "",
+        )
+
+
+@router.delete("/sessions/{session_id}", response_model=DeleteSessionResponse)
+async def delete_session(session_id: str) -> DeleteSessionResponse:
+    """删除会话。
+
+    级联清理关联数据：
+    - messages 表（外键 ondelete=CASCADE，DB 层自动清理）；
+    - checkpoints 表（外键 ondelete=CASCADE，DB 层自动清理）；
+    - 模块级 MainAgent 缓存（``_session_agents``）与活跃请求映射
+      （避免删除后旧 agent 仍占用资源 / 残留映射）。
+
+    若会话不存在，按幂等语义返回 ok=true（重复删除不报错）。
+    """
+    async with AsyncSessionLocal() as db:
+        session = await db.get(SessionRow, session_id)
+        if session is not None:
+            await db.delete(session)
+            await db.commit()
+
+    # 清理模块级缓存与活跃请求映射
+    _session_agents.pop(session_id, None)
+    req_id = _session_active_requests.pop(session_id, None)
+    if req_id is not None:
+        _chat_tasks.pop(req_id, None)
+        _request_sessions.pop(req_id, None)
+
+    logger.info("删除 chat 会话 id=%s", session_id)
+    return DeleteSessionResponse(ok=True, session_id=session_id)
 
 
 @router.post("/sessions/{session_id}/stream", response_model=StreamStartedResponse)
