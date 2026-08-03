@@ -173,7 +173,11 @@ function ChatConversationView() {
       >
         <ul className="chat-panel__message-list">
           <AnimatePresence initial={false}>
-            {chatMessages.map((m, i) => (
+            {chatMessages
+              // 过滤掉测验作答指令消息：作答交互与反馈已由 QuizCard 承载，
+              // [quiz_answer] 是前端与智能体的内部协议，无需在对话流中展示
+              .filter((m) => !isQuizAnswerMessage(m.content))
+              .map((m, i) => (
               <ChatMessageItem
                 key={m.id ?? `${m.role}-${i}`}
                 message={m}
@@ -474,21 +478,14 @@ interface ChatMessageItemProps {
   streaming?: boolean
 }
 
-/** 解析 [quiz_answer] 指令文本，返回结构化作答信息；非该格式返回 null。 */
-function parseQuizAnswerMessage(
-  content: string,
-): { answer: string } | null {
-  // 格式：[quiz_answer] quiz_id=xxx answer=B  或  answer=A,C
-  const m = content.match(/^\[quiz_answer\]\s+quiz_id=\S+\s+answer=(.+)$/s)
-  if (!m) return null
-  return { answer: m[1].trim() }
+/** 判断消息内容是否为测验作答指令（[quiz_answer] 前缀的内部协议文本）。 */
+function isQuizAnswerMessage(content: string): boolean {
+  return content.startsWith('[quiz_answer]')
 }
 
 function ChatMessageItem({ message, streaming }: ChatMessageItemProps) {
   const isUser = message.role === 'user'
   if (isUser) {
-    // 识别测验作答指令文本，渲染为友好卡片而非原始 [quiz_answer] 字符串
-    const quizAns = parseQuizAnswerMessage(message.content)
     return (
       <motion.li
         className="chat-msg chat-msg--user"
@@ -498,16 +495,7 @@ function ChatMessageItem({ message, streaming }: ChatMessageItemProps) {
         exit={{ opacity: 0, y: -4 }}
       >
         <div className="chat-msg__bubble chat-msg__bubble--user">
-          {quizAns ? (
-            <span className="chat-msg__quiz-answer">
-              <span className="chat-msg__quiz-answer-label">测验作答</span>
-              <span className="chat-msg__quiz-answer-value">
-                {quizAns.answer}
-              </span>
-            </span>
-          ) : (
-            message.content
-          )}
+          {message.content}
         </div>
       </motion.li>
     )
