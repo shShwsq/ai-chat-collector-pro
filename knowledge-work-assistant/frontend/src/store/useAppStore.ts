@@ -69,6 +69,7 @@ import type {
   ChatDoneEvent,
   ChatErrorEvent,
   ChatMessage,
+  ChatSearchHit,
   ChatSession,
   ChatStreamStartedResponse,
   ChatThinkingEvent,
@@ -389,6 +390,17 @@ interface AppState {
   /** 工作对象逐条确认开关（false = 批量确认默认；true = 每项可勾选）。
    *  仅对 graph_confirm_work_objects 工具有效；持久化到 localStorage。 */
   workObjectSingleConfirm: boolean
+  /** 历史对话全文搜索：当前搜索关键词（空字符串 = 未启用搜索）。 */
+  chatSearchQuery: string
+  /** 历史对话全文搜索：搜索结果（按会话分组，每个会话含命中片段）。 */
+  chatSearchResults: ChatSearchHit[]
+  /** 历史对话全文搜索：是否正在请求中。 */
+  chatSearching: boolean
+  /** 历史对话全文搜索：错误信息（空字符串 = 无错误）。 */
+  chatSearchError: string
+  /** 切换会话后需要高亮短暂提示的消息 ID（来自搜索结果点击）。
+   *  设置后由 ChatConversationView 在滚动定位后清除。 */
+  highlightedMessageId: string | null
 
   // ===== 动作 =====
   /** 切换模式：保存当前模式快照，恢复目标模式快照（若有），加载新模式图谱列表。 */
@@ -702,6 +714,20 @@ interface AppState {
   rejectToolCall: (reason?: string) => Promise<boolean>
   /** 切换工作对象逐条确认开关并持久化到 localStorage。 */
   setWorkObjectSingleConfirm: (on: boolean) => void
+  /**
+   * 全文搜索会话消息内容。
+   * 按当前 mode 过滤，写入 chatSearchResults / chatSearching / chatSearchError。
+   * 空字符串视为退出搜索（清空结果）。
+   */
+  searchChatMessages: (query: string) => Promise<void>
+  /** 清空搜索状态（关键词 / 结果 / 错误，保留 searching=false）。 */
+  clearChatSearch: () => void
+  /**
+   * 设置需要高亮提示的消息 ID（搜索结果点击时调用）。
+   * ChatConversationView 在滚动定位并短暂高亮后调用此方法清空。
+   */
+  setHighlightedMessageId: (id: string | null) => void
+
   /** 加载当前会话最新 checkpoint，写入 currentCheckpoint。 */
   loadCheckpoint: () => Promise<void>
   /** 手动触发 writer_agent 生成 checkpoint。返回是否成功。 */
@@ -928,6 +954,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   pendingToolConfirmation: null,
   // 工作对象逐条确认（默认关闭=批量）；从 localStorage 读取
   workObjectSingleConfirm: _loadBoolSetting('kwa.workObjectSingleConfirm', false),
+  // 历史对话全文搜索状态
+  chatSearchQuery: '',
+  chatSearchResults: [],
+  chatSearching: false,
+  chatSearchError: '',
+  highlightedMessageId: null,
 
   setMode: (mode) => {
     if (mode === get().mode) return
@@ -2928,6 +2960,57 @@ export const useAppStore = create<AppState>((set, get) => ({
   setWorkObjectSingleConfirm: (on) => {
     _saveBoolSetting('kwa.workObjectSingleConfirm', on)
     set({ workObjectSingleConfirm: on })
+  },
+
+  searchChatMessages: async (query) => {
+    const trimmed = query.trim()
+    // 空字符串视为退出搜索：清空结果与关键词
+    if (!trimmed) {
+      set({
+        chatSearchQuery: '',
+        chatSearchResults: [],
+        chatSearching: false,
+        chatSearchError: '',
+      })
+      return
+    }
+    // 记录关键词用于 UI 展示与防抖比对；进入 searching 态
+    set({ chatSearchQuery: trimmed, chatSearching: true, chatSearchError: '' })
+    try {
+      const resp = await api.searchChatMessages(trimmed, {
+        mode: get().mode,
+        limit: 30,
+        limitPerSession: 3,
+      })
+      // 防止乱序：仅当本次结果对应的 query 仍是当前 query 时才写入
+      if (get().chatSearchQuery === trimmed) {
+        set({
+          chatSearchResults: resp?.results ?? [],
+          chatSearching: false,
+        })
+      }
+    } catch (e) {
+      if (get().chatSearchQuery === trimmed) {
+        set({
+          chatSearchResults: [],
+          chatSearching: false,
+          chatSearchError: errMsg(e),
+        })
+      }
+    }
+  },
+
+  clearChatSearch: () => {
+    set({
+      chatSearchQuery: '',
+      chatSearchResults: [],
+      chatSearching: false,
+      chatSearchError: '',
+    })
+  },
+
+  setHighlightedMessageId: (id) => {
+    set({ highlightedMessageId: id })
   },
 
   rejectToolCall: async (reason) => {

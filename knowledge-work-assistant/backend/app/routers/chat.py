@@ -4,6 +4,7 @@
 
 - ``POST /api/chat/sessions``                       创建会话（mode + graph_id?）
 - ``GET  /api/chat/sessions?mode=study|work``        列出当前模式会话
+- ``GET  /api/chat/search?q=...&mode=...``           全文搜索会话消息内容
 - ``PATCH /api/chat/sessions/{id}``                 更新会话字段（重命名）
 - ``DELETE /api/chat/sessions/{id}``                 删除会话（级联清理）
 - ``GET  /api/chat/sessions/{id}/messages``          获取会话消息历史
@@ -40,7 +41,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -490,6 +491,34 @@ class ListSessionsResponse(BaseModel):
     count: int
 
 
+class ChatSearchHitMessage(BaseModel):
+    """搜索命中的单条消息摘要（不含完整内容，仅片段与定位）。"""
+
+    id: str
+    role: str
+    #: 命中关键词上下文片段（已截取 snippet_chars 长度，可能含 … 省略号）
+    snippet: str
+    created_at: str
+
+
+class ChatSearchHit(BaseModel):
+    """单个会话的搜索命中结果（一个会话可能命中多条消息，最多 limit_per_session 条）。"""
+
+    session: SessionResponse
+    #: 该会话命中的消息列表（按 created_at 升序）
+    hits: list[ChatSearchHitMessage]
+    #: 该会话命中消息总数（>= len(hits)，用于 UI 显示「共 N 处」）
+    total_hits: int
+
+
+class ChatSearchResponse(BaseModel):
+    """全文搜索响应。"""
+
+    query: str
+    results: list[ChatSearchHit]
+    count: int = Field(..., description="命中的会话数（非消息数）")
+
+
 class UpdateSessionRequest(BaseModel):
     """更新会话请求（部分字段更新，目前仅支持 title）。
 
@@ -670,6 +699,169 @@ async def list_sessions(
         ],
         count=len(rows),
     )
+
+
+def _build_snippet(content: str, needle: str, snippet_chars: int = 80) -> str:
+    """从消息内容中截取关键词上下文片段。
+
+    在原文中按大小写不敏感方式定位 ``needle`` 首次出现位置，截取前后各
+    ``snippet_chars // 2`` 字符；若内容短于片段长度则原样返回。空 needle
+    或找不到时返回内容前 ``snippet_chars`` 字符。
+
+    Args:
+        content: 消息原文。
+        needle: 搜索关键词（已 strip）。
+        snippet_chars: 片段最大长度，默认 80。
+
+    Returns:
+        上下文片段（必要时带前/后省略号）。
+    """
+    if not content:
+        return ""
+    text = content
+    if len(text) <= snippet_chars:
+        return text
+    pos = -1
+    if needle:
+        pos = text.lower().find(needle.lower())
+    if pos < 0:
+        return text[:snippet_chars] + "…"
+    half = snippet_chars // 2
+    start = max(0, pos - half)
+    end = min(len(text), pos + len(needle) + half)
+    prefix = "…" if start > 0 else ""
+    suffix = "…" if end < len(text) else ""
+    return prefix + text[start:end] + suffix
+
+
+@router.get("/search", response_model=ChatSearchResponse)
+async def search_messages(
+    q: str = Query(..., min_length=1, description="搜索关键词"),
+    mode: str | None = Query(
+        None, description="按场景模式过滤（study / work）"
+    ),
+    graph_id: str | None = Query(None, description="按关联图谱过滤"),
+    limit: int = Query(20, ge=1, le=100, description="命中的会话数上限"),
+    limit_per_session: int = Query(
+        3, ge=1, le=20, description="每个会话返回的消息片段数上限"
+    ),
+) -> ChatSearchResponse:
+    """全文搜索会话消息内容。
+
+    跨会话搜索 message.content（不包含 thinking / tool_calls），
+    返回命中的会话列表，每个会话附带最多 ``limit_per_session`` 条命中消息
+    的上下文片段。结果按会话 updated_at 倒序排列。
+
+    Args:
+        q: 搜索关键词（必填，至少 1 字符）。
+        mode: 可选，按场景模式过滤（study / work）。前端传入当前模式，
+            使搜索范围与侧栏展示的会话范围一致。
+        graph_id: 可选，按关联图谱过滤。
+        limit: 命中的会话数上限，默认 20，最大 100。
+        limit_per_session: 每个会话返回的消息片段数上限，默认 3，最大 20。
+    """
+    needle = q.strip()
+    if not needle:
+        raise _bad_request("搜索关键词不能为空")
+
+    like_pattern = f"%{needle}%"
+
+    # 一次查询：JOIN sessions 表过滤 mode/graph_id 并按 content LIKE 命中
+    # 消息；按 session_id 去重后再分页拉取每个会话的命中消息。
+    async with AsyncSessionLocal() as db:
+        stmt = (
+            select(
+                SessionRow.id,
+                SessionRow.title,
+                SessionRow.mode,
+                SessionRow.graph_id,
+                SessionRow.created_at,
+                SessionRow.updated_at,
+            )
+            .join(MessageRow, MessageRow.session_id == SessionRow.id)
+            .where(MessageRow.content.like(like_pattern))
+        )
+        if mode is not None:
+            stmt = stmt.where(SessionRow.mode == mode)
+        if graph_id is not None:
+            stmt = stmt.where(SessionRow.graph_id == graph_id)
+        stmt = stmt.group_by(SessionRow.id).order_by(
+            SessionRow.updated_at.desc(), SessionRow.id.desc()
+        ).limit(limit)
+        result = await db.execute(stmt)
+        session_rows = result.all()
+
+        if not session_rows:
+            return ChatSearchResponse(query=needle, results=[], count=0)
+
+        session_ids = [r.id for r in session_rows]
+
+        # 拉取每个会话的命中消息（content LIKE），按 created_at 升序
+        msg_stmt = (
+            select(
+                MessageRow.id,
+                MessageRow.session_id,
+                MessageRow.role,
+                MessageRow.content,
+                MessageRow.created_at,
+            )
+            .where(
+                MessageRow.session_id.in_(session_ids),
+                MessageRow.content.like(like_pattern),
+            )
+            .order_by(MessageRow.created_at.asc(), MessageRow.id.asc())
+        )
+        msg_result = await db.execute(msg_stmt)
+        msg_rows = msg_result.all()
+
+    # 按 session_id 分组
+    by_session: dict[str, list[dict[str, Any]]] = {}
+    for r in msg_rows:
+        by_session.setdefault(r.session_id, []).append(
+            {
+                "id": r.id,
+                "role": r.role,
+                "content": r.content,
+                "created_at": r.created_at.isoformat() if r.created_at else "",
+            }
+        )
+
+    results: list[ChatSearchHit] = []
+    for srow in session_rows:
+        hits_data = by_session.get(srow.id, [])
+        if not hits_data:
+            continue
+        total = len(hits_data)
+        capped = hits_data[:limit_per_session]
+        hits = [
+            ChatSearchHitMessage(
+                id=h["id"],
+                role=h["role"],
+                snippet=_build_snippet(h["content"], needle),
+                created_at=h["created_at"],
+            )
+            for h in capped
+        ]
+        results.append(
+            ChatSearchHit(
+                session=SessionResponse(
+                    id=srow.id,
+                    title=srow.title,
+                    mode=srow.mode,
+                    graph_id=srow.graph_id,
+                    created_at=srow.created_at.isoformat()
+                    if srow.created_at
+                    else "",
+                    updated_at=srow.updated_at.isoformat()
+                    if srow.updated_at
+                    else "",
+                ),
+                hits=hits,
+                total_hits=total,
+            )
+        )
+
+    return ChatSearchResponse(query=needle, results=results, count=len(results))
 
 
 @router.get("/sessions/{session_id}/messages", response_model=ListMessagesResponse)
