@@ -173,7 +173,11 @@ function ChatConversationView() {
       >
         <ul className="chat-panel__message-list">
           <AnimatePresence initial={false}>
-            {chatMessages.map((m, i) => (
+            {chatMessages
+              // 过滤掉测验作答指令消息：作答交互与反馈已由 QuizCard 承载，
+              // [quiz_answer] 是前端与智能体的内部协议，无需在对话流中展示
+              .filter((m) => !isQuizAnswerMessage(m.content))
+              .map((m, i) => (
               <ChatMessageItem
                 key={m.id ?? `${m.role}-${i}`}
                 message={m}
@@ -472,6 +476,11 @@ function ChatSessionSidebar() {
 interface ChatMessageItemProps {
   message: ChatMessage
   streaming?: boolean
+}
+
+/** 判断消息内容是否为测验作答指令（[quiz_answer] 前缀的内部协议文本）。 */
+function isQuizAnswerMessage(content: string): boolean {
+  return content.startsWith('[quiz_answer]')
 }
 
 function ChatMessageItem({ message, streaming }: ChatMessageItemProps) {
@@ -849,6 +858,22 @@ function QuizCard({ quizId, quizType, payload, answered, result }: QuizCardProps
     }
     return null
   })
+
+  // 历史回显：generate_quiz 工具结果中的 quiz.answered 不会随作答更新，
+  // 刷新后仍为 false。若 store 中存在匹配的 answer_quiz 工具结果，
+  // 说明已作答，需把 submitted 同步为 true，否则 QuizCard 会显示成未答状态。
+  useEffect(() => {
+    if (answerGrade && !submitted) {
+      setSubmitted(true)
+      // 同步本地选中态，便于已答单选题把用户选项标灰
+      const ua = (answerGrade as { user_answer?: string[] | string }).user_answer
+      if (Array.isArray(ua)) {
+        setSelected(ua.map(String))
+      } else if (typeof ua === 'string') {
+        setSelected([ua])
+      }
+    }
+  }, [answerGrade, submitted])
 
   // 优先用 answer_quiz 的实时判分；历史回显（已答题目）退回到 props.result
   const effectiveResult = (answerGrade ?? result) as
