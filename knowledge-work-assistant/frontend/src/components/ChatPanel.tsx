@@ -830,13 +830,42 @@ function QuizCard({ quizId, quizType, payload, answered, result }: QuizCardProps
   const sendMessage = useAppStore((s) => s.sendMessage)
   const chatAsking = useAppStore((s) => s.chatAsking)
 
-  // 如果已作答，从 result 恢复判分结果用于回显
-  const correct = (result as { correct?: boolean })?.correct
-  const score = (result as { score?: number })?.score
-  const correctAnswers =
-    (result as { correct_answers?: string[] })?.correct_answers ?? []
-  const explanation = (result as { explanation?: string })?.explanation
-  const feedback = (result as { feedback?: string })?.feedback
+  // 从 store 中查找针对本题的 graph_answer_quiz 工具结果。
+  // 作答消息与生成题消息不是同一条，generate 的 toolCalls 不会更新 quiz.result，
+  // 因此必须从 answer_quiz 工具结果中取判分，否则界面永远显示"回答错误"，
+  // 与智能体基于同一工具结果的文本判断不一致。
+  const answerGrade = useAppStore((s) => {
+    for (let i = s.chatMessages.length - 1; i >= 0; i--) {
+      const tcs = s.chatMessages[i].tool_calls
+      if (!tcs) continue
+      for (let j = tcs.length - 1; j >= 0; j--) {
+        const tc = tcs[j]
+        if (tc.tool !== 'graph_answer_quiz' || tc.status !== 'done' || !tc.result) continue
+        const r = tc.result as { quiz_id?: string; status?: string }
+        if (r.quiz_id === quizId && r.status === 'ok') {
+          return r as Record<string, unknown>
+        }
+      }
+    }
+    return null
+  })
+
+  // 优先用 answer_quiz 的实时判分；历史回显（已答题目）退回到 props.result
+  const effectiveResult = (answerGrade ?? result) as
+    | (Record<string, unknown> & {
+        correct?: boolean
+        score?: number
+        correct_answers?: string[]
+        explanation?: string
+        feedback?: string
+      })
+    | undefined
+  const graded = answerGrade !== null
+  const correct = effectiveResult?.correct
+  const score = effectiveResult?.score
+  const correctAnswers = effectiveResult?.correct_answers ?? []
+  const explanation = effectiveResult?.explanation
+  const feedback = effectiveResult?.feedback
 
   const isChoice = quizType === 'single_choice' || quizType === 'multi_choice'
   const isFeynman = quizType === 'feynman'
@@ -913,9 +942,11 @@ function QuizCard({ quizId, quizType, payload, answered, result }: QuizCardProps
           <div className="quiz-card__options">
             {(payload.options ?? []).map((opt) => {
               const isSelected = selected.includes(opt.id)
-              const isCorrect = submitted && correctAnswers.includes(opt.id)
+              // 仅在拿到判分结果后才标色，避免判分未返回时误标红
+              const isCorrect = submitted && graded && correctAnswers.includes(opt.id)
               const isWrong =
                 submitted &&
+                graded &&
                 isSelected &&
                 !correctAnswers.includes(opt.id)
               return (
@@ -949,11 +980,25 @@ function QuizCard({ quizId, quizType, payload, answered, result }: QuizCardProps
             </button>
           )}
           {submitted && (
-            <div className={`quiz-card__result${correct ? ' quiz-card__result--correct' : ' quiz-card__result--wrong'}`}>
+            <div
+              className={`quiz-card__result${
+                graded
+                  ? correct
+                    ? ' quiz-card__result--correct'
+                    : ' quiz-card__result--wrong'
+                  : ''
+              }`}
+            >
               <span className="quiz-card__result-icon">
-                {correct ? '✓ 回答正确' : '✗ 回答错误'}
+                {graded
+                  ? correct
+                    ? '✓ 回答正确'
+                    : '✗ 回答错误'
+                  : '判分中…'}
               </span>
-              {explanation && <p className="quiz-card__explanation">{explanation}</p>}
+              {graded && explanation && (
+                <p className="quiz-card__explanation">{explanation}</p>
+              )}
             </div>
           )}
         </>
@@ -984,9 +1029,11 @@ function QuizCard({ quizId, quizType, payload, answered, result }: QuizCardProps
           ) : (
             <div className="quiz-card__result quiz-card__result--feynman">
               <span className="quiz-card__result-icon">
-                得分 {score ?? '-'}/100
+                {graded ? `得分 ${score ?? '-'}/100` : '判分中…'}
               </span>
-              {feedback && <p className="quiz-card__explanation">{feedback}</p>}
+              {graded && feedback && (
+                <p className="quiz-card__explanation">{feedback}</p>
+              )}
             </div>
           )}
         </>
