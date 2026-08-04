@@ -43,6 +43,7 @@ import type {
   HealthResponse,
   ListChatMessagesResponse,
   ListChatSessionsResponse,
+  ChatSearchResponse,
   UpdateChatSessionRequest,
   LlmCancelResponse,
   LlmConfig,
@@ -660,6 +661,29 @@ export const api = {
     const url = qs ? `/chat/sessions?${qs}` : '/chat/sessions'
     const resp = await request<ListChatSessionsResponse>(url)
     return resp?.sessions ?? []
+  },
+  /**
+   * 全文搜索会话消息内容。
+   * 后端跨会话搜索 message.content，返回命中的会话列表（每个会话附带
+   * 最多 limit_per_session 条命中消息片段）。结果按会话 updated_at 倒序。
+   */
+  searchChatMessages: async (
+    q: string,
+    options?: {
+      mode?: Mode
+      graphId?: string
+      limit?: number
+      limitPerSession?: number
+    },
+  ): Promise<ChatSearchResponse> => {
+    const params = new URLSearchParams({ q })
+    if (options?.mode) params.set('mode', options.mode)
+    if (options?.graphId) params.set('graph_id', options.graphId)
+    if (options?.limit !== undefined) params.set('limit', String(options.limit))
+    if (options?.limitPerSession !== undefined) {
+      params.set('limit_per_session', String(options.limitPerSession))
+    }
+    return request<ChatSearchResponse>(`/chat/search?${params.toString()}`)
   },
   /**
    * 获取会话消息历史（按 created_at 升序）。

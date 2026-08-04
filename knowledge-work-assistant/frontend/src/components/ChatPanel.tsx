@@ -21,13 +21,18 @@
  * - **流式取消**：流式进行中显示「取消」按钮，调 ``store.cancelChat``。
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 
 import { useAppStore } from '../store/useAppStore'
 import { useAutoGrowTextarea } from '../hooks/useAutoGrowTextarea'
 import { formatShortTime } from '../lib/date'
-import type { ChatMessage, ChatSession, ToolCall } from '../lib/types'
+import type {
+  ChatMessage,
+  ChatSearchHit,
+  ChatSession,
+  ToolCall,
+} from '../lib/types'
 import { ChatHome } from './ChatHome'
 import { ConfirmDialog } from './graph/ConfirmDialog'
 import { ToolConfirmDialog } from './ToolConfirmDialog'
@@ -83,6 +88,8 @@ function ChatConversationView() {
   const planMode = useAppStore((s) => s.planMode)
   const setPlanMode = useAppStore((s) => s.setPlanMode)
   const sendMessage = useAppStore((s) => s.sendMessage)
+  const highlightedMessageId = useAppStore((s) => s.highlightedMessageId)
+  const setHighlightedMessageId = useAppStore((s) => s.setHighlightedMessageId)
 
   const [input, setInput] = useState('')
   const [showLatest, setShowLatest] = useState(false)
@@ -104,6 +111,33 @@ function ChatConversationView() {
       setShowLatest(true)
     }
   }, [chatMessages, chatAsking, chatStreamingActive])
+
+  /**
+   * 搜索结果点击后的高亮定位：当 highlightedMessageId 设置且消息已渲染时，
+   * 滚动到该消息并触发 CSS 高亮动画，约 2s 后清除状态。
+   * 依赖 chatMessages 是因为切换会话后消息需先加载完成才能定位。
+   */
+  useEffect(() => {
+    if (!highlightedMessageId) return
+    if (chatMessages.length === 0) return
+    // 等下一帧确保 DOM 已渲染
+    const raf = requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLElement>(
+        `[data-message-id="${CSS.escape(highlightedMessageId)}"]`,
+      )
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        // 触发动画：通过添加再移除 class 实现重播
+        el.classList.remove('chat-msg--search-highlight')
+        // 强制 reflow 让重播生效
+        void el.offsetWidth
+        el.classList.add('chat-msg--search-highlight')
+      }
+      // 清除状态，避免后续重复滚动
+      setHighlightedMessageId(null)
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [highlightedMessageId, chatMessages, setHighlightedMessageId])
 
   const handleMessagesScroll = () => {
     const container = messagesRef.current
@@ -274,6 +308,22 @@ function ChatSessionSidebar() {
   const loadChatSessions = useAppStore((s) => s.loadChatSessions)
   const chatAsking = useAppStore((s) => s.chatAsking)
 
+  // ===== 全文搜索相关状态与 store 动作 =====
+  const chatSearchQuery = useAppStore((s) => s.chatSearchQuery)
+  const chatSearchResults = useAppStore((s) => s.chatSearchResults)
+  const chatSearching = useAppStore((s) => s.chatSearching)
+  const chatSearchError = useAppStore((s) => s.chatSearchError)
+  const searchChatMessages = useAppStore((s) => s.searchChatMessages)
+  const clearChatSearch = useAppStore((s) => s.clearChatSearch)
+  const setHighlightedMessageId = useAppStore((s) => s.setHighlightedMessageId)
+
+  // 搜索输入框展开态；输入框内文本（独立于 chatSearchQuery，便于防抖）
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchInput, setSearchInput] = useState('')
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
+  // 防抖 timer 句柄
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   // 重命名态（与 GraphList 模式一致：内联 input + Enter 确认 / Esc 取消）
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
@@ -286,6 +336,65 @@ function ChatSessionSidebar() {
     if (renamingId) renameRef.current?.focus()
   }, [renamingId])
 
+  // 展开搜索框时自动聚焦；收起时清空输入与结果
+  useEffect(() => {
+    if (searchOpen) {
+      searchInputRef.current?.focus()
+    } else {
+      setSearchInput('')
+      if (chatSearchQuery) clearChatSearch()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchOpen])
+
+  // 卸载时清掉防抖 timer
+  useEffect(() => {
+    return () => {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current)
+        searchDebounceRef.current = null
+      }
+    }
+  }, [])
+
+  /**
+   * 输入防抖：停止输入 350ms 后触发搜索；输入变化时取消上一次 timer。
+   * 直接 Enter 时立即触发并取消 timer。
+   */
+  const scheduleSearch = (raw: string) => {
+    setSearchInput(raw)
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current)
+    }
+    searchDebounceRef.current = setTimeout(() => {
+      void searchChatMessages(raw)
+    }, 350)
+  }
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current)
+        searchDebounceRef.current = null
+      }
+      void searchChatMessages(searchInput)
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setSearchOpen(false)
+    }
+  }
+
+  const handleClearSearch = () => {
+    setSearchInput('')
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current)
+      searchDebounceRef.current = null
+    }
+    clearChatSearch()
+    searchInputRef.current?.focus()
+  }
+
   const handleNewSession = async () => {
     if (chatAsking) return
     await createChatSession()
@@ -296,6 +405,16 @@ function ChatSessionSidebar() {
     if (renamingId === sessionId) return // 重命名中点击同项不触发切换
     const target = chatSessions.find((s) => s.id === sessionId)
     if (target) void selectChatSession(target)
+  }
+
+  /**
+   * 点击搜索结果项：切换到对应会话，并设置需要高亮的消息 ID。
+   * ChatConversationView 在消息渲染后滚动定位并短暂高亮，完成后清除。
+   */
+  const handleSelectFromSearch = (hit: ChatSearchHit, msgId: string) => {
+    if (chatAsking) return
+    setHighlightedMessageId(msgId)
+    void selectChatSession(hit.session)
   }
 
   const startRename = (s: ChatSession) => {
@@ -344,23 +463,100 @@ function ChatSessionSidebar() {
     }
   }
 
+  // 搜索态：搜索框展开且有查询关键词时，列表区改为渲染搜索结果
+  const isSearchMode = searchOpen && chatSearchQuery.length > 0
+
   return (
     <aside className="chat-sidebar" aria-label="对话记录列表">
       <header className="chat-sidebar__header">
         <span className="chat-sidebar__title">对话记录</span>
-        <button
-          type="button"
-          className="chat-sidebar__new-btn"
-          onClick={handleNewSession}
-          disabled={chatAsking}
-          title="新建对话"
-          aria-label="新建对话"
-        >
-          +
-        </button>
+        <div className="chat-sidebar__header-actions">
+          <button
+            type="button"
+            className={`chat-sidebar__icon-square-btn${
+              searchOpen ? ' is-active' : ''
+            }`}
+            onClick={() => setSearchOpen((v) => !v)}
+            disabled={chatAsking}
+            title={searchOpen ? '关闭搜索' : '搜索对话内容'}
+            aria-label={searchOpen ? '关闭搜索' : '搜索对话内容'}
+            aria-expanded={searchOpen}
+          >
+            <SearchIcon />
+          </button>
+          <button
+            type="button"
+            className="chat-sidebar__new-btn"
+            onClick={handleNewSession}
+            disabled={chatAsking}
+            title="新建对话"
+            aria-label="新建对话"
+          >
+            +
+          </button>
+        </div>
       </header>
+
+      {/* 搜索输入框（展开态时渲染；输入即触发防抖搜索） */}
+      {searchOpen && (
+        <div className="chat-sidebar__search">
+          <div className="chat-sidebar__search-input-wrap">
+            <span className="chat-sidebar__search-icon" aria-hidden="true">
+              <SearchIcon />
+            </span>
+            <input
+              ref={searchInputRef}
+              type="text"
+              className="chat-sidebar__search-input"
+              placeholder="搜索对话内容…"
+              value={searchInput}
+              onChange={(e) => scheduleSearch(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
+              aria-label="搜索对话内容"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            {searchInput && (
+              <button
+                type="button"
+                className="chat-sidebar__search-clear"
+                onClick={handleClearSearch}
+                aria-label="清空搜索"
+                title="清空搜索"
+              >
+                ×
+              </button>
+            )}
+          </div>
+          {chatSearching && (
+            <div className="chat-sidebar__search-status">搜索中…</div>
+          )}
+          {!chatSearching && chatSearchError && (
+            <div className="chat-sidebar__search-status chat-sidebar__search-status--error">
+              搜索失败：{chatSearchError}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="chat-sidebar__list">
-        {chatSessions.length === 0 ? (
+        {isSearchMode ? (
+          chatSearchResults.length === 0 ? (
+            <div className="chat-sidebar__empty">
+              {chatSearching ? '搜索中…' : `未找到包含「${chatSearchQuery}」的对话`}
+            </div>
+          ) : (
+            chatSearchResults.map((hit) => (
+              <SearchResultItem
+                key={hit.session.id}
+                hit={hit}
+                isActive={currentChatSession?.id === hit.session.id}
+                query={chatSearchQuery}
+                onSelect={(msgId) => handleSelectFromSearch(hit, msgId)}
+              />
+            ))
+          )
+        ) : chatSessions.length === 0 ? (
           <div className="chat-sidebar__empty">暂无对话记录</div>
         ) : (
           chatSessions.map((s) => {
@@ -470,6 +666,112 @@ function ChatSessionSidebar() {
 }
 
 // ============================================================================
+// 全文搜索：搜索图标 + 搜索结果项
+// ============================================================================
+
+/** 搜索图标：放大镜。 */
+function SearchIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3.2-3.2" />
+    </svg>
+  )
+}
+
+interface SearchResultItemProps {
+  hit: ChatSearchHit
+  isActive: boolean
+  query: string
+  onSelect: (messageId: string) => void
+}
+
+/**
+ * 搜索结果项：展示会话标题 + 命中消息片段（高亮关键词）。
+ * 点击任意片段切换到对应会话并定位高亮该消息。
+ */
+function SearchResultItem({ hit, isActive, query, onSelect }: SearchResultItemProps) {
+  return (
+    <div
+      className={`chat-sidebar__search-result${
+        isActive ? ' chat-sidebar__search-result--active' : ''
+      }`}
+    >
+      <div className="chat-sidebar__search-result-header">
+        <span className="chat-sidebar__search-result-title" title={hit.session.title}>
+          {hit.session.title}
+        </span>
+        <span className="chat-sidebar__search-result-count">
+          共 {hit.total_hits} 处
+        </span>
+      </div>
+      <ul className="chat-sidebar__search-hits">
+        {hit.hits.map((h) => (
+          <li key={h.id}>
+            <button
+              type="button"
+              className={`chat-sidebar__search-hit${
+                h.role === 'user'
+                  ? ' chat-sidebar__search-hit--user'
+                  : ' chat-sidebar__search-hit--assistant'
+              }`}
+              onClick={() => onSelect(h.id)}
+              title="点击跳转到该消息"
+            >
+              <span className="chat-sidebar__search-hit-role">
+                {h.role === 'user' ? '我' : 'AI'}
+              </span>
+              <span className="chat-sidebar__search-hit-snippet">
+                <HighlightedText text={h.snippet} query={query} />
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+/**
+ * 将文本中匹配 query 的子串高亮（大小写不敏感）。
+ * query 为空时直接返回原文。
+ */
+function HighlightedText({ text, query }: { text: string; query: string }) {
+  const parts = useMemo(() => {
+    if (!query) return [text]
+    const lowerText = text.toLowerCase()
+    const lowerQuery = query.toLowerCase()
+    const result: React.ReactNode[] = []
+    let cursor = 0
+    let idx = lowerText.indexOf(lowerQuery, cursor)
+    let key = 0
+    while (idx >= 0) {
+      if (idx > cursor) result.push(text.slice(cursor, idx))
+      result.push(
+        <mark key={`hl-${key++}`} className="chat-sidebar__search-hit-mark">
+          {text.slice(idx, idx + query.length)}
+        </mark>,
+      )
+      cursor = idx + query.length
+      idx = lowerText.indexOf(lowerQuery, cursor)
+    }
+    if (cursor < text.length) result.push(text.slice(cursor))
+    return result
+  }, [text, query])
+  return <>{parts}</>
+}
+
+// ============================================================================
 // 单条消息子组件（含思维链折叠 + 工具调用 + 正文）
 // ============================================================================
 
@@ -489,6 +791,7 @@ function ChatMessageItem({ message, streaming }: ChatMessageItemProps) {
     return (
       <motion.li
         className="chat-msg chat-msg--user"
+        data-message-id={message.id}
         layout="position"
         initial={{ opacity: 0, y: 8, scale: 0.985 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -520,6 +823,7 @@ function ChatMessageItem({ message, streaming }: ChatMessageItemProps) {
   return (
     <motion.li
       className="chat-msg chat-msg--assistant"
+      data-message-id={message.id}
       layout="position"
       initial={{ opacity: 0, y: 8, scale: 0.985 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}

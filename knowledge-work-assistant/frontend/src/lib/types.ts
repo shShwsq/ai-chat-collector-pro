@@ -845,6 +845,38 @@ export interface ListChatSessionsResponse {
   count: number
 }
 
+/** 搜索命中的单条消息摘要（不含完整内容，仅片段与定位）。 */
+export interface ChatSearchHitMessage {
+  /** 消息 ID。 */
+  id: string
+  /** 角色：user / assistant / system。 */
+  role: 'user' | 'assistant' | 'system'
+  /** 命中关键词上下文片段（已截取，可能含 … 省略号）。 */
+  snippet: string
+  /** 创建时间 ISO8601。 */
+  created_at: string
+}
+
+/** 单个会话的搜索命中结果。 */
+export interface ChatSearchHit {
+  /** 命中的会话快照。 */
+  session: ChatSession
+  /** 该会话命中的消息列表（按 created_at 升序，最多 limit_per_session 条）。 */
+  hits: ChatSearchHitMessage[]
+  /** 该会话命中消息总数（>= hits.length，用于显示「共 N 处」）。 */
+  total_hits: number
+}
+
+/** 全文搜索响应。 */
+export interface ChatSearchResponse {
+  /** 实际使用的搜索关键词（已 strip）。 */
+  query: string
+  /** 命中的会话列表（按 updated_at 倒序）。 */
+  results: ChatSearchHit[]
+  /** 命中的会话数（非消息数）。 */
+  count: number
+}
+
 /** 更新会话请求（部分字段，目前仅支持 title）。 */
 export interface UpdateChatSessionRequest {
   /** 新标题（可选，未传字段保持原值）。 */
