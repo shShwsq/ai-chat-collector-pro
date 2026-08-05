@@ -23,6 +23,14 @@ export interface ErrorResponse {
   detail?: string
 }
 
+/** GET /api/auth/ws-token 响应:WebSocket 短期 token。 */
+export interface WsTokenResponse {
+  /** HMAC 签名的短期 token,用于 WS 握手鉴权。 */
+  token: string
+  /** token 过期的 unix 时间戳(秒)。 */
+  expires_at: number
+}
+
 // ===== WebSocket 测试事件（与 backend/app/routers/ws.py 协议对齐）=====
 
 /**

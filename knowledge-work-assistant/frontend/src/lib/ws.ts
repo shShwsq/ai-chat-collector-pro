@@ -20,6 +20,7 @@
  * - ``graph_agent_error``：失败（含 message）
  */
 
+import { api } from './api'
 import type { WsEvent, WsOutgoing } from './types'
 
 /** 解析 WebSocket 基地址。 */
@@ -69,17 +70,34 @@ export class TestSocket {
   /**
    * 建立连接，resolve 后即可发送消息。
    *
+   * **鉴权流程**：连接前先调用 ``GET /api/auth/ws-token`` 获取短期 token,
+   * 拼接到 ``/ws?token=xxx`` 查询参数。后端握手时校验 token,失败则以
+   * code 4401 关闭连接。token 获取失败时 reject(不降级到无 token 连接)。
+   *
    * @param sessionId 可选。前端生成的唯一会话 ID（如 UUID），用于接收
    *   后端流式 LLM token 推送。未传入时后端注册到 "default" 会话，
    *   仅接收全局广播（如插件对话已接收事件）。
    */
-  connect(sessionId?: string): Promise<void> {
+  async connect(sessionId?: string): Promise<void> {
     this.requestedSessionId = sessionId ?? null
+
+    // ① 获取短期 WS token(15 分钟有效)
+    let token: string
+    try {
+      const resp = await api.getWsToken()
+      token = resp.token
+    } catch (e) {
+      throw new Error(`WebSocket 鉴权 token 获取失败: ${(e as Error).message}`)
+    }
+
+    // ② 拼接 token + session_id 查询参数
+    const params = new URLSearchParams()
+    params.set('token', token)
+    if (sessionId) params.set('session_id', sessionId)
+    const url = `${wsBase()}/ws?${params.toString()}`
+
+    // ③ 建立连接
     return new Promise<void>((resolve, reject) => {
-      // 拼接 session_id 查询参数（若提供）
-      const url = sessionId
-        ? `${wsBase()}/ws?session_id=${encodeURIComponent(sessionId)}`
-        : `${wsBase()}/ws`
       const socket = new WebSocket(url)
       this.socket = socket
 

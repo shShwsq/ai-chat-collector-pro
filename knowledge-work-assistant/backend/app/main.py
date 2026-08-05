@@ -20,6 +20,7 @@ from app import __version__
 from app.config import settings
 from app.db import engine, init_db
 from app.models.db_models import migrate_node_columns, migrate_session_columns
+from app.routers import auth as auth_router
 from app.routers import graphs, health, nodes, plugin, ws
 # Task 8 / Task 11：节点延伸与对话抽取路由
 from app.routers import extensions as extensions_router
@@ -107,6 +108,8 @@ app.add_middleware(
 # 业务路由
 # health 挂载在 /api 前缀下：GET /api/health
 app.include_router(health.router, prefix="/api", tags=["health"])
+# 鉴权路由：GET /api/auth/ws-token（WebSocket 短期 token 签发）
+app.include_router(auth_router.router, prefix="/api", tags=["auth"])
 # 图谱管理（Task 4）：/api/graphs、/api/graphs/{id}/nodes|edges 等
 app.include_router(graphs.router, prefix="/api", tags=["graphs"])
 # 节点详情与留白（Task 7 / Task 9）：/api/graphs/{id}/nodes/{nid}/detail|user-fill

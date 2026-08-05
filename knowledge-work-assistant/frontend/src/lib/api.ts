@@ -81,6 +81,7 @@ import type {
   WorkConfirmResponse,
   WorkExtractRequest,
   WorkExtractResponse,
+  WsTokenResponse,
 } from './types'
 
 const FILE_PROTOCOL = 'file:'
@@ -172,6 +173,10 @@ function withQuery(base: string, params: Record<string, string | undefined>): st
 export const api = {
   // ===== 健康检查 =====
   getHealth: () => request<HealthResponse>('/health'),
+
+  // ===== 鉴权 =====
+  /** 获取 WebSocket 短期 token(15 分钟有效),用于 WS 握手鉴权。 */
+  getWsToken: () => request<WsTokenResponse>('/auth/ws-token'),
 
   // ===== 图谱管理（Task 4）=====
   /** 列出图谱，可选按模式过滤（study/work 隔离）。 */
