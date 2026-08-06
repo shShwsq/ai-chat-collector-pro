@@ -283,27 +283,14 @@ class FloatingBall {
               const delId = btn.dataset.id;
               const platformConvId = btn.dataset.platformConvId;
               await this.sendMessage({ type: 'DELETE_CONVERSATION', id: delId });
-              // 记录已删除的对话平台ID到 collector 实例，切换到该对话时自动重新采集
-              if (this.collector && this.collector._deletedConvIds && platformConvId) {
-                this.collector._deletedConvIds.add(platformConvId);
-                console.log('[FloatingBall/Debug] 已记录删除对话ID: platformConvId=%s, convId=%s, 当前已删除列表: [%s]',
-                  platformConvId, delId, [...this.collector._deletedConvIds].join(','));
-              }
-              // 如果当前正在查看该对话（URL匹配），立即触发重新采集
-              const currentConvId = this.collector?.getConvIdFromUrl?.() || this.collector?.getDomAdapter?.()?.getConversationId?.();
+              // 如果当前正在查看该对话，立即触发重新采集（DOM 提取）
+              const currentConvId = this.collector?.getDomAdapter?.()?.getConversationId?.();
               console.log('[FloatingBall/Debug] 删除后检查: platformConvId=%s, currentConvId=%s, 是否匹配=%s',
                 platformConvId, currentConvId, platformConvId === currentConvId);
               if (platformConvId === currentConvId && this.collector) {
                 console.log('[FloatingBall/Debug] 当前正在查看被删除的对话，立即触发重新采集');
-                this.collector._deletedConvIds.delete(platformConvId);
                 this.collector.capturedHashes.clear();
-                // 按模式分流：网络模式主动请求 API，DOM 模式走 DOM 提取
-                // Kimi 等仅 DOM 模式的平台无网络适配器，调用 requestConversationData 会失败
-                if (this.collector.mode === EXTRACTION_MODE.NETWORK) {
-                  this.collector.requestConversationData(platformConvId);
-                } else {
-                  this.collector.captureCurrentConversation();
-                }
+                this.collector.captureCurrentConversation();
               }
               this.loadConversations();
             }

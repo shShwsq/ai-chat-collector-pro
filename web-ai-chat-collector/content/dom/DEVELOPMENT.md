@@ -1,6 +1,8 @@
 # content/dom/ 开发指南
 
-> DOM 提取模式适配器集合：当平台网络协议不可拦截（Kimi WebSocket）或用户在设置中选择了 DOM 模式时，由这些适配器从渲染后的页面 DOM 中提取对话消息，并通过 `HtmlToMarkdown` 将 HTML 转为 Markdown 文本。
+> DOM 提取模式适配器集合：由这些适配器从渲染后的页面 DOM 中提取对话消息，并通过 `HtmlToMarkdown` 将 HTML 转为 Markdown 文本。
+>
+> **变更说明（2026-08）**：网络拦截模式已整体移除，DOM 成为唯一提取模式；复旦 DOM 适配器（`dom/fudan.js`，曾复用网络拦截器获取 session_id）已随复旦平台一并删除，现覆盖六个平台（Kimi / DeepSeek / 豆包 / 千问 / 元宝 / 文心）。文内若仍提及网络拦截/复旦/`NETWORK_ADAPTERS`，均为历史信息。
 
 ## 与 knowledge-work-assistant 的关系（插件 + 软件一体化）
 

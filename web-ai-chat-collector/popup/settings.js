@@ -12,7 +12,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // ---- 表单元素 ----
   const platformDeepseek = document.getElementById('platformDeepseek');
   const platformQianwen = document.getElementById('platformQianwen');
-  const platformFudan = document.getElementById('platformFudan');
   const platformDoubao = document.getElementById('platformDoubao');
   const platformKimi = document.getElementById('platformKimi');
   const platformYuanbao = document.getElementById('platformYuanbao');
@@ -85,7 +84,6 @@ document.addEventListener('DOMContentLoaded', () => {
     return JSON.stringify({
       platformDeepseek: platformDeepseek.checked,
       platformQianwen: platformQianwen.checked,
-      platformFudan: platformFudan.checked,
       platformDoubao: platformDoubao.checked,
       platformKimi: platformKimi.checked,
       platformYuanbao: platformYuanbao.checked,
@@ -629,25 +627,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (platformResp) {
       platformDeepseek.checked = platformResp.deepseek === true;
       platformQianwen.checked = platformResp.qianwen === true;
-      platformFudan.checked = platformResp.fudan !== false;
       platformDoubao.checked = platformResp.doubao === true;
       platformKimi.checked = platformResp.kimi === true;
       platformYuanbao.checked = platformResp.yuanbao === true;
       platformWenxin.checked = platformResp.wenxin === true;
-    }
-
-    // 平台提取模式（网络拦截 / DOM提取）
-    const modeResp = await sendMessage({ type: 'GET_SETTINGS', category: 'platformModes' });
-    if (modeResp) {
-      const setMode = (platform, mode) => {
-        const radio = document.querySelector(`input[name="${platform}-mode"][value="${mode}"]`);
-        if (radio) radio.checked = true;
-      };
-      setMode('deepseek', modeResp.deepseek || 'dom');
-      setMode('qianwen', modeResp.qianwen || 'dom');
-      setMode('fudan', modeResp.fudan || 'dom');
-      setMode('doubao', modeResp.doubao || 'dom');
-      // Kimi/元宝/文心 固定 DOM，无 radio 可设
     }
 
     // Embedding 设置
@@ -801,30 +784,10 @@ document.addEventListener('DOMContentLoaded', () => {
       settings: {
         deepseek: platformDeepseek.checked,
         qianwen: platformQianwen.checked,
-        fudan: platformFudan.checked,
         doubao: platformDoubao.checked,
         kimi: platformKimi.checked,
         yuanbao: platformYuanbao.checked,
         wenxin: platformWenxin.checked
-      }
-    });
-
-    // 平台提取模式（网络拦截 / DOM提取）
-    const getMode = (platform) => {
-      const radio = document.querySelector(`input[name="${platform}-mode"]:checked`);
-      return radio ? radio.value : 'dom';
-    };
-    await sendMessage({
-      type: 'SAVE_SETTINGS',
-      category: 'platformModes',
-      settings: {
-        deepseek: getMode('deepseek'),
-        qianwen: getMode('qianwen'),
-        fudan: getMode('fudan'),
-        doubao: getMode('doubao'),
-        kimi: 'dom',
-        yuanbao: 'dom',
-        wenxin: 'dom'
       }
     });
 

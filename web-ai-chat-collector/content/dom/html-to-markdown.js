@@ -392,13 +392,6 @@
     '.katex-mathml',
     // 千问搜索结果摘要（嵌套在思考内容中，显示"参考了N篇结果"）
     '[class*="search-wrapper"]',
-    // 复旦搜索来源卡片和头像/复制按钮
-    '.networking_card',
-    '.headImgLeft',
-    '.headImgRight',
-    '.question_copy_icon',
-    '.robot_name',
-    '.iconfont',
     // 豆包操作栏、推荐问题、搜索结果块
     '[data-foundation-type="receive-message-action-bar"]',
     '[data-foundation-type="send-message-action-bar"]',

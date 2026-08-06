@@ -15,8 +15,6 @@ async function handleGetSettings(category) {
         return await getLLMSettings();
       case 'platforms':
         return await getPlatformSettings();
-      case 'platformModes':
-        return await getPlatformModes();
       case 'localApp':
         return await getLocalAppSettings();
       default:
@@ -103,9 +101,6 @@ async function handleSaveSettings(category, settings) {
       case 'platforms':
         await savePlatformSettings(settings);
         break;
-      case 'platformModes':
-        await savePlatformModes(settings);
-        break;
       case 'localApp':
         // 保存并应用到 LocalApp 模块（同步更新定时器）
         await LocalApp_applySettings(settings);
@@ -129,32 +124,6 @@ async function getPlatformSettings() {
 async function savePlatformSettings(settings) {
   return new Promise((resolve) => {
     chrome.storage.local.set({ platformSettings: settings }, resolve);
-  });
-}
-
-// 平台提取模式（网络拦截 / DOM提取）
-// 默认全部走 DOM 提取：兼容性更好，且网络拦截对各平台接口变动敏感
-const DEFAULT_PLATFORM_MODES = {
-  deepseek: 'dom',
-  qianwen: 'dom',
-  fudan: 'dom',
-  doubao: 'dom',
-  kimi: 'dom',
-  yuanbao: 'dom',
-  wenxin: 'dom'
-};
-
-async function getPlatformModes() {
-  return new Promise((resolve) => {
-    chrome.storage.local.get('platformModes', (result) => {
-      resolve({ ...DEFAULT_PLATFORM_MODES, ...(result?.platformModes || {}) });
-    });
-  });
-}
-
-async function savePlatformModes(settings) {
-  return new Promise((resolve) => {
-    chrome.storage.local.set({ platformModes: settings }, resolve);
   });
 }
 

@@ -2,6 +2,8 @@
 
 > 一句话定位：本目录是扩展的前端 UI 层，包含两个独立页面——`popup.html`（点击扩展图标弹出的小窗，列表/搜索/查看/导出对话）与 `settings.html`（完整设置页，配置平台开关、Embedding、向量库、检索、LLM、存储位置、数据管理）；两页通过 `chrome.runtime.sendMessage` 与 Service Worker 通信，不直接访问 IndexedDB 或远程服务。
 
+> **变更说明（2026-08）**：网络拦截模式已移除，设置页"对话提取"区不再有 DOM / 网络拦截 radio，`platformModes` 加载/保存逻辑已删除；复旦平台行已移除，仅保留六个平台的启用 checkbox。文内若仍提及网络拦截 / 复旦 / platformModes / 模式 radio，均为历史信息。
+
 ## 与 knowledge-work-assistant 的关系（插件 + 软件一体化）
 
 本目录是 collector 的"配置与展示层"，与软件侧 [knowledge-work-assistant](../../knowledge-work-assistant/DEVELOPMENT.md) 的关系如下：

@@ -16,44 +16,33 @@ A browser extension that captures AI platform conversations and turns them into 
 
 ## Supported Platforms
 
-| Platform | DOM Mode | Network Interception |
-|----------|:--------:|:--------------------:|
-| DeepSeek (chat.deepseek.com) | ✅ | ✅ |
-| Qianwen (www.qianwen.com) | ✅ | ✅ |
-| Fudan AI Agent (aiagent.fudan.edu.cn) | ✅ | ✅ |
-| Doubao (www.doubao.com) | ✅ | ✅ |
-| Kimi (www.kimi.com) | ✅ | — (not yet developed) |
-| Tencent Yuanbao (yuanbao.tencent.com) | ✅ | — (not yet developed) |
-| Baidu Wenxin (chat.baidu.com / wenxin.baidu.com) | ✅ | — (not yet developed) |
+| Platform | DOM Mode |
+|----------|:--------:|
+| DeepSeek (chat.deepseek.com) | ✅ |
+| Qianwen (www.qianwen.com) | ✅ |
+| Doubao (www.doubao.com) | ✅ |
+| Kimi (www.kimi.com) | ✅ |
+| Tencent Yuanbao (yuanbao.tencent.com) | ✅ |
+| Baidu Wenxin (chat.baidu.com / wenxin.baidu.com) | ✅ |
 
-## Mode Descriptions
+## Capture Approach
 
-### DOM Mode (Recommended)
+### DOM Mode
 
 Parses the rendered page DOM to extract conversations. Universal compatibility, resilient to API changes, and preserves full Markdown formatting (via `turndown.js` + `turndown-plugin-gfm`) including headings, lists, tables, code blocks, and math (KaTeX).
 
-- All seven supported platforms work out of the box
+- All six supported platforms work out of the box
 - Markdown formatting is preserved from rendered HTML — headings, lists, **GFM tables**, strikethrough, task lists, fenced code, and KaTeX math (inline `$...$` / block `$$...$$`)
-- Deep-thinking traces and search citations are extracted per platform (Kimi/DeepSeek/Qianwen/Doubao/Fudan/Yuanbao/Wenxin)
+- Deep-thinking traces and search citations are extracted per platform (Kimi/DeepSeek/Qianwen/Doubao/Yuanbao/Wenxin)
 - Independent of platform API protocol (REST / WebSocket / protobuf)
 - Actively under optimization — further improvements to thinking-block and search-citation extraction are in progress
-
-### Network Interception Mode
-
-Intercepts browser network requests and parses conversation data directly from API responses. Can capture the raw stream including thinking traces and search citations. Opt-in per platform from the settings page.
-
-**Trade-offs:**
-
-- Tightly coupled to each platform's API contract; breaks when the platform updates its API
-- Not yet implemented for Kimi / Yuanbao / Wenxin
-- Use this only if you need raw streaming data not yet exposed via DOM
 
 ## Compliance & Privacy
 
 - **User-owned data only** — the extension captures only the conversations of the currently logged-in user on each supported AI platform. It does not access, scrape, or store any data belonging to other users.
 - **Local-first storage** — by default, captured conversations are stored only in the browser's local IndexedDB. No data is uploaded to any third-party server in the default configuration.
 - **Optional remote sync** — advanced features allow users to push their own conversation data to a self-hosted remote vector database (ChromaDB / Milvus / pgvector / Supabase / Qdrant) for cross-device access and SKILL-based retrieval by external agents (TRAE, OpenClaw, Cursor). This is an explicit user action using the user's own credentials and services.
-- **Mode recommendation** — DOM mode is the recommended default; it parses only page content the user has already rendered. Network interception mode is an opt-in alternative for capturing raw streaming data; its auxiliary request mechanism (reusing the user's own session credentials to fetch conversation history the user is authorized to view) is a means to improve capture completeness, not a data-scraping mechanism.
+- **DOM-only capture** — the extension parses only page content the user has already rendered; it does not intercept network traffic, monkey-patch `fetch`/`XMLHttpRequest`, or make auxiliary requests. (Network interception mode was removed in favor of this safer, purely-DOM approach.)
 - **No behavioral simulation** — the extension does not simulate logins, clicks, scrolls, or any user interaction with the platform UI.
 
 ## Architecture
@@ -63,10 +52,10 @@ Intercepts browser network requests and parses conversation data directly from A
 │                      Browser Extension (MV3)                     │
 │                                                                  │
 │  Content Scripts           Service Worker (background.js)        │
-│  ├─ network-interceptor    ├─ db.js        (conversation store) │
-│  ├─ platform adapters      ├─ embedding.js (5 embed providers) │
-│  ├─ floating-ball          ├─ vector-store.js (6 backends)      │
-│  └─ ai-ball (Q&A UI)       └─ llm.js       (6 LLM providers)   │
+│  ├─ platform adapters      ├─ db.js        (conversation store) │
+│  ├─ floating-ball/viewer   ├─ embedding.js (5 embed providers) │
+│  ├─ ai-ball (Q&A UI)       ├─ vector-store.js (6 backends)      │
+│                            └─ llm.js       (6 LLM providers)   │
 │                                                                  │
 │  Popup / Settings Page                                           │
 └──────────────┬───────────────────────────────┬───────────────────┘
@@ -163,19 +152,14 @@ ai-plugin/
 │   ├── export.js              # Markdown / JSON export
 │   └── data-handlers.js       # Storage info / clear / reset
 ├── content/                   # Content scripts
-│   ├── adapter-registry.js    # EXTRACTION_MODE + getPlatformMode + adapter registry
-│   ├── exporter-base.js       # ChatExporterBase (network / DOM dispatch)
-│   ├── network-interceptor.js # Shared network hook (MAIN world)
+│   ├── adapter-registry.js    # EXTRACTION_MODE + adapter registry + platform enable defaults
+│   ├── exporter-base.js       # ChatExporterBase (DOM extraction dispatch)
 │   ├── ai-ball.js             # AI Q&A floating ball + panel
-│   ├── kimi.js / yuanbao.js / wenxin.js   # Kimi / Yuanbao / Wenxin entries (DOM-only, no network adapter)
-│   ├── deepseek.js / qianwen.js / fudan.js / doubao.js  # Per-platform entries
-│   ├── network/               # Per-platform network adapters (REST parsing)
-│   │   ├── common.js
-│   │   ├── deepseek.js / qianwen.js / fudan.js / doubao.js
+│   ├── deepseek.js / qianwen.js / doubao.js / kimi.js / yuanbao.js / wenxin.js  # Per-platform entries (DOM-only)
 │   ├── dom/                   # Per-platform DOM adapters
 │   │   ├── html-to-markdown.js  # Unified HTML→Markdown wrapper (turndown.js + GFM)
 │   │   ├── katex-html-to-latex.js # KaTeX HTML→LaTeX reverse parser (Kimi fallback)
-│   │   ├── kimi.js / deepseek.js / qianwen.js / fudan.js / doubao.js / yuanbao.js / wenxin.js
+│   │   ├── kimi.js / deepseek.js / qianwen.js / doubao.js / yuanbao.js / wenxin.js
 │   └── ui/                    # floating-ball, viewer, styles
 │       ├── floating-ball.js / viewer.js / styles.js
 ├── lib/                       # Shared services (loaded by both SW and content)

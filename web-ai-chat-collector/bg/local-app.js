@@ -36,12 +36,11 @@ const DEFAULT_LOCAL_APP_SETTINGS = {
 };
 
 // 插件 platform → 后端 SUPPORTED_PLATFORMS 白名单映射
-// 后端：chatgpt / claude / gemini / deepseek / qwen / doubao / kimi / fudan / yuanbao / custom
+// 后端：chatgpt / claude / gemini / deepseek / qwen / doubao / kimi / yuanbao / custom
 const PLATFORM_MAP = {
   deepseek: 'deepseek',
   qianwen: 'qwen',
   qwen: 'qwen',
-  fudan: 'fudan',
   doubao: 'doubao',
   kimi: 'kimi',
   yuanbao: 'yuanbao',
