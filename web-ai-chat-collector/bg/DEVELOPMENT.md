@@ -2,6 +2,8 @@
 
 > 一句话定位：本目录是 MV3 Service Worker 的业务逻辑层，所有消息路由、CRUD 委托、AI 编排、向量索引管理、设置 R/W、导出与数据清理都在这里；它通过 `background.js` 的 `importScripts` 顺序加载，依赖 `lib/*.js` 提供的 `EmbeddingService` / `VectorStore` / `LLMService` / `AIAssistant` / `db.js` 函数。
 
+> **变更说明（2026-08）**：网络拦截模式已移除，`platformModes` 设置类别与 `DEFAULT_PLATFORM_MODES` / `getPlatformModes` / `savePlatformModes` 已删除；复旦平台已移除（`PLATFORM_MAP` 中的 `fudan` 项已删，所有平台默认走 DOM）。文内若仍提及网络拦截 / 复旦 / platformModes，均为历史信息。
+
 ## 与 knowledge-work-assistant 的关系（插件 + 软件一体化）
 
 本目录是 collector 采集侧的"业务大脑"，与软件侧 [knowledge-work-assistant](../../knowledge-work-assistant/DEVELOPMENT.md) 的对接关系如下：

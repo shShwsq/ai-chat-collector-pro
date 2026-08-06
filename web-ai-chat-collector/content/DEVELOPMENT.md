@@ -1,6 +1,8 @@
 # content/ 根目录 开发指南
 
-> 浏览器扩展 content script 主入口层：负责适配器注册表、导出器基类、主世界网络拦截器、AI 问答悬浮球，以及五个 AI 平台（Kimi / DeepSeek / 豆包 / 千问 / 复旦）的入口脚本。
+> 浏览器扩展 content script 主入口层：负责适配器注册表、导出器基类、AI 问答悬浮球，以及六个 AI 平台（Kimi / DeepSeek / 豆包 / 千问 / 元宝 / 文心）的入口脚本。仅 DOM 提取模式。
+>
+> **变更说明（2026-08）**：网络拦截模式与主世界拦截器（`network-interceptor.js`、`content/network/`）已整体移除，所有平台改为纯 DOM 提取；复旦平台已移除（其 DOM 模式曾依赖网络拦截器获取 session_id）；`EXTRACTION_MODE.NETWORK`、`getPlatformMode`、`platformModes` 设置项均已删除。文内若仍提及网络拦截/复旦/platformModes，均为历史信息。
 
 ## 与 knowledge-work-assistant 的关系（插件 + 软件一体化）
 
