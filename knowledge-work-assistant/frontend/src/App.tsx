@@ -63,6 +63,8 @@ export default function App() {
   const loadGraphs = useAppStore((s) => s.loadGraphs)
   const activeNav = useAppStore((s) => s.activeNav)
   const navDirection = useAppStore((s) => s.navDirection)
+  // 后台导入任务：运行中在 header 显示可点击的进度入口
+  const importJob = useAppStore((s) => s.importJob)
 
   const graphViewRef = useRef<GraphViewHandle>(null)
   // 持有 WebSocket 实例，避免重渲染时重建连接
@@ -247,6 +249,17 @@ export default function App() {
           >
             导入对话
           </button>
+          {importJob?.status === 'running' && (
+            <button
+              type="button"
+              className="app-header__import-progress"
+              onClick={() => setImportModalOpen(true)}
+              title="查看导入进度"
+            >
+              <span className="app-header__import-progress-spinner" />
+              导入中 {importJob.done}/{importJob.total}
+            </button>
+          )}
           <ModeSwitch />
         </div>
       </header>

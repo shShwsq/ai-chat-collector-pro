@@ -145,6 +145,21 @@ export interface ImportConversationsResult {
   errors: string[]
 }
 
+/**
+ * 后台导入任务状态。上提到全局 store，使得弹窗关闭后任务继续运行、
+ * 用户可从 header 进度入口随时重开弹窗查看进度与结果。
+ * - ``null``：无任务（或已清除）；
+ * - ``status='running'``：进行中，``done/total`` 实时更新；
+ * - ``status='done'``：已完成，``result`` 含汇总，用户查看后可 ``clearImportJob`` 清除。
+ */
+export interface ImportJobState {
+  status: 'running' | 'done'
+  platform: ImportPlatform
+  done: number
+  total: number
+  result: ImportConversationsResult | null
+}
+
 // ============================================================================
 // 模式快照：切换 study/work 时保存当前模式的关键状态，切回时直接恢复
 // ============================================================================
@@ -345,6 +360,12 @@ interface AppState {
 
   /** 批量导入对话进行中标记：为 true 时抑制 WS 广播的逐条 Toast，由导入动作统一收尾。 */
   batchImporting: boolean
+
+  /**
+   * 后台导入任务状态：null=无任务。running 期间弹窗关闭后任务继续，
+   * header 进度入口可重开弹窗查看；done 后保留结果供查看，由用户清除。
+   */
+  importJob: ImportJobState | null
 
   // ===== 流式输出状态 =====
   /** WebSocket 连接的 session_id（App.tsx 启动时生成并设置）。 */
@@ -630,14 +651,16 @@ interface AppState {
    * - 并发限制（6）避免瞬时打满后端；
    * - 导入期间置 ``batchImporting=true`` 抑制 WS 广播的逐条 Toast，结束后统一
    *   刷新最近推送列表与待抽取列表，并弹一条汇总 Toast；
-   * - ``onProgress`` 回调供 UI 实时更新进度条（done/total）。
-   * 返回导入结果汇总。
+   * - **进度与结果写入 ``importJob`` 全局状态**，弹窗关闭后任务继续运行，
+   *   用户可从 header 进度入口随时重开弹窗查看。返回结果汇总。
    */
   importConversations: (
     platform: ImportPlatform,
     conversations: ImportedConversation[],
-    onProgress?: (done: number, total: number) => void,
   ) => Promise<ImportConversationsResult>
+
+  /** 清除已完成的导入任务记录（运行中不可清除，避免丢失进度）。 */
+  clearImportJob: () => void
 
   // ===== 流式输出动作 =====
   /** 设置 WebSocket session_id（App.tsx 启动时调用）。 */
@@ -982,6 +1005,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // 批量导入对话标记：为 true 时抑制 WS 广播的逐条 Toast
   batchImporting: false,
+  // 后台导入任务状态：null=无任务
+  importJob: null,
 
   // ===== 流式输出状态 =====
   streamingSessionId: null,
@@ -2382,13 +2407,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  importConversations: async (platform, conversations, onProgress) => {
+  importConversations: async (platform, conversations) => {
     const total = conversations.length
     if (total === 0) {
       return { total: 0, imported: 0, deduplicated: 0, failed: 0, errors: [] }
     }
-    set({ batchImporting: true })
-    let done = 0
+    // 初始化后台任务状态：弹窗即使立即关闭，store 仍持有进度供 header 查看
+    set({
+      batchImporting: true,
+      importJob: { status: 'running', platform, done: 0, total, result: null },
+    })
     let imported = 0
     let deduplicated = 0
     let failed = 0
@@ -2416,14 +2444,27 @@ export const useAppStore = create<AppState>((set, get) => ({
         failed += 1
         if (errors.length < 5) errors.push(errMsg(e))
       } finally {
-        done += 1
-        onProgress?.(done, total)
+        // 实时更新全局进度（弹窗关闭后 header 仍可读取）
+        const job = get().importJob
+        if (job && job.status === 'running') {
+          set({ importJob: { ...job, done: job.done + 1 } })
+        }
       }
     }
 
     await runWithConcurrency(conversations, IMPORT_CONCURRENCY, runOne)
 
-    set({ batchImporting: false })
+    const result: ImportConversationsResult = {
+      total,
+      imported,
+      deduplicated,
+      failed,
+      errors,
+    }
+    set({
+      batchImporting: false,
+      importJob: { status: 'done', platform, done: total, total, result },
+    })
     // 统一收尾：刷新最近推送列表 + 待抽取列表（一次性，而非逐条刷新）
     void get().loadPluginRecent()
     if (get().activeNav === 'graph' && get().mode === 'study') {
@@ -2434,7 +2475,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (deduplicated > 0) parts.push(`${deduplicated} 条已存在跳过`)
     if (failed > 0) parts.push(`${failed} 条失败`)
     get().pushToast(parts.join('，'), failed > 0 ? 'warning' : 'success')
-    return { total, imported, deduplicated, failed, errors }
+    return result
+  },
+
+  clearImportJob: () => {
+    // 运行中不可清除，避免丢失正在写入的进度
+    if (get().importJob?.status === 'running') return
+    set({ importJob: null })
   },
 
   // ===== 流式输出动作 =====

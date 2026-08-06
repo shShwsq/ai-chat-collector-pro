@@ -10769,6 +10769,45 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
   transform: translateY(1px);
 }
 
+/* header 后台导入进度入口：运行中常驻，点击重开弹窗查看进度 */
+.app-header__import-progress {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent, #2c7be5);
+  background: rgba(44, 123, 229, 0.1);
+  border: 1px solid rgba(44, 123, 229, 0.3);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  font-family: inherit;
+}
+
+.app-header__import-progress:hover {
+  background: rgba(44, 123, 229, 0.18);
+}
+
+/* 旋转加载指示器 */
+.app-header__import-progress-spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(44, 123, 229, 0.25);
+  border-top-color: var(--accent, #2c7be5);
+  border-radius: 50%;
+  animation: import-progress-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes import-progress-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* 弹窗遮罩 */
 .import-modal {
   position: fixed;

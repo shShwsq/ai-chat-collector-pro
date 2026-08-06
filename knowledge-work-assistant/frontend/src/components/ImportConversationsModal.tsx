@@ -1,26 +1,26 @@
 /**
  * 手动导入对话弹窗。
  *
- * 流程（四阶段状态机）：
+ * 流程（三阶段状态机，导入阶段由 store 的 ``importJob`` 驱动）：
  *   drop       拖拽 / 点击上传平台导出的 JSON 文件
  *      ↓ detectAndParse 自动识别来源与格式
  *   preview    展示会话数 / 时间范围 / 消息数，列表勾选要导入的会话
- *      ↓ 调用 store.importConversations（复用插件推送接口落库为 Observation）
- *   importing  进度条（done/total）
- *      ↓
- *   done       汇总结果（已导入 / 去重跳过 / 失败）
+ *      ↓ 「导入选中」停留观看 / 「后台导入」立即隐藏面板
+ *   job        读取 store.importJob：running 显示进度条 / done 显示汇总结果
  *
  * 设计要点：
  * 1. **格式自适应**：调用 ``detectAndParse`` 自动识别平台，目前仅支持 DeepSeek，
  *    无法识别时在 drop 阶段内联提示，不切阶段。
- * 2. **选择保留**：勾选以会话 id 记录，过滤搜索不丢失已选；提供全选 / 反选。
- * 3. **导入期间不可关闭**：importing 阶段禁用 backdrop / ESC / 关闭按钮，避免半途中断。
- * 4. **结果可追溯**：done 阶段展示失败错误（最多 5 条），便于排查。
+ * 2. **选择保留**：勾选以会话 id 记录，过滤搜索不丢失已选；提供全选 / 清空。
+ * 3. **后台导入**：进度与结果上提到全局 ``importJob``，弹窗关闭后任务继续运行，
+ *    可从 header 进度入口随时重开查看。关闭始终安全（不会中断运行中的任务）。
+ * 4. **结果可追溯**：job.done 展示失败错误（最多 5 条），便于排查；
+ *    关闭已完成结果会清除任务记录，下次打开回到 drop。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { useAppStore, type ImportConversationsResult } from '../store/useAppStore'
+import { useAppStore } from '../store/useAppStore'
 import { formatDateTime } from '../lib/date'
 import {
   detectAndParse,
@@ -28,7 +28,7 @@ import {
   type ImportPreview,
 } from '../lib/importers'
 
-type Stage = 'drop' | 'preview' | 'importing' | 'done'
+type Stage = 'drop' | 'preview' | 'job'
 
 interface ImportConversationsModalProps {
   onClose: () => void
@@ -36,14 +36,16 @@ interface ImportConversationsModalProps {
 
 export function ImportConversationsModal({ onClose }: ImportConversationsModalProps) {
   const importConversations = useAppStore((s) => s.importConversations)
-  const [stage, setStage] = useState<Stage>('drop')
+  const clearImportJob = useAppStore((s) => s.clearImportJob)
+  const importJob = useAppStore((s) => s.importJob)
+
+  // 若打开时已有进行中 / 已完成的任务，直接进入 job 视图（支持重开查看进度）
+  const [stage, setStage] = useState<Stage>(() => (importJob ? 'job' : 'drop'))
   const [preview, setPreview] = useState<ImportPreview | null>(null)
   const [error, setError] = useState<string>('')
   const [isDragging, setIsDragging] = useState(false)
   const [filter, setFilter] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [progress, setProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 })
-  const [result, setResult] = useState<ImportConversationsResult | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -58,6 +60,9 @@ export function ImportConversationsModal({ onClose }: ImportConversationsModalPr
     if (!q) return conversations
     return conversations.filter((c) => c.title.toLowerCase().includes(q))
   }, [conversations, filter])
+
+  // 已有任务运行中时禁用新的导入（避免并发覆盖 importJob）
+  const jobRunning = importJob?.status === 'running'
 
   // ===== 文件读取与解析 =====
   const handleFile = useCallback(async (file: File) => {
@@ -139,55 +144,46 @@ export function ImportConversationsModal({ onClose }: ImportConversationsModalPr
     filtered.length > 0 && filtered.every((c) => selectedIds.has(c.id))
 
   // ===== 执行导入 =====
-  const handleImport = useCallback(async () => {
-    if (!preview) return
-    const selected = conversations.filter((c) => selectedIds.has(c.id))
-    if (selected.length === 0) return
-    setStage('importing')
-    setProgress({ done: 0, total: selected.length })
-    try {
-      const res = await importConversations(
-        preview.platform,
-        selected,
-        (done, total) => setProgress({ done, total }),
-      )
-      setResult(res)
-      setStage('done')
-    } catch (e) {
-      // importConversations 内部已捕获逐条错误，此处兜底
-      setResult({
-        total: selected.length,
-        imported: 0,
-        deduplicated: 0,
-        failed: selected.length,
-        errors: [(e as Error).message],
-      })
-      setStage('done')
-    }
-  }, [preview, conversations, selectedIds, importConversations])
+  // background=true：启动后立即关闭弹窗，任务在后台运行（header 可查看进度）
+  // background=false：启动后停留在 job 视图观看进度
+  const handleImport = useCallback(
+    (background: boolean) => {
+      if (!preview || jobRunning) return
+      const selected = conversations.filter((c) => selectedIds.has(c.id))
+      if (selected.length === 0) return
+      // store.importConversations 同步写入 importJob(running)，弹窗即使立即
+      // 卸载，promise 仍在 store 闭包中跑完
+      void importConversations(preview.platform, selected)
+      setStage('job')
+      if (background) onClose()
+    },
+    [preview, conversations, selectedIds, importConversations, jobRunning, onClose],
+  )
 
-  // ===== 重新选择文件 =====
+  // ===== 回到 drop（清除已完成任务记录 + 重置本地选择状态）=====
   const resetToDrop = useCallback(() => {
+    clearImportJob()
     setStage('drop')
     setPreview(null)
     setError('')
     setFilter('')
     setSelectedIds(new Set())
-    setProgress({ done: 0, total: 0 })
-    setResult(null)
-  }, [])
+  }, [clearImportJob])
 
-  // ===== ESC 关闭（导入期间禁用）=====
+  // ===== 关闭：已完成则清除任务记录，运行中则仅关闭（任务继续）=====
+  const handleClose = useCallback(() => {
+    if (importJob?.status === 'done') clearImportJob()
+    onClose()
+  }, [importJob, clearImportJob, onClose])
+
+  // ===== ESC 关闭（始终安全：运行中关闭不中断任务）=====
   useEffect(() => {
-    if (stage === 'importing') return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') handleClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [stage, onClose])
-
-  const busy = stage === 'importing'
+  }, [handleClose])
 
   return (
     <div
@@ -195,7 +191,7 @@ export function ImportConversationsModal({ onClose }: ImportConversationsModalPr
       role="dialog"
       aria-modal="true"
       aria-label="导入对话"
-      onClick={() => !busy && onClose()}
+      onClick={handleClose}
     >
       <div
         className="import-modal__box"
@@ -204,16 +200,14 @@ export function ImportConversationsModal({ onClose }: ImportConversationsModalPr
         {/* 头部 */}
         <div className="import-modal__header">
           <h3 className="import-modal__title">导入对话</h3>
-          {!busy && (
-            <button
-              type="button"
-              className="import-modal__close"
-              onClick={onClose}
-              aria-label="关闭"
-            >
-              ×
-            </button>
-          )}
+          <button
+            type="button"
+            className="import-modal__close"
+            onClick={handleClose}
+            aria-label="关闭"
+          >
+            ×
+          </button>
         </div>
 
         {/* 内容区 */}
@@ -260,8 +254,14 @@ export function ImportConversationsModal({ onClose }: ImportConversationsModalPr
             <div className="import-modal__error">{error}</div>
           )}
 
-          {(stage === 'preview' || stage === 'importing') && preview && (
+          {stage === 'preview' && preview && (
             <>
+              {jobRunning && (
+                <div className="import-modal__error">
+                  已有导入任务在后台运行，请先等待完成（可在弹窗中查看进度）。
+                </div>
+              )}
+
               {/* 统计概览 */}
               <div className="import-stats">
                 <span className="import-stats__chip">
@@ -297,7 +297,7 @@ export function ImportConversationsModal({ onClose }: ImportConversationsModalPr
                   placeholder="搜索会话标题…"
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
-                  disabled={busy}
+                  disabled={jobRunning}
                 />
                 <div className="import-toolbar__select">
                   <label className="import-toolbar__check">
@@ -305,7 +305,7 @@ export function ImportConversationsModal({ onClose }: ImportConversationsModalPr
                       type="checkbox"
                       checked={filteredAllSelected}
                       onChange={(e) => selectAllFiltered(e.target.checked)}
-                      disabled={busy}
+                      disabled={jobRunning}
                     />
                     选中本页全部
                   </label>
@@ -313,7 +313,7 @@ export function ImportConversationsModal({ onClose }: ImportConversationsModalPr
                     type="button"
                     className="import-toolbar__btn"
                     onClick={selectAll}
-                    disabled={busy}
+                    disabled={jobRunning}
                   >
                     全选
                   </button>
@@ -321,7 +321,7 @@ export function ImportConversationsModal({ onClose }: ImportConversationsModalPr
                     type="button"
                     className="import-toolbar__btn"
                     onClick={deselectAll}
-                    disabled={busy}
+                    disabled={jobRunning}
                   >
                     清空
                   </button>
@@ -348,7 +348,7 @@ export function ImportConversationsModal({ onClose }: ImportConversationsModalPr
                           type="checkbox"
                           checked={checked}
                           onChange={() => toggleSelect(c.id)}
-                          disabled={busy}
+                          disabled={jobRunning}
                         />
                         <span className="import-list__title" title={c.title}>
                           {c.title || '(无标题)'}
@@ -372,58 +372,67 @@ export function ImportConversationsModal({ onClose }: ImportConversationsModalPr
             </>
           )}
 
-          {stage === 'importing' && (
-            <div className="import-progress">
-              <div className="import-progress__text">
-                正在导入 {progress.done} / {progress.total} …
-              </div>
-              <div className="import-progress__bar">
-                <div
-                  className="import-progress__fill"
-                  style={{
-                    width: `${
-                      progress.total > 0
-                        ? (progress.done / progress.total) * 100
-                        : 0
-                    }%`,
-                  }}
-                />
-              </div>
-              <div className="import-progress__hint">
-                导入的对话会进入「待抽取」列表，可在图谱视图抽取知识点入图
-              </div>
-            </div>
-          )}
-
-          {stage === 'done' && result && (
-            <div className="import-result">
-              <div className="import-result__summary">
-                <div className="import-result__item import-result__item--ok">
-                  <span className="import-result__num">{result.imported}</span>
-                  <span className="import-result__label">已导入</span>
-                </div>
-                <div className="import-result__item">
-                  <span className="import-result__num">
-                    {result.deduplicated}
-                  </span>
-                  <span className="import-result__label">已存在跳过</span>
-                </div>
-                <div className="import-result__item import-result__item--fail">
-                  <span className="import-result__num">{result.failed}</span>
-                  <span className="import-result__label">失败</span>
-                </div>
-              </div>
-              {result.errors.length > 0 && (
-                <div className="import-result__errors">
-                  <div className="import-result__errors-title">失败原因：</div>
-                  <ul>
-                    {result.errors.map((msg, i) => (
-                      <li key={i}>{msg}</li>
-                    ))}
-                  </ul>
+          {stage === 'job' && importJob && (
+            <>
+              {importJob.status === 'running' && (
+                <div className="import-progress">
+                  <div className="import-progress__text">
+                    正在导入 {importJob.done} / {importJob.total} …
+                  </div>
+                  <div className="import-progress__bar">
+                    <div
+                      className="import-progress__fill"
+                      style={{
+                        width: `${
+                          importJob.total > 0
+                            ? (importJob.done / importJob.total) * 100
+                            : 0
+                        }%`,
+                      }}
+                    />
+                  </div>
+                  <div className="import-progress__hint">
+                    导入的对话会进入「待抽取」列表，可在图谱视图抽取知识点入图。
+                    可关闭此面板，任务将在后台继续运行。
+                  </div>
                 </div>
               )}
-            </div>
+
+              {importJob.status === 'done' && importJob.result && (
+                <div className="import-result">
+                  <div className="import-result__summary">
+                    <div className="import-result__item import-result__item--ok">
+                      <span className="import-result__num">
+                        {importJob.result.imported}
+                      </span>
+                      <span className="import-result__label">已导入</span>
+                    </div>
+                    <div className="import-result__item">
+                      <span className="import-result__num">
+                        {importJob.result.deduplicated}
+                      </span>
+                      <span className="import-result__label">已存在跳过</span>
+                    </div>
+                    <div className="import-result__item import-result__item--fail">
+                      <span className="import-result__num">
+                        {importJob.result.failed}
+                      </span>
+                      <span className="import-result__label">失败</span>
+                    </div>
+                  </div>
+                  {importJob.result.errors.length > 0 && (
+                    <div className="import-result__errors">
+                      <div className="import-result__errors-title">失败原因：</div>
+                      <ul>
+                        {importJob.result.errors.map((msg, i) => (
+                          <li key={i}>{msg}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -433,7 +442,7 @@ export function ImportConversationsModal({ onClose }: ImportConversationsModalPr
             <button
               type="button"
               className="settings-section__ghost-btn"
-              onClick={onClose}
+              onClick={handleClose}
             >
               取消
             </button>
@@ -444,29 +453,40 @@ export function ImportConversationsModal({ onClose }: ImportConversationsModalPr
                 type="button"
                 className="settings-section__ghost-btn"
                 onClick={resetToDrop}
+                disabled={jobRunning}
               >
                 重新选择文件
               </button>
               <button
                 type="button"
+                className="settings-section__ghost-btn"
+                onClick={() => handleImport(true)}
+                disabled={selectedIds.size === 0 || jobRunning}
+                title="开始导入并隐藏面板，可在 header 查看进度"
+              >
+                后台导入
+              </button>
+              <button
+                type="button"
                 className="import-modal__primary"
-                onClick={handleImport}
-                disabled={selectedIds.size === 0}
+                onClick={() => handleImport(false)}
+                disabled={selectedIds.size === 0 || jobRunning}
               >
                 导入选中 {selectedIds.size} 条
               </button>
             </>
           )}
-          {stage === 'importing' && (
+          {stage === 'job' && importJob?.status === 'running' && (
             <button
               type="button"
               className="settings-section__ghost-btn"
-              disabled
+              onClick={handleClose}
+              title="隐藏面板，任务在后台继续运行"
             >
-              导入中…
+              后台运行
             </button>
           )}
-          {stage === 'done' && (
+          {stage === 'job' && importJob?.status === 'done' && (
             <>
               <button
                 type="button"
@@ -478,7 +498,7 @@ export function ImportConversationsModal({ onClose }: ImportConversationsModalPr
               <button
                 type="button"
                 className="import-modal__primary"
-                onClick={onClose}
+                onClick={handleClose}
               >
                 完成
               </button>
