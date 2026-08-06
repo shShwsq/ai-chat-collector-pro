@@ -3,7 +3,7 @@
 // 注册 marked 自定义 renderer：引用编号链接（文本仅为数字）渲染为圆圈上标
 // 仅影响 viewer 内的渲染，存储格式仍为 [N](url)
 // 各平台 DOM 提取的引用编号经 turndown 转为 [N](url)，marked 默认渲染为普通蓝色链接，
-// 辨识度低；加圆圈包裹与原平台（DeepSeek .ds-markdown-cite / 复旦 a.citation-link.circle）视觉一致
+// 辨识度低；加圆圈包裹与原平台（DeepSeek .ds-markdown-cite）视觉一致
 if (typeof marked !== 'undefined') {
   marked.use({
     renderer: {

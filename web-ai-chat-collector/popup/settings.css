@@ -633,50 +633,6 @@ header h1 {
   margin-bottom: 0;
 }
 
-.mode-options {
-  display: flex;
-  gap: 12px;
-  font-size: 12px;
-}
-.mode-options label {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  cursor: pointer;
-  user-select: none;
-  font-weight: 400;
-  margin-bottom: 0;
-  color: var(--text-secondary);
-}
-.mode-options input[type="radio"] {
-  width: auto;
-  margin: 0;
-  cursor: pointer;
-  accent-color: var(--accent);
-}
-.mode-options input[type="radio"]:disabled {
-  cursor: not-allowed;
-}
-.mode-options label:has(input[type="radio"]:disabled) {
-  color: var(--text-tertiary);
-  cursor: not-allowed;
-}
-.mode-options .mode-disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-.mode-options .mode-disabled input {
-  cursor: not-allowed;
-}
-.mode-options .mode-fixed {
-  font-size: 12px;
-  color: var(--text-secondary);
-  padding: 2px 8px;
-  background: var(--hover);
-  border-radius: var(--radius-sm);
-  cursor: help;
-}
-
 /* ===== 按钮 ===== */
 .actions {
   display: flex;
