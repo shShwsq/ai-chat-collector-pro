@@ -480,18 +480,27 @@ _DEFAULT_TOOL_DEFS: list[tuple[str, dict[str, Any], list[str]]] = [
         "command_exec",
         _build_schema(
             "command_exec",
-            "在本地执行 shell 命令。仅 build 模式可用。"
-            "执行有风险，请确认命令安全性后再调用。"
-            "Windows 默认用 PowerShell 执行；超时默认 30 秒；"
-            r"危险命令（rm -rf /、format、del /f /s /q C:\* 等）会被黑名单拒绝。",
+            "在本地执行受限白名单命令。仅 build 模式可用。"
+            "安全约束：① 可执行文件名必须在白名单内"
+            "（ls/dir/cat/type/git/node/npm/pnpm/python/pip/uv/ruff/code/"
+            "mkdir/rmdir/cp/mv/grep/findstr/echo 等）；"
+            "② 不允许 shell 元字符（; | & ` $ ( ) < > \\ 与换行），"
+            "即不可使用管道、重定向、命令串联、变量替换；"
+            "③ 用参数数组直接执行，不经 shell 解释器；"
+            "④ cwd 不得为系统敏感目录（C:\\Windows、/、/etc 等）。"
+            "超时默认 30 秒。",
             {
                 "command": {
                     "type": "string",
-                    "description": "要执行的命令（含参数）",
+                    "description": (
+                        "要执行的命令（含参数，空格分隔）。"
+                        "例如 'git status'、'ls -la'、'python -V'。"
+                        "禁止管道/重定向/串联，违反将被拒绝。"
+                    ),
                 },
                 "cwd": {
                     "type": "string",
-                    "description": "工作目录（可选）",
+                    "description": "工作目录（可选，不得为系统敏感目录）",
                 },
                 "timeout": {
                     "type": "integer",

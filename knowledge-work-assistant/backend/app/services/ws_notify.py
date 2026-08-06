@@ -49,22 +49,22 @@ _lock = asyncio.Lock()
 async def register(session_id: str, ws: WebSocket) -> None:
     """注册一个 WebSocket 连接到指定会话。
 
+    **多连接支持**：同一 session_id 可有多个并发连接（多端登录 / 多标签页
+    场景）。新连接 **加入** 连接集合，不主动关闭已有连接——旧实现会 close
+    旧连接，构成 DoS 风险（攻击者用相同 session_id 连接即可踢掉合法用户）。
+
+    重复注册同一 ``ws`` 对象是幂等的（set 语义）。
+
     Args:
         session_id: 会话 ID。
         ws: 已 ``accept`` 的 WebSocket 连接。
     """
     async with _lock:
-        stale = list(_connections.get(session_id, ()))
-        _connections[session_id] = {ws}
-
-    # 单进程本地 Demo 中同一 session 只保留最新连接，避免重连后重复投递。
-    for old_ws in stale:
-        if old_ws is ws:
-            continue
-        try:
-            await old_ws.close(code=1000, reason="同一会话已建立新连接")
-        except Exception:  # noqa: BLE001
-            logger.debug("关闭被替换的 WS 连接失败 session=%s", session_id)
+        conns = _connections.get(session_id)
+        if conns is None:
+            _connections[session_id] = {ws}
+        else:
+            conns.add(ws)
 
 
 async def unregister(session_id: str, ws: WebSocket) -> None:

@@ -130,12 +130,20 @@ class TestPluginWsBroadcast:
         - payload 中 timestamp 与请求体 timestamp 解析后一致
         """
         # 1. 建立 WS 连接（用 ASGIWebSocketTransport，禁用 keepalive ping）
+        #    先获取 WS 鉴权 token（/ws 端点要求 ?token=xxx）
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as auth_client:
+            token_resp = await auth_client.get("/api/auth/ws-token")
+        assert token_resp.status_code == 200, token_resp.text
+        ws_token = token_resp.json()["token"]
+
         ws_transport = ASGIWebSocketTransport(app=app)
         async with AsyncClient(
             transport=ws_transport, base_url="http://test"
         ) as ws_client:
             async with aconnect_ws(
-                "ws://test/ws",
+                f"ws://test/ws?token={ws_token}",
                 ws_client,
                 keepalive_ping_interval_seconds=None,
                 keepalive_ping_timeout_seconds=None,
@@ -215,12 +223,20 @@ class TestPluginWsBroadcast:
         )
 
         # 2. 建立 WS 连接
+        #    先获取 WS 鉴权 token（/ws 端点要求 ?token=xxx）
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as auth_client:
+            token_resp = await auth_client.get("/api/auth/ws-token")
+        assert token_resp.status_code == 200, token_resp.text
+        ws_token = token_resp.json()["token"]
+
         ws_transport = ASGIWebSocketTransport(app=app)
         async with AsyncClient(
             transport=ws_transport, base_url="http://test"
         ) as ws_client:
             async with aconnect_ws(
-                "ws://test/ws",
+                f"ws://test/ws?token={ws_token}",
                 ws_client,
                 keepalive_ping_interval_seconds=None,
                 keepalive_ping_timeout_seconds=None,

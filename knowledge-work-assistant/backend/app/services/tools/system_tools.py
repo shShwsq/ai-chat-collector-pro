@@ -14,9 +14,16 @@ r"""系统交互工具（Task 3.3 适配移植）。
 
 - 阻塞调用（subprocess、PIL.ImageGrab）一律包裹在 ``asyncio.to_thread`` 或
   ``asyncio.create_subprocess_*`` 中，避免阻塞事件循环。
-- Windows 为主平台：命令执行用 PowerShell，剪贴板/通知用 PowerShell。
-- 安全：``command_exec`` 黑名单（``rm -rf /``、``format``、``del /f /s /q C:\*``
-  等）命中即拒绝；``open_url`` 校验 http/https 协议。
+- Windows 为主平台：剪贴板 / 通知用 PowerShell；命令执行用 ``subprocess``
+  argv 模式直接调用可执行文件（不再经 PowerShell 解释器）。
+- 安全：``command_exec`` 采用 **白名单 + argv 参数化执行** 模型——
+  ① 可执行文件名必须在 :data:`_ALLOWED_COMMANDS` 白名单内；
+  ② 命令字符串中不得出现 shell 元字符（``;`` / ``|`` / ``&`` / `` ` `` /
+  ``$`` / ``()`` / ``<>`` / 换行），防止命令串联与替换；
+  ③ 用 ``subprocess.run([cmd, *args])`` 直接执行，**完全绕过 shell 解释器**
+  （不再 ``powershell -Command <字符串>``）；
+  ④ 工作目录不得为系统敏感目录（``C:\Windows`` / ``/`` / ``/etc`` 等）。
+  ``open_url`` 校验 http/https 协议。
 - ``require_confirmation``：本任务实现"自动确认"——返回
   ``confirmation_required=True`` 但直接执行；真正的用户确认弹窗由前端在收到
   ``tool_call`` 事件时实现（Task 18 联调）。
@@ -30,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shlex
 import subprocess
 import sys
 import time
@@ -48,26 +56,72 @@ _SCREENSHOTS_DIR_NAME = "screenshots"
 # 默认命令执行超时（秒）
 _DEFAULT_TIMEOUT = 30
 
-# 危险命令黑名单（小写子串匹配，命中任一即拒绝执行）
-# 覆盖 Windows 与 POSIX 两类破坏性命令
-_COMMAND_BLACKLIST: tuple[str, ...] = (
-    # POSIX 自毁 / 格盘
-    "rm -rf /",
-    "rm -rf /*",
-    "mkfs",
-    "dd if=/dev/zero",
-    "dd if=/dev/null",
-    ":(){:|:&};:",  # fork bomb
-    # Windows 自毁 / 格盘 / 关机
-    "format c:",
-    "format c /",
-    "del /f /s /q c:\\",
-    "del /f /s /q c:/",
-    "del /f /s /q c:\\*",
-    "rd /s /q c:\\",
-    "rmdir /s /q c:\\",
-    "shutdown",
-    "diskpart",
+# 允许执行的可执行文件名白名单（小写匹配，不含路径）。
+# 选取原则：① 仅常用开发/查看类命令；② 不含格式化、关机、注册表、计划任务等
+# 系统破坏类工具；③ 不含 ``del`` / ``rm`` / ``format`` / ``shutdown`` / ``reg`` /
+# ``diskpart`` / ``schtasks`` / ``cmd`` / ``powershell`` / ``wsl`` 等可被绕过或
+# 危险的解释器与系统工具。
+# 跨平台：Windows 与 POSIX 命令名都收录（``dir``/``ls``、``type``/``cat`` 等）。
+_ALLOWED_COMMANDS: frozenset[str] = frozenset({
+    # 目录/文件查看
+    "ls", "dir", "tree", "pwd",
+    "cat", "type", "head", "tail", "wc", "stat", "file",
+    "find", "where", "which",
+    # 文本搜索
+    "grep", "findstr", "rg",
+    # 开发工具
+    "git", "node", "npm", "npx", "pnpm", "yarn", "pnpx",
+    "python", "python3", "py", "pip", "uv", "ruff", "mypy",
+    "code", "code-insiders",
+    # 目录操作（非递归删除由参数控制；如 ``rmdir`` 默认不递归）
+    "mkdir", "md", "rmdir", "rd", "touch",
+    # 文件复制/移动（非删除）
+    "cp", "copy", "mv", "move",
+    # 系统信息（只读）
+    "whoami", "hostname", "date", "time", "echo",
+})
+
+# 禁止出现的 shell 元字符（命令串联、管道、替换、重定向、子 shell）。
+# 一旦命中即拒绝执行，防止 ``git status; rm -rf /`` 这类串联注入。
+# 注意：换行符（\n / \r）也属此列，防止多行命令。
+#
+# **平台差异**：反斜杠 ``\`` 在 POSIX 上是 shell 转义符（元字符），但在
+# Windows 上是路径分隔符（``C:\Users\foo``）。因此 Windows 上 **不含**
+# 反斜杠，否则几乎所有含路径的命令都会被误拒。
+_SHELL_METACHARS: frozenset[str] = frozenset(
+    ";|&`$()<>\n\r"
+) | (frozenset("\\") if sys.platform != "win32" else frozenset())
+
+# 工作目录黑名单（系统敏感目录，resolve 后前缀匹配）。
+# 跨平台覆盖 Windows 与 POSIX。
+#
+# 分两类：
+# 1. ``_FORBIDDEN_CWD_ROOTS``：根目录（仅精确匹配，不禁止其下子目录）。
+#    如 ``C:\`` 和 ``/``——禁止 cwd 恰好是根目录，但 ``C:\Users\foo`` 不受影响。
+# 2. ``_FORBIDDEN_CWD_DIRS``：系统敏感目录（前缀匹配，禁止 cwd 在其下）。
+#    如 ``C:\Windows``、``/etc``——禁止 cwd 在这些目录及其子目录下。
+_FORBIDDEN_CWD_ROOTS: frozenset[str] = frozenset({
+    "c:\\",
+    "/",
+})
+
+_FORBIDDEN_CWD_DIRS: tuple[str, ...] = (
+    # Windows
+    "c:\\windows",
+    "c:\\program files",
+    "c:\\program files (x86)",
+    "c:\\programdata",
+    # POSIX
+    "/etc",
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/boot",
+    "/sys",
+    "/proc",
+    "/dev",
+    "/root",
+    "/var",
 )
 
 
@@ -75,12 +129,48 @@ _COMMAND_BLACKLIST: tuple[str, ...] = (
 # 内部工具函数
 # ======================================================================
 
-def _is_dangerous_command(command: str) -> bool:
-    """检查命令是否命中黑名单（小写子串匹配）。"""
-    if not command:
-        return False
-    s = command.strip().lower()
-    return any(pattern in s for pattern in _COMMAND_BLACKLIST)
+def _has_shell_metachar(s: str) -> bool:
+    """检查字符串是否包含任一 shell 元字符。"""
+    return any(ch in _SHELL_METACHARS for ch in s)
+
+
+def _is_forbidden_cwd(path: Path) -> bool:
+    """检查工作目录是否落在系统敏感目录下。
+
+    - 根目录（``C:\\`` / ``/``）：仅精确匹配，不禁止其下子目录。
+    - 系统敏感目录（``C:\\Windows`` / ``/etc`` 等）：前缀匹配，禁止 cwd
+      恰好是或位于这些目录下。
+    """
+    try:
+        resolved = str(path.resolve()).lower()
+    except (OSError, RuntimeError):
+        return True
+
+    # ① 根目录：仅精确匹配
+    if resolved in _FORBIDDEN_CWD_ROOTS:
+        return True
+
+    # ② 系统敏感目录：前缀匹配（目录本身或其下子目录）
+    sep = "\\" if sys.platform == "win32" else "/"
+    for prefix in _FORBIDDEN_CWD_DIRS:
+        if resolved == prefix or resolved.startswith(prefix + sep):
+            return True
+    return False
+
+
+def _parse_command_argv(command: str) -> list[str]:
+    """把命令字符串解析为 argv 列表。
+
+    - Windows 上用 ``shlex(posix=False)`` 保留反斜杠（``C:\\foo`` 不被转义）；
+    - POSIX 上用默认 ``shlex``（处理引号与转义）。
+
+    返回空列表表示解析失败（如引号不闭合）。
+    """
+    try:
+        posix_mode = sys.platform != "win32"
+        return shlex.split(command, posix=posix_mode)
+    except ValueError:
+        return []
 
 
 async def _run_subprocess(
@@ -131,17 +221,20 @@ def _strip_bom(data: bytes) -> bytes:
 # ======================================================================
 
 async def command_exec(args: dict[str, Any]) -> dict[str, Any]:
-    """执行 shell 命令（仅 Build 模式；模式过滤由 ToolRegistry 保证）。
+    """执行受限白名单命令（仅 Build 模式；模式过滤由 ToolRegistry 保证）。
 
     Args（来自 schema）:
-        command: 要执行的命令（含参数）。
-        cwd: 工作目录（可选）。
+        command: 要执行的命令（含参数）。**不允许** shell 元字符
+            （``;`` / ``|`` / ``&`` / `` ` `` / ``$`` / ``()`` / ``<>`` /
+            换行），可执行文件名必须在白名单内。
+        cwd: 工作目录（可选，不得为系统敏感目录）。
         timeout: 超时秒数（可选，默认 30）。
         require_confirmation: 是否需要用户确认（默认 True）。本任务实现
             "自动确认"——直接执行并在结果中标记 ``confirmation_required``；
             真正的确认 UI 由前端在收到 ``tool_call`` 事件时实现。
 
-    安全：黑名单命中即拒绝；超时则杀进程。
+    安全：① 白名单匹配可执行文件名；② 拒绝 shell 元字符；③ ``subprocess``
+    argv 模式执行，不经 shell 解释器；④ cwd 不得为系统敏感目录；⑤ 超时杀进程。
 
     Returns:
         成功：``{"command", "exit_code", "stdout", "stderr", "duration_ms",
@@ -155,38 +248,60 @@ async def command_exec(args: dict[str, Any]) -> dict[str, Any]:
     if not command:
         return {"error": "command is required"}
 
-    if _is_dangerous_command(command):
-        return {"error": f"command is blacklisted (dangerous): {command}"}
+    # ① 拒绝 shell 元字符（命令串联 / 管道 / 替换 / 重定向 / 子 shell / 换行）
+    if _has_shell_metachar(command):
+        return {
+            "error": (
+                "command contains forbidden shell metacharacters "
+                "(; | & ` $ ( ) < > newline); "
+                "use a single command without piping/redirection"
+            ),
+            "command": command,
+        }
 
+    # ② 解析为 argv，绕过 shell 解释器
+    argv = _parse_command_argv(command)
+    if not argv:
+        return {
+            "error": "command failed to parse (check quotes/escaping)",
+            "command": command,
+        }
+
+    # ③ 白名单匹配可执行文件名（不含路径，小写）
+    executable = Path(argv[0]).name.lower()
+    if executable not in _ALLOWED_COMMANDS:
+        return {
+            "error": (
+                f"executable not in whitelist: {argv[0]!r} "
+                f"(allowed: {sorted(_ALLOWED_COMMANDS)})"
+            ),
+            "command": command,
+        }
+
+    # ④ 校验工作目录
     cwd_path: str | None = None
     if cwd:
         cwd_p = Path(str(cwd))
         if not cwd_p.exists():
-            return {"error": f"cwd not found: {cwd}"}
+            return {"error": f"cwd not found: {cwd}", "command": command}
+        if _is_forbidden_cwd(cwd_p):
+            return {
+                "error": f"cwd is a forbidden system directory: {cwd}",
+                "command": command,
+            }
         cwd_path = str(cwd_p.resolve())
 
+    # ⑤ 用 argv 直接执行，shell=False（默认）
     start = time.perf_counter()
 
     def _run_sync() -> tuple[int, bytes, bytes]:
         """在线程中同步执行命令，返回 (exit_code, stdout, stderr)。"""
-        if sys.platform == "win32":
-            cmd_list = [
-                "powershell", "-NoProfile", "-NonInteractive", "-Command", command
-            ]
-            r = subprocess.run(
-                cmd_list,
-                capture_output=True,
-                cwd=cwd_path,
-                timeout=timeout,
-            )
-        else:
-            r = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                cwd=cwd_path,
-                timeout=timeout,
-            )
+        r = subprocess.run(
+            argv,
+            capture_output=True,
+            cwd=cwd_path,
+            timeout=timeout,
+        )
         return r.returncode, r.stdout, r.stderr
 
     try:
@@ -202,9 +317,21 @@ async def command_exec(args: dict[str, Any]) -> dict[str, Any]:
             "timeout": True,
             "confirmation_required": require_confirmation,
         }
+    except FileNotFoundError:
+        # Windows 上 dir/type/echo/copy 等是 cmd.exe 内建命令,无独立 .exe,
+        # argv 模式(shell=False)下无法执行。给出友好提示而非原始 WinError 2。
+        return {
+            "error": (
+                f"executable not found: {argv[0]!r} "
+                "(on Windows, dir/type/echo/copy/move etc. are cmd.exe "
+                "builtins and cannot be used in this mode; use their "
+                "cross-platform equivalents like git/python/node instead)"
+            ),
+            "command": command,
+        }
     except OSError as exc:
         logger.warning("command_exec 启动失败 %s: %s", command, exc)
-        return {"error": f"failed to start: {exc}"}
+        return {"error": f"failed to start: {exc}", "command": command}
 
     duration_ms = int((time.perf_counter() - start) * 1000)
     stdout = _strip_bom_safe(stdout_bytes).decode("utf-8", errors="replace")
