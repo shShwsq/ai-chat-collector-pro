@@ -27,6 +27,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useAppStore } from '../store/useAppStore'
 import { useAutoGrowTextarea } from '../hooks/useAutoGrowTextarea'
 import { formatShortTime } from '../lib/date'
+import { renderMarkdown } from '../lib/markdown'
 import type {
   ChatMessage,
   ChatSearchHit,
@@ -866,14 +867,14 @@ function ChatMessageItem({ message, streaming }: ChatMessageItemProps) {
           </span>
         ) : (
           message.content && (
-            <p className="chat-msg__text">
-              {message.content}
-              {streaming && message.content && (
-                <span className="chat-streaming-cursor" aria-hidden="true">
-                  ▋
-                </span>
-              )}
-            </p>
+            <div
+              className="chat-msg__text"
+              dangerouslySetInnerHTML={{
+                __html:
+                  renderMarkdown(message.content) +
+                  (streaming ? '<span class="chat-streaming-cursor" aria-hidden="true">▋</span>' : ''),
+              }}
+            />
           )
         )}
       </div>
