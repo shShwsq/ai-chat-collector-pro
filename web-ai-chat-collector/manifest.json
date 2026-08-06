@@ -14,7 +14,6 @@
     "https://chat.deepseek.com/*",
     "https://www.qianwen.com/*",
     "https://dashscope.aliyuncs.com/*",
-    "https://aiagent.fudan.edu.cn/*",
     "https://www.doubao.com/*",
     "https://api.deepseek.com/*",
     "https://open.bigmodel.cn/*",
@@ -43,14 +42,6 @@
     {
       "matches": ["https://chat.deepseek.com/*"],
       "js": [
-        "content/network-interceptor.js"
-      ],
-      "run_at": "document_start",
-      "world": "MAIN"
-    },
-    {
-      "matches": ["https://chat.deepseek.com/*"],
-      "js": [
         "lib/marked.min.js",
         "lib/sanitize-html.js",
         "lib/katex.min.js",
@@ -62,8 +53,6 @@
         "content/ui/floating-ball.js",
         "content/ai-ball.js",
         "content/exporter-base.js",
-        "content/network/common.js",
-        "content/network/deepseek.js",
         "content/dom/katex-html-to-latex.js",
         "content/dom/html-to-markdown.js",
         "content/dom/deepseek.js",
@@ -74,14 +63,6 @@
     {
       "matches": ["https://www.qianwen.com/*"],
       "js": [
-        "content/network-interceptor.js"
-      ],
-      "run_at": "document_start",
-      "world": "MAIN"
-    },
-    {
-      "matches": ["https://www.qianwen.com/*"],
-      "js": [
         "lib/marked.min.js",
         "lib/sanitize-html.js",
         "lib/katex.min.js",
@@ -93,8 +74,6 @@
         "content/ui/floating-ball.js",
         "content/ai-ball.js",
         "content/exporter-base.js",
-        "content/network/common.js",
-        "content/network/qianwen.js",
         "content/dom/katex-html-to-latex.js",
         "content/dom/html-to-markdown.js",
         "content/dom/qianwen.js",
@@ -103,45 +82,6 @@
       "run_at": "document_start"
     },
     {
-      "matches": ["https://aiagent.fudan.edu.cn/*"],
-      "js": [
-        "content/network-interceptor.js"
-      ],
-      "run_at": "document_start",
-      "world": "MAIN"
-    },
-    {
-      "matches": ["https://aiagent.fudan.edu.cn/*"],
-      "js": [
-        "lib/marked.min.js",
-        "lib/sanitize-html.js",
-        "lib/katex.min.js",
-        "lib/turndown.min.js",
-        "lib/turndown-plugin-gfm.js",
-        "content/adapter-registry.js",
-        "content/ui/styles.js",
-        "content/ui/viewer.js",
-        "content/ui/floating-ball.js",
-        "content/ai-ball.js",
-        "content/exporter-base.js",
-        "content/network/common.js",
-        "content/network/fudan.js",
-        "content/dom/katex-html-to-latex.js",
-        "content/dom/html-to-markdown.js",
-        "content/dom/fudan.js",
-        "content/fudan.js"
-      ],
-      "run_at": "document_start"
-    },
-    {
-      "matches": ["https://www.doubao.com/*"],
-      "js": [
-        "content/network-interceptor.js"
-      ],
-      "run_at": "document_start",
-      "world": "MAIN"
-    },
-    {
       "matches": ["https://www.doubao.com/*"],
       "js": [
         "lib/marked.min.js",
@@ -155,8 +95,6 @@
         "content/ui/floating-ball.js",
         "content/ai-ball.js",
         "content/exporter-base.js",
-        "content/network/common.js",
-        "content/network/doubao.js",
         "content/dom/katex-html-to-latex.js",
         "content/dom/html-to-markdown.js",
         "content/dom/doubao.js",
@@ -233,6 +171,6 @@
   },
   "web_accessible_resources": [{
     "resources": ["lib/katex.min.css"],
-    "matches": ["https://chat.deepseek.com/*", "https://www.qianwen.com/*", "https://aiagent.fudan.edu.cn/*", "https://www.doubao.com/*", "https://kimi.com/*", "https://www.kimi.com/*", "https://kimi.moonshot.cn/*", "https://yuanbao.tencent.com/*", "https://chat.baidu.com/*", "https://wenxin.baidu.com/*"]
+    "matches": ["https://chat.deepseek.com/*", "https://www.qianwen.com/*", "https://www.doubao.com/*", "https://kimi.com/*", "https://www.kimi.com/*", "https://kimi.moonshot.cn/*", "https://yuanbao.tencent.com/*", "https://chat.baidu.com/*", "https://wenxin.baidu.com/*"]
   }]
 }

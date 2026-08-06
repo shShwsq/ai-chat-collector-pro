@@ -37,8 +37,7 @@
 
 if (typeof DOM_ADAPTERS === 'undefined') window.DOM_ADAPTERS = {};
 
-// 助手消息内容拼接（与 network/common.js 中的 buildAssistantContent 一致）
-// 元宝不加载 network/common.js，所以这里内联一份
+// 助手消息内容拼接（内联实现）
 function _buildYuanbaoAssistantContent(thinking, search, answer) {
   let fullContent = '';
   if (thinking) fullContent += `<think>\n${thinking.trim()}\n</think>\n\n`;

@@ -18,8 +18,7 @@
 
 if (typeof DOM_ADAPTERS === 'undefined') window.DOM_ADAPTERS = {};
 
-// 助手消息内容拼接（与 network/common.js 中的 buildAssistantContent 一致）
-// Kimi 不加载 network/common.js，所以这里内联一份（无搜索结果，只有思考+回答）
+// 助手消息内容拼接（内联实现：无搜索结果，只有思考+回答）
 function _buildKimiAssistantContent(thinking, answer) {
   let fullContent = '';
   if (thinking) fullContent += `<think>\n${thinking.trim()}\n</think>\n\n`;

@@ -1,5 +1,5 @@
 // tests/dom/adapters.test.js
-// 7 个平台 DOM 适配器测试：kimi / deepseek / qianwen / fudan / doubao / yuanbao / wenxin
+// 6 个平台 DOM 适配器测试：kimi / deepseek / qianwen / doubao / yuanbao / wenxin
 //
 // 这是"平台 DOM 改了立刻发现"的核心防线：
 // 每个平台用 1-2 个最小 DOM fixture 覆盖 getConversationId / getTitle / isStreaming / extractMessages。
@@ -11,14 +11,13 @@
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { loadDomAdapter } from '../helpers/load-source.js';
 
-let kimi, deepseek, qianwen, fudan, doubao, yuanbao, wenxin;
+let kimi, deepseek, qianwen, doubao, yuanbao, wenxin;
 
 beforeAll(() => {
-  // 分别加载 7 个平台适配器（每次都会重新加载 turndown + html-to-markdown + katex-html-to-latex）
+  // 分别加载 6 个平台适配器（每次都会重新加载 turndown + html-to-markdown + katex-html-to-latex）
   kimi = loadDomAdapter('kimi');
   deepseek = loadDomAdapter('deepseek');
   qianwen = loadDomAdapter('qianwen');
-  fudan = loadDomAdapter('fudan');
   doubao = loadDomAdapter('doubao');
   yuanbao = loadDomAdapter('yuanbao');
   wenxin = loadDomAdapter('wenxin');
@@ -424,143 +423,6 @@ describe('千问适配器', () => {
     expect(msgs[1].content).not.toMatch(/2print/);
     // 标题栏"复制"按钮文字不应混入
     expect(msgs[1].content).not.toContain('复制');
-  });
-});
-
-// =================================================================
-// 复旦适配器
-// =================================================================
-describe('复旦适配器', () => {
-  beforeEach(() => resetEnv('/share', '?sess_id=session-abc', '复旦对话'));
-
-  it('getConversationId 从 sess_id 参数提取', () => {
-    expect(fudan.getConversationId()).toBe('session-abc');
-  });
-
-  it('getConversationId 无 sess_id 时返回 default', () => {
-    resetEnv('/share', '');
-    expect(fudan.getConversationId()).toBe('default');
-  });
-
-  it('getTitle 从 .session.active_session 提取', () => {
-    document.body.innerHTML = `
-      <div class="session active_session">激活会话标题</div>`;
-    expect(fudan.getTitle()).toBe('激活会话标题');
-  });
-
-  it('getTitle fallback 从 document.title 提取', () => {
-    expect(fudan.getTitle()).toBe('复旦对话');
-  });
-
-  it('extractMessages 提取用户和助手消息', () => {
-    document.body.innerHTML = `
-      <div id="share_part" class="message_list">
-        <div class="message_item">
-          <div class="cardBox">
-            <div class="my_issue" position="q">
-              <div class="text myQuestion q"><div class="content"><form class="n-form">
-                <p class="q_class"><div class="md-editor question md-editor-previewOnly">
-                  <div class="md-editor-preview-wrapper"><div class="md-editor-preview">用户问题</div></div>
-                </div></p>
-              </form></div></div>
-            </div>
-            <div class="my_issue has_a" position="a">
-              <div class="text a"><div class="content"><form class="n-form">
-                <div class="think_box">
-                  <div class="think_title show">deep thinking</div>
-                  <div class="border_box show">思考内容</div>
-                </div>
-                <div class="md-editor answer md-editor-previewOnly">
-                  <div class="md-editor-preview-wrapper"><div class="md-editor-preview">正式回答</div></div>
-                </div>
-              </form></div></div>
-            </div>
-          </div>
-        </div>
-      </div>`;
-    const msgs = fudan.extractMessages();
-    expect(msgs).toHaveLength(2);
-    expect(msgs[0].role).toBe('user');
-    expect(msgs[0].content).toContain('用户问题');
-    expect(msgs[1].role).toBe('assistant');
-    expect(msgs[1].content).toContain('思考内容');
-    expect(msgs[1].content).toContain('正式回答');
-    // 复旦思考也用 think 块包裹
-    expect(msgs[1].content).toContain(THINK_OPEN);
-    expect(msgs[1].content).toContain(THINK_CLOSE);
-  });
-
-  it('extractMessages 无 #share_part 时返回空数组', () => {
-    document.body.innerHTML = '<div>其他</div>';
-    expect(fudan.extractMessages()).toEqual([]);
-  });
-
-  it('extractMessages 提取搜索来源（link_box 标题 + citation-link 编号映射 URL）', () => {
-    // 真实场景（fudan.txt）：.networking_card .link_box 内 .link_item 仅含"N、标题"（无 URL），
-    // URL 从回答中的 a.citation-link 按编号映射获取
-    document.body.innerHTML = `
-      <div id="share_part" class="message_list">
-        <div class="message_item">
-          <div class="cardBox">
-            <div class="my_issue has_a" position="a">
-              <div class="text a"><div class="content"><form class="n-form">
-                <div class="networking_card">
-                  <div class="summarize">quote6 using this information</div>
-                  <div class="link_box" style="display:none;">
-                    <div class="link_item">1、上海天气预报</div>
-                    <div class="link_item">2、本周降雨分析</div>
-                  </div>
-                </div>
-                <div class="think_box">
-                  <div class="think_title show">deep thinking</div>
-                  <div class="border_box show">分析天气数据</div>
-                </div>
-                <div class="md-editor answer md-editor-previewOnly">
-                  <div class="md-editor-preview-wrapper"><div class="md-editor-preview">
-                    <p>上海下周有雨<a class="circle citation-link xiaoshou" href="https://www.toutiao.com/article/7656300103346553385/">1</a>，注意防范<a class="circle citation-link xiaoshou" href="https://news.qq.com/rain/a/20260628A046ZW00">2</a>。</p>
-                  </div></div>
-                </div>
-              </form></div></div>
-            </div>
-          </div>
-        </div>
-      </div>`;
-    const msgs = fudan.extractMessages();
-    expect(msgs).toHaveLength(1);
-    expect(msgs[0].role).toBe('assistant');
-    // 搜索来源块格式：<search_result>...【标题】\nURL...</search_result>
-    expect(msgs[0].content).toContain('<search_result>');
-    expect(msgs[0].content).toContain('</search_result>');
-    // link_item 标题被提取
-    expect(msgs[0].content).toContain('上海天气预报');
-    expect(msgs[0].content).toContain('本周降雨分析');
-    // citation-link 编号→URL 映射正确
-    expect(msgs[0].content).toContain('https://www.toutiao.com/article/7656300103346553385/');
-    expect(msgs[0].content).toContain('https://news.qq.com/rain/a/20260628A046ZW00');
-    // 思考内容也被提取
-    expect(msgs[0].content).toContain(THINK_OPEN);
-    expect(msgs[0].content).toContain('分析天气数据');
-    // 正式回答保留
-    expect(msgs[0].content).toContain('上海下周有雨');
-  });
-
-  it('extractMessages 欢迎对话（无 sess_id 且未观察到 compose_chat）跳过采集', () => {
-    // 复旦首页欢迎对话 URL 无 sess_id，且未触发流式对话（_fudanComposeChatSeen=false），
-    // extractMessages 应返回空数组避免采集欢迎页噪声
-    resetEnv('/share', '', '复旦 AI Agent');
-    document.body.innerHTML = `
-      <div id="share_part" class="message_list">
-        <div class="message_item">
-          <div class="cardBox">
-            <div class="text a"><div class="content"><form class="n-form">
-              <div class="md-editor answer md-editor-previewOnly">
-                <div class="md-editor-preview-wrapper"><div class="md-editor-preview">欢迎使用复旦 AI Agent</div></div>
-              </div>
-            </form></div></div>
-          </div>
-        </div>
-      </div>`;
-    expect(fudan.extractMessages()).toEqual([]);
   });
 });
 

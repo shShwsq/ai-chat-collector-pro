@@ -31,7 +31,7 @@ DOM_ADAPTERS.deepseek = {
 
   // 获取对话ID
   // DeepSeek URL 格式: /a/chat/s/{uuid} 或 /a/chat/{uuid}
-  // 需跳过 s/ 前缀，与 exporter-base.js 的 getConvIdFromUrl 保持一致
+  // 需跳过 s/ 前缀
   getConversationId: () => {
     const match = window.location.pathname.match(/\/chat\/(?:s\/)?([a-f0-9\-]+)/i);
     return match ? match[1] : 'default';
@@ -100,7 +100,7 @@ DOM_ADAPTERS.deepseek = {
   //   1. 完整助手消息：有思考 + 有搜索来源 + 有正式回答
   //   2. 被中断的助手消息：有思考/搜索但无正式回答（用户在思考阶段或回答中途停止）
   //   3. 用户消息：纯文本
-  // 拼接格式参照 network/common.js buildAssistantContent：
+  // 拼接格式：
   //   <think>...</think>\n\n<search_result>...</search_result>\n\n回答
   _extractText: (el) => {
     const mainContent = el.querySelector('.ds-assistant-message-main-content');

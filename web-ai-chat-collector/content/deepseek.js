@@ -1,7 +1,6 @@
 // deepseek.js - DeepSeek 平台入口
+// 依赖：adapter-registry.js, exporter-base.js, ai-ball.js
 
-// 网络拦截器必须在最早时机启动，不能等DOMContentLoaded
-// 否则会错过页面初始的API请求
 (async function() {
   // 检查该平台是否启用对话提取
   const enabled = await isPlatformEnabled('deepseek');
@@ -12,8 +11,7 @@
     return;
   }
 
-  const savedMode = await getPlatformMode('deepseek');
-  const exporter = new ChatExporterBase('deepseek', savedMode);
+  const exporter = new ChatExporterBase('deepseek', EXTRACTION_MODE.DOM);
 
   // AI 问答悬浮球
   new AIBall();
