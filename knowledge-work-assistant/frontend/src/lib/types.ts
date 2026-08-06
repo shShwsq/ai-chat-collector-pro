@@ -431,6 +431,8 @@ export interface PluginConversationRequest {
 export interface PluginConversationResponse {
   received: boolean
   observation_id: string
+  /** 是否命中 24h 幂等去重（同 conversation_id 已存在）。 */
+  deduplicated?: boolean
 }
 
 // ============================================================================

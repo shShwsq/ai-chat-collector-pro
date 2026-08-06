@@ -56,6 +56,10 @@
 import { create } from 'zustand'
 
 import { api, ApiError } from '../lib/api'
+import {
+  type ImportedConversation,
+  type ImportPlatform,
+} from '../lib/importers'
 import { resolveStoredTheme, THEME_STORAGE_KEY, type Theme } from '../lib/themes'
 import type {
   AskSource,
@@ -130,6 +134,16 @@ export interface ToastMessage {
 
 /** 左侧竖排导航当前激活项：chat 对话 / graph 图谱 / settings 设置。 */
 export type ActiveNav = 'chat' | 'graph' | 'settings'
+
+/** 批量导入对话的结果汇总（每条会话归入 imported / deduplicated / failed 之一）。 */
+export interface ImportConversationsResult {
+  total: number
+  imported: number
+  deduplicated: number
+  failed: number
+  /** 失败项的错误消息（最多保留前 5 条，避免刷屏）。 */
+  errors: string[]
+}
 
 // ============================================================================
 // 模式快照：切换 study/work 时保存当前模式的关键状态，切回时直接恢复
@@ -328,6 +342,9 @@ interface AppState {
   pluginRecentError: string
   /** 插件对接接口契约 JSON，null = 未加载。 */
   pluginContract: Record<string, unknown> | null
+
+  /** 批量导入对话进行中标记：为 true 时抑制 WS 广播的逐条 Toast，由导入动作统一收尾。 */
+  batchImporting: boolean
 
   // ===== 流式输出状态 =====
   /** WebSocket 连接的 session_id（App.tsx 启动时生成并设置）。 */
@@ -604,6 +621,23 @@ interface AppState {
     title: string
     timestamp: string | null
   }) => void
+  /**
+   * 批量导入平台导出的对话：逐条调用 ``POST /api/plugin/conversations`` 落库为
+   * Observation（source='plugin'，进入「待抽取」流水线）。
+   *
+   * - 复用插件推送接口：``metadata.conversation_id`` 透传平台会话 id，后端按
+   *   ``{platform}:{id}`` 做 24h 幂等去重，重复导入安全；
+   * - 并发限制（6）避免瞬时打满后端；
+   * - 导入期间置 ``batchImporting=true`` 抑制 WS 广播的逐条 Toast，结束后统一
+   *   刷新最近推送列表与待抽取列表，并弹一条汇总 Toast；
+   * - ``onProgress`` 回调供 UI 实时更新进度条（done/total）。
+   * 返回导入结果汇总。
+   */
+  importConversations: (
+    platform: ImportPlatform,
+    conversations: ImportedConversation[],
+    onProgress?: (done: number, total: number) => void,
+  ) => Promise<ImportConversationsResult>
 
   // ===== 流式输出动作 =====
   /** 设置 WebSocket session_id（App.tsx 启动时调用）。 */
@@ -796,6 +830,32 @@ function errMsg(e: unknown): string {
 /** 闪烁高亮自动清除时长（ms）。 */
 const FLASH_AUTO_CLEAR_MS = 1800
 
+/** 批量导入对话时的并发上限（避免瞬时打满后端）。 */
+const IMPORT_CONCURRENCY = 6
+
+/**
+ * 限定并发数依次执行异步任务，保持结果顺序与输入一致。
+ *
+ * 用于批量导入对话：同时最多 ``limit`` 条请求在飞，任一完成即取下一条，
+ * 既快又不会把后端 LLM 请求队列 / 数据库连接打满。
+ */
+async function runWithConcurrency<T>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+  if (items.length === 0) return
+  let cursor = 0
+  const size = Math.min(limit, items.length)
+  const runners = Array.from({ length: size }, async () => {
+    while (cursor < items.length) {
+      const i = cursor++
+      await worker(items[i], i)
+    }
+  })
+  await Promise.all(runners)
+}
+
 /** 全局自增 toast id，避免短时间多条消息 id 冲突。 */
 let _toastSeq = 0
 
@@ -919,6 +979,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   pluginRecentLoading: false,
   pluginRecentError: '',
   pluginContract: null,
+
+  // 批量导入对话标记：为 true 时抑制 WS 广播的逐条 Toast
+  batchImporting: false,
 
   // ===== 流式输出状态 =====
   streamingSessionId: null,
@@ -2306,6 +2369,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   handlePluginConversationReceived: (payload) => {
+    // 批量导入进行中：抑制逐条 Toast 与列表刷新，由 importConversations 统一收尾
+    if (get().batchImporting) return
     // 1. 弹 Toast 提示收到新对话
     get().pushToast(
       `收到新对话：${payload.title || payload.platform}`,
@@ -2315,6 +2380,61 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (get().activeNav === 'graph' && get().mode === 'study') {
       void get().loadPendingObservations()
     }
+  },
+
+  importConversations: async (platform, conversations, onProgress) => {
+    const total = conversations.length
+    if (total === 0) {
+      return { total: 0, imported: 0, deduplicated: 0, failed: 0, errors: [] }
+    }
+    set({ batchImporting: true })
+    let done = 0
+    let imported = 0
+    let deduplicated = 0
+    let failed = 0
+    const errors: string[] = []
+
+    // 并发池：同时最多 IMPORT_CONCURRENCY 条在飞，避免瞬时打满后端
+    const runOne = async (conv: ImportedConversation) => {
+      try {
+        const resp = await api.pushPluginConversation({
+          platform,
+          timestamp: conv.occurredAt || new Date().toISOString(),
+          conversation_markdown: conv.markdown,
+          metadata: {
+            conversation_id: conv.id,
+            title: conv.title,
+            model: conv.model,
+          },
+        })
+        if (resp.deduplicated) {
+          deduplicated += 1
+        } else {
+          imported += 1
+        }
+      } catch (e) {
+        failed += 1
+        if (errors.length < 5) errors.push(errMsg(e))
+      } finally {
+        done += 1
+        onProgress?.(done, total)
+      }
+    }
+
+    await runWithConcurrency(conversations, IMPORT_CONCURRENCY, runOne)
+
+    set({ batchImporting: false })
+    // 统一收尾：刷新最近推送列表 + 待抽取列表（一次性，而非逐条刷新）
+    void get().loadPluginRecent()
+    if (get().activeNav === 'graph' && get().mode === 'study') {
+      void get().loadPendingObservations()
+    }
+    // 汇总 Toast
+    const parts: string[] = [`导入 ${imported} 条`]
+    if (deduplicated > 0) parts.push(`${deduplicated} 条已存在跳过`)
+    if (failed > 0) parts.push(`${failed} 条失败`)
+    get().pushToast(parts.join('，'), failed > 0 ? 'warning' : 'success')
+    return { total, imported, deduplicated, failed, errors }
   },
 
   // ===== 流式输出动作 =====
