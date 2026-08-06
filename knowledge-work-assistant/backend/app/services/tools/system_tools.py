@@ -84,21 +84,34 @@ _ALLOWED_COMMANDS: frozenset[str] = frozenset({
 # 禁止出现的 shell 元字符（命令串联、管道、替换、重定向、子 shell）。
 # 一旦命中即拒绝执行，防止 ``git status; rm -rf /`` 这类串联注入。
 # 注意：换行符（\n / \r）也属此列，防止多行命令。
+#
+# **平台差异**：反斜杠 ``\`` 在 POSIX 上是 shell 转义符（元字符），但在
+# Windows 上是路径分隔符（``C:\Users\foo``）。因此 Windows 上 **不含**
+# 反斜杠，否则几乎所有含路径的命令都会被误拒。
 _SHELL_METACHARS: frozenset[str] = frozenset(
-    ";|&`$()<>\\\n\r"
-)
+    ";|&`$()<>\n\r"
+) | (frozenset("\\") if sys.platform != "win32" else frozenset())
 
 # 工作目录黑名单（系统敏感目录，resolve 后前缀匹配）。
 # 跨平台覆盖 Windows 与 POSIX。
-_FORBIDDEN_CWD_PREFIXES: tuple[str, ...] = (
+#
+# 分两类：
+# 1. ``_FORBIDDEN_CWD_ROOTS``：根目录（仅精确匹配，不禁止其下子目录）。
+#    如 ``C:\`` 和 ``/``——禁止 cwd 恰好是根目录，但 ``C:\Users\foo`` 不受影响。
+# 2. ``_FORBIDDEN_CWD_DIRS``：系统敏感目录（前缀匹配，禁止 cwd 在其下）。
+#    如 ``C:\Windows``、``/etc``——禁止 cwd 在这些目录及其子目录下。
+_FORBIDDEN_CWD_ROOTS: frozenset[str] = frozenset({
+    "c:\\",
+    "/",
+})
+
+_FORBIDDEN_CWD_DIRS: tuple[str, ...] = (
     # Windows
     "c:\\windows",
-    "c:\\",
     "c:\\program files",
     "c:\\program files (x86)",
     "c:\\programdata",
     # POSIX
-    "/",
     "/etc",
     "/usr",
     "/bin",
@@ -122,14 +135,27 @@ def _has_shell_metachar(s: str) -> bool:
 
 
 def _is_forbidden_cwd(path: Path) -> bool:
-    """检查工作目录是否落在系统敏感目录下。"""
+    """检查工作目录是否落在系统敏感目录下。
+
+    - 根目录（``C:\\`` / ``/``）：仅精确匹配，不禁止其下子目录。
+    - 系统敏感目录（``C:\\Windows`` / ``/etc`` 等）：前缀匹配，禁止 cwd
+      恰好是或位于这些目录下。
+    """
     try:
         resolved = str(path.resolve()).lower()
     except (OSError, RuntimeError):
         return True
-    return any(resolved == prefix or resolved.startswith(prefix.rstrip("\\/") + "\\")
-               or resolved.startswith(prefix.rstrip("\\/") + "/")
-               for prefix in _FORBIDDEN_CWD_PREFIXES)
+
+    # ① 根目录：仅精确匹配
+    if resolved in _FORBIDDEN_CWD_ROOTS:
+        return True
+
+    # ② 系统敏感目录：前缀匹配（目录本身或其下子目录）
+    sep = "\\" if sys.platform == "win32" else "/"
+    for prefix in _FORBIDDEN_CWD_DIRS:
+        if resolved == prefix or resolved.startswith(prefix + sep):
+            return True
+    return False
 
 
 def _parse_command_argv(command: str) -> list[str]:
@@ -227,7 +253,7 @@ async def command_exec(args: dict[str, Any]) -> dict[str, Any]:
         return {
             "error": (
                 "command contains forbidden shell metacharacters "
-                "(; | & ` $ ( ) < > \\ newline); "
+                "(; | & ` $ ( ) < > newline); "
                 "use a single command without piping/redirection"
             ),
             "command": command,
@@ -290,6 +316,18 @@ async def command_exec(args: dict[str, Any]) -> dict[str, Any]:
             "duration_ms": duration_ms,
             "timeout": True,
             "confirmation_required": require_confirmation,
+        }
+    except FileNotFoundError:
+        # Windows 上 dir/type/echo/copy 等是 cmd.exe 内建命令,无独立 .exe,
+        # argv 模式(shell=False)下无法执行。给出友好提示而非原始 WinError 2。
+        return {
+            "error": (
+                f"executable not found: {argv[0]!r} "
+                "(on Windows, dir/type/echo/copy/move etc. are cmd.exe "
+                "builtins and cannot be used in this mode; use their "
+                "cross-platform equivalents like git/python/node instead)"
+            ),
+            "command": command,
         }
     except OSError as exc:
         logger.warning("command_exec 启动失败 %s: %s", command, exc)
