@@ -16,44 +16,33 @@
 
 ## 支持平台
 
-| 平台 | DOM 模式 | 网络拦截模式 |
-|------|:--------:|:-----------:|
-| DeepSeek (chat.deepseek.com) | ✅ | ✅ |
-| 千问 (www.qianwen.com) | ✅ | ✅ |
-| 复旦智汇岛 (aiagent.fudan.edu.cn) | ✅ | ✅ |
-| 豆包 (www.doubao.com) | ✅ | ✅ |
-| Kimi (www.kimi.com) | ✅ | — （暂未开发） |
-| 腾讯元宝 (yuanbao.tencent.com) | ✅ | — （暂未开发） |
-| 百度文心 (chat.baidu.com / wenxin.baidu.com) | ✅ | — （暂未开发） |
+| 平台 | DOM 模式 |
+|------|:--------:|
+| DeepSeek (chat.deepseek.com) | ✅ |
+| 千问 (www.qianwen.com) | ✅ |
+| 豆包 (www.doubao.com) | ✅ |
+| Kimi (www.kimi.com) | ✅ |
+| 腾讯元宝 (yuanbao.tencent.com) | ✅ |
+| 百度文心 (chat.baidu.com / wenxin.baidu.com) | ✅ |
 
-## 模式说明
+## 采集方式
 
-### DOM 模式（推荐）
+### DOM 模式
 
 通过解析渲染后的页面 DOM 提取对话内容。兼容性最好、对平台 API 变更不敏感，并通过 `turndown.js` + `turndown-plugin-gfm` 完整保留 Markdown 格式（标题、列表、表格、代码块、数学公式 KaTeX 等）。
 
-- 七个平台开箱即用，覆盖最广
+- 六个平台开箱即用，覆盖最广
 - 从渲染后的 HTML 还原 Markdown 格式 —— 标题、列表、**GFM 表格**、删除线、任务列表、围栏代码块、KaTeX 数学公式（行内 `$...$` / 块级 `$$...$$`）
-- 各平台深度思考过程和联网搜索引用均支持提取（Kimi/DeepSeek/千问/豆包/复旦/元宝/文心）
+- 各平台深度思考过程和联网搜索引用均支持提取（Kimi/DeepSeek/千问/豆包/元宝/文心）
 - 不依赖平台 API 协议（REST / WebSocket / protobuf 均可）
 - 持续优化中 —— 思考块、搜索引用的提取精度仍在进一步提升
-
-### 网络拦截模式
-
-通过拦截浏览器网络请求，从 API 响应中直接解析对话数据。可获取原始流式数据，包括思考过程和搜索引用。可在设置页按平台手动启用。
-
-**权衡：**
-
-- 与各平台 API 契约强耦合，平台更新接口时易失效
-- Kimi / 元宝 / 文心暂未开发网络拦截模式
-- 仅在需要 DOM 尚未覆盖的原始流式数据时启用
 
 ## 合规与隐私
 
 - **仅采集用户本人数据** — 扩展只采集当前已登录用户在各支持平台上的对话，不访问、爬取或存储任何他人数据。
 - **本地优先存储** — 默认情况下，采集的对话仅存储在浏览器本地 IndexedDB，不会上传到任何第三方服务器。
 - **可选远程同步** — 高级功能允许用户将自身对话数据推送至自建的远程向量库（ChromaDB / Milvus / pgvector / Supabase / Qdrant），以支持跨设备访问和 SKILL 语义检索（供 TRAE、OpenClaw、Cursor 等外部智能体使用）。此操作需用户显式发起，并使用用户自有凭证与服务。
-- **模式推荐** — 默认推荐 DOM 模式，仅解析用户已浏览渲染的页面内容。网络拦截模式作为可选备选方案，用于获取原始流式数据；其辅助请求机制（复用用户自身的会话凭证，请求用户有权访问的对话历史）是提升采集完整性的手段，而非爬取数据的机制。
+- **仅 DOM 采集** — 扩展只解析用户已浏览渲染的页面内容，不拦截网络流量、不 monkey-patch `fetch`/`XMLHttpRequest`、不发起辅助请求。（网络拦截模式已移除，改用更安全的纯 DOM 方案。）
 - **无用户行为模拟** — 扩展不会模拟登录、点击、滚动或任何与平台 UI 的用户交互。
 
 ## 架构
@@ -63,10 +52,10 @@
 │                      浏览器扩展 (MV3)                            │
 │                                                                  │
 │  Content Scripts           Service Worker (background.js)        │
-│  ├─ network-interceptor    ├─ db.js        (对话存储)            │
-│  ├─ 平台适配器             ├─ embedding.js (5 家嵌入厂商)         │
-│  ├─ floating-ball          ├─ vector-store.js (6 种后端)         │
-│  └─ ai-ball (问答 UI)      └─ llm.js       (6 家 LLM 厂商)       │
+│  ├─ 平台适配器             ├─ db.js        (对话存储)            │
+│  ├─ floating-ball/viewer   ├─ embedding.js (5 家嵌入厂商)         │
+│  ├─ ai-ball (问答 UI)      ├─ vector-store.js (6 种后端)         │
+│                            └─ llm.js       (6 家 LLM 厂商)       │
 │                                                                  │
 │  Popup / 设置页                                                  │
 └──────────────┬───────────────────────────────┬───────────────────┘
@@ -163,19 +152,14 @@ ai-plugin/
 │   ├── export.js              # Markdown / JSON 导出
 │   └── data-handlers.js       # 存储信息 / 清空 / 重置
 ├── content/                   # Content Scripts
-│   ├── adapter-registry.js    # EXTRACTION_MODE + getPlatformMode + 适配器注册表
-│   ├── exporter-base.js       # ChatExporterBase（网络 / DOM 分派）
-│   ├── network-interceptor.js # 共享网络钩子（MAIN world）
+│   ├── adapter-registry.js    # EXTRACTION_MODE + 适配器注册表 + 平台启用默认值
+│   ├── exporter-base.js       # ChatExporterBase（DOM 提取分派）
 │   ├── ai-ball.js             # AI 问答悬浮球 + 面板
-│   ├── kimi.js / yuanbao.js / wenxin.js   # Kimi / 元宝 / 文心入口（仅 DOM，无网络适配器）
-│   ├── deepseek.js / qianwen.js / fudan.js / doubao.js  # 各平台入口
-│   ├── network/               # 各平台网络适配器（REST 解析）
-│   │   ├── common.js
-│   │   ├── deepseek.js / qianwen.js / fudan.js / doubao.js
+│   ├── deepseek.js / qianwen.js / doubao.js / kimi.js / yuanbao.js / wenxin.js  # 各平台入口（仅 DOM）
 │   ├── dom/                   # 各平台 DOM 适配器
 │   │   ├── html-to-markdown.js  # 统一的 HTML→Markdown 包装（turndown.js + GFM）
 │   │   ├── katex-html-to-latex.js # KaTeX HTML→LaTeX 反向解析（Kimi 降级路径）
-│   │   ├── kimi.js / deepseek.js / qianwen.js / fudan.js / doubao.js / yuanbao.js / wenxin.js
+│   │   ├── kimi.js / deepseek.js / qianwen.js / doubao.js / yuanbao.js / wenxin.js
 │   └── ui/                    # 悬浮球 / 查看器 / 样式
 │       ├── floating-ball.js / viewer.js / styles.js
 ├── lib/                       # 共享服务（SW 与 content 共用）
