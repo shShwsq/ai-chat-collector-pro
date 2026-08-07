@@ -585,6 +585,82 @@ describe('豆包适配器', () => {
     expect(msgs[0].content).toContain('正式回答');
     expect(msgs[0].content).not.toContain('参考 3 篇资料');
   });
+
+  it('extractMessages 多步搜索：多个思考+回答交替出现时全部提取', () => {
+    // 真实场景（doubao_multi.txt）：多步搜索/Agent 模式下，一条助手消息含多个
+    // block_type:10040（折叠思考块，标题为步骤名）和 block_type:10000（回答块）交替出现。
+    // 修复前 bug：_extractAssistantContent 用 break 只取首个回答块，
+    //   导致"我来帮你查一下..."后面的回答全部丢失。
+    // 修复后：按 DOM 顺序遍历所有 block，累积全部思考和回答。
+    document.body.innerHTML = `
+      <div class="list_items">
+        <div class="v_list_row" data-observe-row="block_user">
+          <div class="flex flex-row justify-end">
+            <div class="md-box-root">
+              <div class="container-fBOrXO"><div class="container-enLQFx">TRAE 和豆包有什么区别？</div></div>
+            </div>
+          </div>
+        </div>
+        <div class="v_list_row" data-observe-row="block_assistant">
+          <div class="grid">
+            <div data-plugin-identifier="block_type:10040 | thinking_block.scene:undefined">
+              <div class="group/thinking-box-root container-WZpjtt" data-thinking-box-expanded="false">
+                <div data-thinking-box="content">
+                  <div data-thinking-box="title">
+                    <div class="truncate">明确问题类型</div>
+                  </div>
+                  <div data-thinking-box-collapsed-step-content="true">
+                    <div class="h-[0px]"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div data-plugin-identifier="block_type:10000">
+              <div class="md-box-root">
+                <div class="container-fBOrXO"><div class="container-enLQFx">我来帮你查一下 TRAE 和豆包的区别，先了解一下 TRAE 是什么产品。</div></div>
+              </div>
+            </div>
+            <div data-plugin-identifier="block_type:10040 | thinking_block.scene:undefined">
+              <div class="group/thinking-box-root container-WZpjtt" data-thinking-box-expanded="false">
+                <div data-thinking-box="content">
+                  <div data-thinking-box="title">
+                    <div class="truncate">明确TRAE的定义与用途</div>
+                  </div>
+                  <div data-thinking-box-collapsed-step-content="true">
+                    <div class="h-[0px]"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div data-plugin-identifier="block_type:10000">
+              <div class="md-box-root">
+                <div class="container-fBOrXO"><div class="container-enLQFx">TRAE 和豆包都是字节跳动的 AI 产品，但<strong>定位和用途完全不同</strong>：</div></div>
+                <div class="container-fBOrXO"><h2>核心区别</h2></div>
+              </div>
+            </div>
+            <div data-plugin-identifier="block_type:10025">
+              <div>搜索结果噪声块（不应提取）</div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    const msgs = doubao.extractMessages();
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0].role).toBe('user');
+    expect(msgs[0].content).toBe('TRAE 和豆包有什么区别？');
+    expect(msgs[1].role).toBe('assistant');
+    // 第一个回答块被提取（修复前也能拿到）
+    expect(msgs[1].content).toContain('我来帮你查一下 TRAE 和豆包的区别');
+    // 第二个回答块被提取（修复前的 bug：break 导致丢失）
+    expect(msgs[1].content).toContain('定位和用途完全不同');
+    expect(msgs[1].content).toContain('核心区别');
+    // 两个折叠思考块的步骤名被提取到 think 块中
+    expect(msgs[1].content).toContain(THINK_OPEN);
+    expect(msgs[1].content).toContain('明确问题类型');
+    expect(msgs[1].content).toContain('明确TRAE的定义与用途');
+    // 搜索结果噪声块不混入
+    expect(msgs[1].content).not.toContain('搜索结果噪声块');
+  });
 });
 
 // =================================================================
