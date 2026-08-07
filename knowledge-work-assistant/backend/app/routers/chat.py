@@ -45,7 +45,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 
-from app.db import AsyncSessionLocal
+from app.db import AsyncSessionLocal, with_sqlite_lock_retry
 from app.models.db_models import Checkpoint as CheckpointRow
 from app.models.db_models import Message as MessageRow
 from app.models.db_models import Session as SessionRow
@@ -1021,9 +1021,14 @@ async def clear_sessions(
     for sid in ids:
         _cleanup_session_caches(sid)
 
-    async with AsyncSessionLocal() as db:
-        await db.execute(delete(SessionRow).where(SessionRow.id.in_(ids)))
-        await db.commit()
+    # 批量 DELETE：单条 SQL，DB 级 CASCADE 清理 messages / checkpoints；
+    # 外层重试兜底瞬时 SQLite 锁冲突（大批量会话级联 FTS 触发器可能耗时）。
+    async def _bulk_delete() -> None:
+        async with AsyncSessionLocal() as db:
+            await db.execute(delete(SessionRow).where(SessionRow.id.in_(ids)))
+            await db.commit()
+
+    await with_sqlite_lock_retry(_bulk_delete)
 
     logger.info("批量清空 chat 会话 mode=%s count=%d", mode, len(ids))
     return ClearSessionsResponse(ok=True, deleted_count=len(ids), mode=mode)
