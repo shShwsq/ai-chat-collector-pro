@@ -388,6 +388,8 @@ interface AppState {
   reportStreamingText: string
   /** 工作报告流式是否进行中。 */
   reportStreamingActive: boolean
+  /** 工作报告流式请求的 LLM request_id（用于取消；null = 未启动或非流式回退）。 */
+  reportStreamingRequestId: string | null
 
   /** 节点详情卡流式 Markdown 文本（逐 token 累积）。 */
   nodeDetailStreamingText: string
@@ -410,6 +412,10 @@ interface AppState {
   chatExpandedNodeId: string | null
   /** 对话大卡到图谱详情卡的跨视图接力阶段。 */
   graphHandoffPhase: 'idle' | 'preparing' | 'graph-ready' | 'landing'
+
+  /** 首次启动引导向导显隐：true 时 App.tsx 渲染全屏 OnboardingWizard。
+   *  启动时由 App.tsx 根据 localStorage 标记初始化；设置页「重新查看引导」按钮可置 true。 */
+  onboardingVisible: boolean
 
   // ===== Task 9：多轮对话 chat 状态 =====
   /** 当前模式下的 chat 会话列表（按 created_at 倒序）。 */
@@ -461,6 +467,8 @@ interface AppState {
   setView: (view: ViewType) => void
   /** 切换左侧竖排导航激活项（chat / graph / settings）。 */
   setActiveNav: (nav: ActiveNav) => void
+  /** 设置首次启动引导向导显隐（true = 显示全屏引导）。 */
+  setOnboardingVisible: (visible: boolean) => void
   /** 设置「对话」导航项红点角标计数（0 不显示）。 */
   setReminderCount: (n: number) => void
   /** 设置对话首页瀑布流中展开为大卡的节点 ID（null = 收回）。 */
@@ -525,8 +533,9 @@ interface AppState {
   // Task 11：候选节点抽取
   /** 加载未处理观察记录列表（默认 processed=false），可指定页码（1-based，默认当前页）。 */
   loadPendingObservations: (page?: number) => Promise<void>
-  /** 从一条观察记录抽取候选节点（不入图），存入 candidateNodes 供面板展示。返回是否成功。 */
-  extractCandidates: (observationId: string) => Promise<boolean>
+  /** 从一条观察记录抽取候选节点（不入图），存入 candidateNodes 供面板展示。
+   *  支持传入 AbortSignal 实现超时取消。返回是否成功。 */
+  extractCandidates: (observationId: string, signal?: AbortSignal) => Promise<boolean>
   /** 清空当前候选节点列表与关联的 observation id。 */
   clearCandidates: () => void
   /** 批量创建已确认节点（归一去重），成功后整图刷新并清空候选列表。返回响应或 null。 */
@@ -631,6 +640,8 @@ interface AppState {
   loadLlmRequests: () => Promise<void>
   /** 取消指定 LLM 请求；成功后立即刷新列表。返回是否取消成功。 */
   cancelLlmRequest: (id: string) => Promise<boolean>
+  /** 取消正在进行的报告流式生成（调用后端 LLM 取消接口）。 */
+  cancelReportStream: () => Promise<void>
   /** 拉取当前 LLM 配置（api_key 掩码），写入 llmConfig。 */
   loadLlmConfig: () => Promise<void>
   /** 更新 LLM 配置（仅传需更新字段）；成功后刷新 llmConfig。返回是否成功。 */
@@ -1038,6 +1049,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   qaStreamingActive: false,
   reportStreamingText: '',
   reportStreamingActive: false,
+  reportStreamingRequestId: null,
   nodeDetailStreamingText: '',
   nodeDetailStreamingActive: false,
   nodeDetailStreamingNodeId: null,
@@ -1051,6 +1063,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   // 对话首页大卡浮层初始无展开
   chatExpandedNodeId: null,
   graphHandoffPhase: 'idle',
+
+  // 首次启动引导：App.tsx 启动时根据 localStorage 标记决定是否置 true
+  onboardingVisible: false,
 
   // ===== Task 9：多轮对话 chat 初始状态 =====
   chatSessions: [],
@@ -1175,6 +1190,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         qaStreamingActive: false,
         reportStreamingText: '',
         reportStreamingActive: false,
+        reportStreamingRequestId: null,
         nodeDetailStreamingText: '',
         nodeDetailStreamingActive: false,
         nodeDetailStreamingNodeId: null,
@@ -1249,6 +1265,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         qaStreamingActive: false,
         reportStreamingText: '',
         reportStreamingActive: false,
+        reportStreamingRequestId: null,
         nodeDetailStreamingText: '',
         nodeDetailStreamingActive: false,
         nodeDetailStreamingNodeId: null,
@@ -1300,6 +1317,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     // 进入 'graph' 时不清空 recommendations，便于切回 chat 快速显示
   },
+
+  setOnboardingVisible: (visible) => set({ onboardingVisible: visible }),
 
   setReminderCount: (n) => set({ reminderCount: n }),
 
@@ -1360,6 +1379,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       qaStreamingActive: false,
       reportStreamingText: '',
       reportStreamingActive: false,
+      reportStreamingRequestId: null,
       nodeDetailStreamingText: '',
       nodeDetailStreamingActive: false,
       nodeDetailStreamingNodeId: null,
@@ -1710,7 +1730,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  extractCandidates: async (observationId) => {
+  extractCandidates: async (observationId, signal) => {
     const graphId = get().currentGraphId
     if (!graphId) {
       get().pushToast('请先选中一个图谱', 'warning')
@@ -1718,7 +1738,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     set({ extracting: true, error: '' })
     try {
-      const resp = await api.extractNodes(observationId, graphId)
+      const resp = await api.extractNodes(observationId, graphId, { signal })
       set({
         candidateNodes: resp.candidates,
         candidateObservationId: observationId,
@@ -1726,7 +1746,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       })
       if (resp.degraded || resp.candidates.length === 0) {
         get().pushToast(
-          '未抽取到候选节点（LLM 可能不可用，可降级手工添加）',
+          resp.degraded
+            ? 'LLM 未配置或不可用，已走降级路径（可手工添加节点）'
+            : '未抽取到候选节点（可手工添加）',
           'warning',
         )
       } else {
@@ -1734,6 +1756,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       return true
     } catch (e) {
+      // AbortError（用户取消 / 超时）：静默复位，不弹错误 Toast（调用方自行提示）
+      if ((e as Error).name === 'AbortError') {
+        set({ extracting: false })
+        return false
+      }
       set({ extracting: false, error: errMsg(e) })
       get().pushToast(`抽取失败：${errMsg(e)}`, 'error')
       return false
@@ -2362,11 +2389,40 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  cancelReportStream: async () => {
+    const requestId = get().reportStreamingRequestId
+    if (!requestId) {
+      // 非流式回退或已结束：直接复位状态
+      set({
+        reportStreamingActive: false,
+        reportGenerating: false,
+        reportStreamingText: '',
+        reportStreamingRequestId: null,
+      })
+      return
+    }
+    try {
+      await api.cancelLlmRequest(requestId)
+      set({ reportStreamingRequestId: null })
+    } catch (e) {
+      // 取消失败也要复位前端状态，避免卡在「生成中」
+      set({
+        reportStreamingActive: false,
+        reportGenerating: false,
+        reportStreamingText: '',
+        reportStreamingRequestId: null,
+      })
+      get().pushToast(`取消报告生成失败：${errMsg(e)}`, 'error')
+    }
+  },
+
   loadLlmConfig: async () => {
     set({ llmConfigLoading: true })
     try {
       const cfg = await api.getLlmConfig()
-      set({ llmConfig: cfg, llmConfigLoading: false })
+      // 派生 ready：api_key 已配置且 base_url 非空才视为就绪
+      const ready = !!cfg.api_key_configured && !!cfg.base_url
+      set({ llmConfig: { ...cfg, ready }, llmConfigLoading: false })
     } catch (e) {
       const msg = errMsg(e)
       set({ llmConfigLoading: false })
@@ -2378,8 +2434,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ llmConfigSaving: true })
     try {
       const resp = await api.updateLlmConfig(config)
-      // 用响应中的最新配置覆盖本地
-      set({ llmConfig: resp.config, llmConfigSaving: false })
+      // 用响应中的最新配置覆盖本地，并派生 ready 字段
+      const cfg = resp.config
+      const ready = !!cfg.api_key_configured && !!cfg.base_url
+      set({ llmConfig: { ...cfg, ready }, llmConfigSaving: false })
       get().pushToast(
         resp.message
           ? `配置已保存：${resp.message}`
@@ -2626,7 +2684,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ qaStreamingText: '' })
     } else if (op === 'generate_report') {
       // 终结报告流式
-      set({ reportStreamingActive: false, reportGenerating: false })
+      set({ reportStreamingActive: false, reportGenerating: false, reportStreamingRequestId: null })
       // 写入最终报告
       set({
         reportResult: {
@@ -2675,6 +2733,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         reportStreamingActive: false,
         reportGenerating: false,
         reportStreamingText: '',
+        reportStreamingRequestId: null,
       })
       get().pushToast('已取消报告生成', 'info')
     } else if (op === 'generate_node_detail') {
@@ -2716,6 +2775,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         reportStreamingActive: false,
         reportGenerating: false,
         reportStreamingText: '',
+        reportStreamingRequestId: null,
       })
       get().pushToast(`报告生成失败：${message}`, 'error')
     } else if (op === 'generate_node_detail') {
@@ -2814,7 +2874,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       error: '',
     })
     try {
-      await api.streamGenerateReport(graphId, period, sessionId)
+      const resp = await api.streamGenerateReport(graphId, period, sessionId)
+      // 记录 request_id 以支持取消
+      if (resp.request_id) {
+        set({ reportStreamingRequestId: resp.request_id })
+      }
       return true
     } catch (e) {
       const msg = errMsg(e)
@@ -2822,6 +2886,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         reportGenerating: false,
         reportStreamingActive: false,
         reportStreamingText: '',
+        reportStreamingRequestId: null,
         error: msg,
       })
       get().pushToast(`报告生成失败：${msg}`, 'error')
@@ -2867,7 +2932,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ qaStreamingText: '', qaStreamingActive: false }),
 
   clearReportStreaming: () =>
-    set({ reportStreamingText: '', reportStreamingActive: false }),
+    set({ reportStreamingText: '', reportStreamingActive: false, reportStreamingRequestId: null }),
 
   clearNodeDetailStreaming: () =>
     set({

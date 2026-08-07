@@ -751,6 +751,10 @@ export interface LlmConfig {
   model: string
   /** API Key 掩码字符串（如 sk-****-1234），仅展示用。 */
   api_key_masked: string
+  /** 是否已配置 api_key（脱敏值非空不代表已配置）。 */
+  api_key_configured: boolean
+  /** 向量化模型名（未配置时为空）。 */
+  embedding_model?: string
   /** 是否就绪（key 与 base_url 均已配置）。 */
   ready?: boolean
 }

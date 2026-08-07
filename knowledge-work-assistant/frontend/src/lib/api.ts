@@ -132,6 +132,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     res = await fetch(url, { ...init, headers })
   } catch (e) {
+    // AbortError 透传，让调用方区分「用户取消」与「真实网络错误」
+    if ((e as Error).name === 'AbortError') throw e
     throw new ApiError(
       (e as Error).message || '网络请求失败',
       'network_error',
@@ -332,11 +334,17 @@ export const api = {
     if (params?.offset !== undefined) q.offset = String(params.offset)
     return request<ObservationListResponse>(withQuery('/observations', q))
   },
-  /** 从一条 Observation 抽取候选节点（不入图，返回待确认列表）。 */
-  extractNodes: (observationId: string, graphId: string) =>
+  /** 从一条 Observation 抽取候选节点（不入图，返回待确认列表）。
+   *  支持传入 AbortSignal 以实现超时取消。 */
+  extractNodes: (
+    observationId: string,
+    graphId: string,
+    init?: { signal?: AbortSignal },
+  ) =>
     request<ExtractResponse>(`/observations/${observationId}/extract`, {
       method: 'POST',
       body: JSON.stringify({ graph_id: graphId } satisfies ExtractRequest),
+      signal: init?.signal,
     }),
   /** 批量创建已确认节点（归一去重，相似标题跳过）。 */
   batchCreateNodes: (

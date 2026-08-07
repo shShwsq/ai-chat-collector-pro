@@ -24,7 +24,7 @@
  * - 候选项可单独编辑标题（聚焦后回车确认），便于在入图前纠正 Agent 抽取结果。
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 
 import { Icon } from '../Icon'
@@ -112,6 +112,9 @@ export function PendingNodes() {
   // 批量抽取全部进行中
   const [batchExtracting, setBatchExtracting] = useState(false)
   const [batchExtractProgress, setBatchExtractProgress] = useState({ current: 0, total: 0 })
+  // 抽取超时 / 取消控制：每次抽取生成新的 AbortController，30s 未返回自动取消
+  const abortRef = useRef<AbortController | null>(null)
+  const [extractTimedOut, setExtractTimedOut] = useState(false)
   // 底部页码输入框值（字符串，便于编辑中间态如清空）。与 pendingPage 保持同步：
   // pendingPage 变化（翻页 / 刷新）时回填，用户编辑后回车 / 失焦提交跳转。
   const [pageInput, setPageInput] = useState(String(pendingPage))
@@ -171,7 +174,29 @@ export function PendingNodes() {
 
   const handleExtract = (obsId: string) => {
     if (extracting || batchCreating || batchExtracting) return
-    void extractCandidates(obsId)
+    // 取消上一次未完成的抽取（防御性，正常情况下已在上次 finally 中清理）
+    if (abortRef.current) abortRef.current.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    setExtractTimedOut(false)
+    const timeoutId = window.setTimeout(() => {
+      controller.abort()
+      setExtractTimedOut(true)
+      pushToast('抽取超时（30s），已自动取消。可重试或手工添加节点。', 'warning')
+    }, 30000)
+    void extractCandidates(obsId, controller.signal).finally(() => {
+      window.clearTimeout(timeoutId)
+      abortRef.current = null
+    })
+  }
+
+  /** 手动取消正在进行的抽取。 */
+  const handleCancelExtract = () => {
+    if (abortRef.current) {
+      abortRef.current.abort()
+      abortRef.current = null
+      pushToast('已取消抽取', 'info')
+    }
   }
 
   /** 批量抽取未处理对话：顺序抽取并自动全选入图。
@@ -366,9 +391,27 @@ export function PendingNodes() {
 
             {pendingObservations.length === 0 ? (
               <div className="pending-empty">
-                {extracting || batchExtracting
-                  ? '正在抽取候选节点…'
-                  : '暂无待抽取对话。可通过插件接口推送，或等待浏览器插件采集后再次刷新。'}
+                {extracting || batchExtracting ? (
+                  <span className="pending-empty__extracting">
+                    正在抽取候选节点…
+                    {extracting && !batchExtracting && (
+                      <button
+                        type="button"
+                        className="pending-empty__cancel-btn"
+                        onClick={handleCancelExtract}
+                        title="取消当前抽取请求"
+                      >
+                        取消
+                      </button>
+                    )}
+                  </span>
+                ) : extractTimedOut ? (
+                  <span className="pending-empty__timeout">
+                    上次抽取超时已取消，可重试或手工添加节点。
+                  </span>
+                ) : (
+                  '暂无待抽取对话。可通过插件接口推送，或等待浏览器插件采集后再次刷新。'
+                )}
               </div>
             ) : (
               <ul className="obs-list">
@@ -379,6 +422,7 @@ export function PendingNodes() {
                     extracting={extractingObsId === obs.id}
                     disabled={extracting || batchCreating || batchExtracting}
                     onExtract={() => handleExtract(obs.id)}
+                    onCancel={handleCancelExtract}
                   />
                 ))}
               </ul>
@@ -586,11 +630,13 @@ function ObservationItem({
   extracting,
   disabled,
   onExtract,
+  onCancel,
 }: {
   obs: Observation
   extracting: boolean
   disabled: boolean
   onExtract: () => void
+  onCancel: () => void
 }) {
   const platformLabel = PLATFORM_LABEL[obs.platform] || obs.platform || '未知来源'
   const platformIcon = getPlatformIcon(obs.platform)
@@ -620,6 +666,16 @@ function ObservationItem({
         >
           {extracting ? '抽取中…' : '抽取候选节点'}
         </button>
+        {extracting && (
+          <button
+            type="button"
+            className="obs-item__cancel-btn"
+            onClick={onCancel}
+            title="取消当前抽取请求"
+          >
+            取消
+          </button>
+        )}
       </div>
     </li>
   )
