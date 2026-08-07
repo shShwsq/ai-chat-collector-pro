@@ -39,6 +39,8 @@ from app.models.schemas import (
     PluginHealthResponse,
     PluginRecentConversationItem,
     PluginRecentConversationsResponse,
+    PluginBatchImportRequest,
+    PluginBatchImportResponse,
 )
 from app.services import ws_notify
 from app.services.graph_store import GraphStore, graph_store
@@ -72,6 +74,9 @@ _METADATA_STRING_FIELDS = ("title", "url", "model")
 
 #: 幂等去重时间窗口（小时）。
 _DEDUP_WITHIN_HOURS = 24
+
+#: 批量导入单次请求的对话上限（避免单请求体过大；前端会分块调用）。
+MAX_BATCH_SIZE = 1000
 
 
 def get_graph_store() -> GraphStore:
@@ -258,6 +263,96 @@ async def push_conversation(
         received=True,
         deduplicated=False,
         observation_id=obs["id"],
+    )
+
+
+@router.post(
+    "/conversations/batch", response_model=PluginBatchImportResponse
+)
+async def push_conversations_batch(
+    body: PluginBatchImportRequest,
+    store: GraphStore = Depends(get_graph_store),
+) -> PluginBatchImportResponse:
+    """批量接收对话（手动导入功能）。
+
+    与单条 :func:`push_conversation` 等价，但把多条放进**一个事务**一次提交，
+    并临时禁用 FTS5 触发器、批量回填全文索引，避免逐条 HTTP / 逐条 commit 的
+    开销（3000 条从分钟级降到秒级）。
+
+    - 平台白名单校验同单条接口（否则 400）；
+    - 每条 metadata 类型校验同单条接口（否则 422）；
+    - 幂等去重：预查 24h 内已存在的 ``dedup_key`` + 批内去重，命中则跳过；
+    - **不逐条广播**：批量导入由前端主动发起并跟踪进度，无需 WS 通知。
+    """
+    # 1. 平台白名单校验
+    if body.platform not in SUPPORTED_PLATFORMS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unsupported platform: {body.platform}",
+        )
+
+    # 2. 数量上限
+    if len(body.conversations) > MAX_BATCH_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"batch too large: {len(body.conversations)} > {MAX_BATCH_SIZE}，"
+                "请分块调用"
+            ),
+        )
+
+    if not body.conversations:
+        return PluginBatchImportResponse(
+            received=True, total=0, imported=0, deduplicated=0, failed=0
+        )
+
+    # 3. 逐条 metadata 类型校验 + 构造落库 item
+    items: list[dict[str, Any]] = []
+    for item in body.conversations:
+        _validate_metadata(item.metadata)
+        occurred_at = _parse_timestamp(item.timestamp)
+        merged_metadata: dict[str, Any] = (
+            dict(item.metadata) if item.metadata else {}
+        )
+        dedup_key = _compute_dedup_key(body.platform, item.metadata)
+        if dedup_key is not None:
+            merged_metadata["_dedup_key"] = dedup_key
+        items.append(
+            {
+                "conversation_markdown": item.conversation_markdown,
+                "occurred_at": occurred_at,
+                "metadata": merged_metadata,
+                "dedup_key": dedup_key,
+            }
+        )
+
+    # 4. 批量落库（单事务 + FTS 批量回填）
+    try:
+        result = await store.create_observations_batch(
+            items,
+            platform=body.platform,
+            source=OBSERVATION_SOURCE_PLUGIN,
+            within_hours=_DEDUP_WITHIN_HOURS,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    logger.info(
+        "批量导入完成: platform=%s total=%d imported=%d deduplicated=%d failed=%d",
+        body.platform,
+        len(items),
+        result["imported"],
+        result["deduplicated"],
+        result["failed"],
+    )
+
+    return PluginBatchImportResponse(
+        received=True,
+        total=len(items),
+        imported=result["imported"],
+        deduplicated=result["deduplicated"],
+        failed=result["failed"],
+        errors=result["errors"],
     )
 
 

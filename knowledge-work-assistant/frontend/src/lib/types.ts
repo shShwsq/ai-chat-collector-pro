@@ -435,6 +435,29 @@ export interface PluginConversationResponse {
   deduplicated?: boolean
 }
 
+/** 批量导入单条对话项（与 PluginConversationRequest 字段一致，去掉 platform）。 */
+export interface PluginBatchConversationItem {
+  timestamp: string
+  conversation_markdown: string
+  metadata?: Record<string, unknown>
+}
+
+/** 批量导入对话请求（手动导入功能，一次提交多条）。 */
+export interface PluginBatchImportRequest {
+  platform: string
+  conversations: PluginBatchConversationItem[]
+}
+
+/** 批量导入对话响应：汇总 imported / deduplicated / failed。 */
+export interface PluginBatchImportResponse {
+  received: boolean
+  total: number
+  imported: number
+  deduplicated: number
+  failed: number
+  errors: string[]
+}
+
 // ============================================================================
 // Study 测验（Task 12，与 backend/app/routers/quiz.py 对齐）
 // ============================================================================

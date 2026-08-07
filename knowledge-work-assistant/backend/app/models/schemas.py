@@ -256,6 +256,38 @@ class PluginConversationResponse(BaseModel):
     )
 
 
+class PluginBatchConversationItem(BaseModel):
+    """批量导入中的单条对话项（与 :class:`PluginConversationRequest` 字段一致，去掉 platform）。"""
+
+    timestamp: str = Field(..., min_length=1, description="对话发生时间，ISO8601 字符串")
+    conversation_markdown: str = Field(
+        ..., min_length=1, description="对话原文 Markdown（非空）"
+    )
+    metadata: dict[str, Any] | None = Field(None, description="可选附加元数据")
+
+
+class PluginBatchImportRequest(BaseModel):
+    """批量导入对话请求（手动导入功能，一次提交多条以避免逐条 HTTP 开销）。"""
+
+    platform: str = Field(..., min_length=1, description="来源平台标识")
+    conversations: list[PluginBatchConversationItem] = Field(
+        ..., description="待导入对话列表（单次上限见路由 MAX_BATCH_SIZE）"
+    )
+
+
+class PluginBatchImportResponse(BaseModel):
+    """批量导入对话响应：汇总 imported / deduplicated / failed。"""
+
+    received: bool = Field(..., description="是否已接收，固定为 True")
+    total: int = Field(..., description="本次提交的对话总数")
+    imported: int = Field(..., description="新增落库条数")
+    deduplicated: int = Field(..., description="命中 24h 幂等去重跳过条数")
+    failed: int = Field(..., description="失败条数")
+    errors: list[str] = Field(
+        default_factory=list, description="失败原因（最多 5 条）"
+    )
+
+
 class PluginHealthResponse(BaseModel):
     """插件对接联调自检端点响应（``GET /api/plugin/health``）。
 

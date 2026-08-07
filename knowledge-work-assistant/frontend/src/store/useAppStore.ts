@@ -853,31 +853,14 @@ function errMsg(e: unknown): string {
 /** 闪烁高亮自动清除时长（ms）。 */
 const FLASH_AUTO_CLEAR_MS = 1800
 
-/** 批量导入对话时的并发上限（避免瞬时打满后端）。 */
-const IMPORT_CONCURRENCY = 6
-
 /**
- * 限定并发数依次执行异步任务，保持结果顺序与输入一致。
+ * 批量导入对话时的分块大小（每块一次 HTTP 请求 + 一个后端事务）。
  *
- * 用于批量导入对话：同时最多 ``limit`` 条请求在飞，任一完成即取下一条，
- * 既快又不会把后端 LLM 请求队列 / 数据库连接打满。
+ * 取 200：在进度反馈粒度（3000 条约 15 次更新）与 HTTP/事务开销间取平衡。
+ * 后端单次上限 MAX_BATCH_SIZE=1000，200 远低于上限。
+ * 串行发送（非并发）：SQLite 单写者，并发只会增加写锁争用。
  */
-async function runWithConcurrency<T>(
-  items: readonly T[],
-  limit: number,
-  worker: (item: T, index: number) => Promise<void>,
-): Promise<void> {
-  if (items.length === 0) return
-  let cursor = 0
-  const size = Math.min(limit, items.length)
-  const runners = Array.from({ length: size }, async () => {
-    while (cursor < items.length) {
-      const i = cursor++
-      await worker(items[i], i)
-    }
-  })
-  await Promise.all(runners)
-}
+const IMPORT_CHUNK_SIZE = 200
 
 /** 全局自增 toast id，避免短时间多条消息 id 冲突。 */
 let _toastSeq = 0
@@ -2422,37 +2405,43 @@ export const useAppStore = create<AppState>((set, get) => ({
     let failed = 0
     const errors: string[] = []
 
-    // 并发池：同时最多 IMPORT_CONCURRENCY 条在飞，避免瞬时打满后端
-    const runOne = async (conv: ImportedConversation) => {
+    // 串行分块调用批量接口：
+    // - 每块一次 HTTP / 一个事务，避免 3000 次逐条请求的固定开销
+    // - 串行（非并发）：SQLite 单写者，并发只会增加写锁争用，串行反而最快
+    // - 每块完成更新一次进度，粒度 = IMPORT_CHUNK_SIZE
+    for (let i = 0; i < total; i += IMPORT_CHUNK_SIZE) {
+      const chunk = conversations.slice(i, i + IMPORT_CHUNK_SIZE)
       try {
-        const resp = await api.pushPluginConversation({
+        const resp = await api.pushPluginConversationsBatch({
           platform,
-          timestamp: conv.occurredAt || new Date().toISOString(),
-          conversation_markdown: conv.markdown,
-          metadata: {
-            conversation_id: conv.id,
-            title: conv.title,
-            model: conv.model,
-          },
+          conversations: chunk.map((c) => ({
+            timestamp: c.occurredAt || new Date().toISOString(),
+            conversation_markdown: c.markdown,
+            metadata: {
+              conversation_id: c.id,
+              title: c.title,
+              model: c.model,
+            },
+          })),
         })
-        if (resp.deduplicated) {
-          deduplicated += 1
-        } else {
-          imported += 1
+        imported += resp.imported
+        deduplicated += resp.deduplicated
+        failed += resp.failed
+        for (const e of resp.errors) {
+          if (errors.length < 5) errors.push(e)
         }
       } catch (e) {
-        failed += 1
+        // 整块失败（网络 / 4xx / 5xx）：该块全部计入 failed
+        failed += chunk.length
         if (errors.length < 5) errors.push(errMsg(e))
       } finally {
-        // 实时更新全局进度（弹窗关闭后 header 仍可读取）
+        // 更新全局进度（弹窗关闭后 header 仍可读取）
         const job = get().importJob
         if (job && job.status === 'running') {
-          set({ importJob: { ...job, done: job.done + 1 } })
+          set({ importJob: { ...job, done: Math.min(i + chunk.length, total) } })
         }
       }
     }
-
-    await runWithConcurrency(conversations, IMPORT_CONCURRENCY, runOne)
 
     const result: ImportConversationsResult = {
       total,

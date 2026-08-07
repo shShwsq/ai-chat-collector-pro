@@ -58,6 +58,8 @@ import type {
   NodeDetailResponse,
   NodeUpdate,
   Observation,
+  PluginBatchImportRequest,
+  PluginBatchImportResponse,
   PluginConversationRequest,
   PluginConversationResponse,
   PluginHealthResponse,
@@ -290,6 +292,12 @@ export const api = {
   /** 推送插件采集的对话，后端持久化为 Observation。 */
   pushPluginConversation: (body: PluginConversationRequest) =>
     request<PluginConversationResponse>('/plugin/conversations', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  /** 批量导入对话（手动导入功能）：单事务批量落库 + FTS 批量回填。 */
+  pushPluginConversationsBatch: (body: PluginBatchImportRequest) =>
+    request<PluginBatchImportResponse>('/plugin/conversations/batch', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
