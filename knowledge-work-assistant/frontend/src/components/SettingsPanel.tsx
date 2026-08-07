@@ -25,9 +25,10 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import { useAppStore } from '../store/useAppStore'
+import { ConfirmDialog } from './graph/ConfirmDialog'
 import { PluginIntegrationSection } from './PluginIntegrationSection'
 import { THEMES } from '../lib/themes'
-import type { LlmRequestInfo, LlmRequestStatus } from '../lib/types'
+import type { LlmRequestInfo, LlmRequestStatus, Mode } from '../lib/types'
 
 /** 请求队列自动轮询间隔（ms）。 */
 const POLL_INTERVAL_MS = 3000
@@ -91,6 +92,7 @@ export function SettingsPanel() {
       <ApiConfigSection />
       <PluginIntegrationSection />
       <RequestQueueSection />
+      <DangerZoneSection />
     </div>
   )
 }
@@ -606,6 +608,231 @@ function WorkConfirmSection() {
             : '当前为批量确认：一次同意即入图全部候选工作对象。开启后可逐条筛选。'}
         </p>
       </div>
+    </section>
+  )
+}
+
+// ============================================================================
+// 数据管理 / Danger Zone 区：批量清空与导出备份
+// ============================================================================
+
+/** 清空范围。``all`` = 全部模式；``study`` / ``work`` = 仅该模式。 */
+type ClearScope = 'all' | Mode
+
+/** 当前打开的确认弹窗类型。 */
+type ClearTarget = 'sessions' | 'graphs' | 'observations' | null
+
+const SCOPE_OPTIONS: { value: ClearScope; label: string }[] = [
+  { value: 'all', label: '全部' },
+  { value: 'study', label: 'Study' },
+  { value: 'work', label: 'Work' },
+]
+
+function DangerZoneSection() {
+  const clearingData = useAppStore((s) => s.clearingData)
+  const exportingData = useAppStore((s) => s.exportingData)
+  const clearAllChatSessions = useAppStore((s) => s.clearAllChatSessions)
+  const clearAllGraphs = useAppStore((s) => s.clearAllGraphs)
+  const clearAllObservations = useAppStore((s) => s.clearAllObservations)
+  const exportAllData = useAppStore((s) => s.exportAllData)
+
+  const [scope, setScope] = useState<ClearScope>('all')
+  const [target, setTarget] = useState<ClearTarget>(null)
+  // 清空图谱时是否同时清空观察记录（源对话，不区分模式）
+  const [clearObsWithGraphs, setClearObsWithGraphs] = useState(false)
+
+  const modeArg = scope === 'all' ? undefined : scope
+  const scopeLabel = scope === 'all' ? '全部模式' : `${scope} 模式`
+
+  const handleExport = () => {
+    void exportAllData(modeArg)
+  }
+
+  const handleConfirm = async () => {
+    const t = target
+    setTarget(null)
+    if (t === 'sessions') {
+      await clearAllChatSessions(modeArg)
+    } else if (t === 'graphs') {
+      // 勾选时先清观察记录（全量），再清图谱；不勾选仅清图谱（observations 解绑保留）
+      if (clearObsWithGraphs) {
+        await clearAllObservations()
+      }
+      await clearAllGraphs(modeArg)
+    } else if (t === 'observations') {
+      await clearAllObservations()
+    }
+    setClearObsWithGraphs(false)
+  }
+
+  const handleCancel = () => {
+    setTarget(null)
+    setClearObsWithGraphs(false)
+  }
+
+  // 各操作的确认弹窗文案
+  const dialogConfig: Record<
+    Exclude<ClearTarget, null>,
+    { title: string; message: string }
+  > = {
+    sessions: {
+      title: `清空${scopeLabel}所有对话会话`,
+      message: `将永久删除${scopeLabel}的全部 chat 会话及其消息历史与 checkpoint，不可恢复。建议先导出备份。`,
+    },
+    graphs: {
+      title: `清空${scopeLabel}所有图谱`,
+      message: `将永久删除${scopeLabel}的全部图谱及其下节点 / 边 / 测验，不可恢复。观察记录（源对话）默认保留并自动解绑。建议先导出备份。`,
+    },
+    observations: {
+      title: '清空所有观察记录',
+      message:
+        '将永久删除全部观察记录（浏览器插件推送 / 导入的原始对话，不区分模式），不可恢复。图谱数据不受影响。建议先导出备份。',
+    },
+  }
+
+  return (
+    <section className="settings-section danger-zone">
+      <header className="settings-section__header">
+        <div>
+          <h2 className="settings-section__title">数据管理</h2>
+          <p className="settings-section__desc">
+            批量清空对话会话 / 图谱 / 观察记录，或导出全部数据为 JSON 备份。
+            清空操作不可恢复，请先导出备份并谨慎确认。
+          </p>
+        </div>
+      </header>
+
+      <div className="danger-zone__body">
+        {/* 范围选择器：控制清空会话 / 图谱的作用域 */}
+        <div className="danger-zone__scope">
+          <span className="danger-zone__scope-label">清空范围：</span>
+          <div className="danger-zone__segmented" role="radiogroup" aria-label="清空范围">
+            {SCOPE_OPTIONS.map((opt) => {
+              const active = opt.value === scope
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  className={`danger-zone__segmented-btn${active ? ' is-active' : ''}`}
+                  onClick={() => setScope(opt.value)}
+                  disabled={clearingData || exportingData}
+                >
+                  {opt.label}
+                </button>
+              )
+            })}
+          </div>
+          <span className="danger-zone__scope-hint">
+            仅影响对话会话与图谱；观察记录不区分模式。
+          </span>
+        </div>
+
+        {/* 导出备份（随时可点，也作为清空前提示） */}
+        <div className="danger-zone__row danger-zone__row--export">
+          <div className="danger-zone__row-info">
+            <span className="danger-zone__row-title">导出数据备份</span>
+            <span className="danger-zone__row-desc">
+              将当前范围的全部数据导出为 JSON 文件（观察记录始终全量导出）。
+            </span>
+          </div>
+          <button
+            type="button"
+            className="danger-zone__export-btn"
+            onClick={handleExport}
+            disabled={clearingData || exportingData}
+          >
+            {exportingData ? '导出中…' : '导出 JSON'}
+          </button>
+        </div>
+
+        {/* 清空对话会话 */}
+        <div className="danger-zone__row">
+          <div className="danger-zone__row-info">
+            <span className="danger-zone__row-title">
+              清空{scopeLabel}所有对话会话
+            </span>
+            <span className="danger-zone__row-desc">
+              删除会话及其消息历史与 checkpoint（{scopeLabel}）。
+            </span>
+          </div>
+          <button
+            type="button"
+            className="danger-zone__danger-btn"
+            onClick={() => setTarget('sessions')}
+            disabled={clearingData || exportingData}
+          >
+            清空对话
+          </button>
+        </div>
+
+        {/* 清空图谱 */}
+        <div className="danger-zone__row">
+          <div className="danger-zone__row-info">
+            <span className="danger-zone__row-title">
+              清空{scopeLabel}所有图谱
+            </span>
+            <span className="danger-zone__row-desc">
+              删除图谱及其下节点 / 边 / 测验（{scopeLabel}）。观察记录默认保留。
+            </span>
+          </div>
+          <button
+            type="button"
+            className="danger-zone__danger-btn"
+            onClick={() => setTarget('graphs')}
+            disabled={clearingData || exportingData}
+          >
+            清空图谱
+          </button>
+        </div>
+
+        {/* 清空观察记录（全局，不受范围控制） */}
+        <div className="danger-zone__row">
+          <div className="danger-zone__row-info">
+            <span className="danger-zone__row-title">清空所有观察记录</span>
+            <span className="danger-zone__row-desc">
+              删除全部源对话（插件推送 / 导入），不区分模式。图谱数据不受影响。
+            </span>
+          </div>
+          <button
+            type="button"
+            className="danger-zone__danger-btn"
+            onClick={() => setTarget('observations')}
+            disabled={clearingData || exportingData}
+          >
+            清空观察
+          </button>
+        </div>
+      </div>
+
+      {target && (
+        <ConfirmDialog
+          open
+          danger
+          title={dialogConfig[target].title}
+          message={dialogConfig[target].message}
+          confirmText="清空"
+          cancelText="取消"
+          confirmPhrase="清空"
+          onExport={handleExport}
+          exportText="先导出备份"
+          onConfirm={() => void handleConfirm()}
+          onCancel={handleCancel}
+          extra={
+            target === 'graphs' ? (
+              <label className="confirm-dialog__checkbox">
+                <input
+                  type="checkbox"
+                  checked={clearObsWithGraphs}
+                  onChange={(e) => setClearObsWithGraphs(e.target.checked)}
+                />
+                <span>同时清空所有观察记录（源对话，不区分模式）</span>
+              </label>
+            ) : null
+          }
+        />
+      )}
     </section>
   )
 }

@@ -34,7 +34,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.models.node_types import NODE_SOURCE_AGENT
+from app.models.node_types import NODE_SOURCE_AGENT, OBSERVATION_SOURCES
 from app.models.schemas import NodeResponse, ObservationResponse
 from app.services.graph_agent import GraphAgent, _titles_similar, get_graph_agent
 from app.services.graph_store import GraphStore, graph_store
@@ -153,6 +153,32 @@ async def list_observations(
         offset=offset,
     )
     return [ObservationResponse(**o) for o in items]
+
+
+@router.post("/observations/clear")
+async def clear_observations(
+    source: str | None = Query(
+        None,
+        description="按来源过滤：plugin / import / manual，省略则清空全部",
+    ),
+    store: GraphStore = Depends(get_graph_store_dep),
+) -> dict[str, Any]:
+    """批量清空观察记录。
+
+    observations 表无 mode 字段，故按 ``source`` 过滤；``source=None`` 清全部。
+    observations 是抽取图谱的源材料，与图谱解耦（删图谱时其 ``graph_id`` 被
+    SET NULL），故本操作不影响图谱数据。
+
+    幂等：无匹配数据时返回 ``deleted_count=0``。
+    """
+    if source is not None and source not in OBSERVATION_SOURCES:
+        raise _bad_request(f"非法来源: {source}（允许: {OBSERVATION_SOURCES}）")
+    try:
+        count = await store.delete_observations_by_source(source)
+    except ValueError as exc:
+        # delete_observations_by_source 对非法 source 抛 ValueError，映射为 400
+        raise _bad_request(str(exc)) from exc
+    return {"ok": True, "deleted_count": count, "source": source}
 
 
 @router.post(

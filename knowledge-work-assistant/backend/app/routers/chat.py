@@ -43,9 +43,9 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
-from app.db import AsyncSessionLocal
+from app.db import AsyncSessionLocal, with_sqlite_lock_retry
 from app.models.db_models import Checkpoint as CheckpointRow
 from app.models.db_models import Message as MessageRow
 from app.models.db_models import Session as SessionRow
@@ -432,6 +432,33 @@ async def _push_ws(session_id: str, event: dict[str, Any]) -> None:
             event.get("type"),
             exc,
         )
+
+
+def _cleanup_session_caches(session_id: str) -> None:
+    """清理单个会话的模块级缓存与活跃请求映射。
+
+    单条 / 批量删除会话共用：弹出 ``_session_agents`` 中的 MainAgent 并触发
+    ``cancel()`` 中断可能正在进行的流式任务，再清掉 ``_session_active_requests``
+    / ``_chat_tasks`` / ``_request_sessions`` 中的残留映射。同步函数——仅操作
+    内存 dict，不 await；agent.cancel() 也是同步置位。
+
+    Args:
+        session_id: 要清理的会话 ID。
+    """
+    agent = _session_agents.pop(session_id, None)
+    if agent is not None:
+        try:
+            agent.cancel()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "清理会话缓存时 agent.cancel 失败 session=%s: %s",
+                session_id,
+                exc,
+            )
+    req_id = _session_active_requests.pop(session_id, None)
+    if req_id is not None:
+        _chat_tasks.pop(req_id, None)
+        _request_sessions.pop(req_id, None)
 
 
 # ============================================================================
@@ -946,15 +973,65 @@ async def delete_session(session_id: str) -> DeleteSessionResponse:
             await db.delete(session)
             await db.commit()
 
-    # 清理模块级缓存与活跃请求映射
-    _session_agents.pop(session_id, None)
-    req_id = _session_active_requests.pop(session_id, None)
-    if req_id is not None:
-        _chat_tasks.pop(req_id, None)
-        _request_sessions.pop(req_id, None)
+    # 清理模块级缓存与活跃请求映射（含 agent.cancel 中断活跃流式任务）
+    _cleanup_session_caches(session_id)
 
     logger.info("删除 chat 会话 id=%s", session_id)
     return DeleteSessionResponse(ok=True, session_id=session_id)
+
+
+class ClearSessionsResponse(BaseModel):
+    """批量清空会话响应。"""
+
+    ok: bool = Field(..., description="是否成功执行清空")
+    deleted_count: int = Field(..., description="实际删除的会话条数")
+    mode: str | None = Field(None, description="过滤的模式（study/work/None=全部）")
+
+
+@router.post("/sessions/clear", response_model=ClearSessionsResponse)
+async def clear_sessions(
+    mode: str | None = Query(
+        None, description="按模式过滤：study / work，省略则清空全部"
+    ),
+) -> ClearSessionsResponse:
+    """批量清空会话（级联清理 messages / checkpoints）。
+
+    用 ``POST /sessions/clear`` 而非 ``DELETE /sessions`` 以避免与单条
+    ``DELETE /sessions/{id}`` 动态路由冲突。清理流程：
+
+    1. 按可选 ``mode`` 查出匹配的 session_id 列表；
+    2. 逐个调 :func:`_cleanup_session_caches` 清内存缓存并中断活跃流式任务；
+    3. 批量删除 SessionRow（messages / checkpoints 由外键 CASCADE 自动清理）。
+
+    幂等：无匹配数据时返回 ``deleted_count=0``。
+    """
+    if mode is not None and mode not in ("study", "work"):
+        raise _bad_request(f"非法模式: {mode}（允许: study / work）")
+
+    async with AsyncSessionLocal() as db:
+        stmt = select(SessionRow.id)
+        if mode is not None:
+            stmt = stmt.where(SessionRow.mode == mode)
+        ids = [row[0] for row in (await db.execute(stmt)).all()]
+
+    if not ids:
+        return ClearSessionsResponse(ok=True, deleted_count=0, mode=mode)
+
+    # 先清内存缓存与活跃请求（中断正在进行的流式任务）
+    for sid in ids:
+        _cleanup_session_caches(sid)
+
+    # 批量 DELETE：单条 SQL，DB 级 CASCADE 清理 messages / checkpoints；
+    # 外层重试兜底瞬时 SQLite 锁冲突（大批量会话级联 FTS 触发器可能耗时）。
+    async def _bulk_delete() -> None:
+        async with AsyncSessionLocal() as db:
+            await db.execute(delete(SessionRow).where(SessionRow.id.in_(ids)))
+            await db.commit()
+
+    await with_sqlite_lock_retry(_bulk_delete)
+
+    logger.info("批量清空 chat 会话 mode=%s count=%d", mode, len(ids))
+    return ClearSessionsResponse(ok=True, deleted_count=len(ids), mode=mode)
 
 
 @router.post("/sessions/{session_id}/stream", response_model=StreamStartedResponse)
