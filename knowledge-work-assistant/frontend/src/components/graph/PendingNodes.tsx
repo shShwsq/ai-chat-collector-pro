@@ -489,41 +489,52 @@ export function PendingNodes() {
           )}
         </div>
 
-        {/* 分页栏：固定在面板底部，不随列表滚动 */}
-        {pendingTotal > 0 && (
-          <div className="pending-panel__pagination">
-            <button
-              type="button"
-              className="pending-panel__pagination-btn"
-              onClick={() => void loadPendingObservations(pendingPage - 1)}
-              disabled={pendingPage <= 1 || extracting || batchCreating || batchExtracting}
-              title="上一页"
-            >
-              上一页
-            </button>
-            <span className="pending-panel__pagination-info">
-              第 {pendingPage} / {totalPages} 页（共 {pendingTotal} 条）
-            </span>
-            <button
-              type="button"
-              className="pending-panel__pagination-btn"
-              onClick={() => void loadPendingObservations(pendingPage + 1)}
-              disabled={pendingPage >= totalPages || extracting || batchCreating || batchExtracting}
-              title="下一页"
-            >
-              下一页
-            </button>
-          </div>
-        )}
-
-        {/* 底部状态条 */}
-        <footer className="pending-panel__footer">
-          <span className="pending-panel__footer-text">
-            {currentGraphId
-              ? '将入图到当前选中图谱'
-              : (<><Icon name="warning" size={14} /> 未选中图谱，请先在左侧选择一个图谱</>)}
+        {/* 底部工具栏：分页 + 图谱状态合并一行，固定在面板底部，不随列表滚动 */}
+        <div className="pending-panel__bottombar">
+          {pendingTotal > 0 ? (
+            <div className="pending-panel__bottombar-pager">
+              <button
+                type="button"
+                className="pending-panel__pagination-btn"
+                onClick={() => void loadPendingObservations(pendingPage - 1)}
+                disabled={pendingPage <= 1 || extracting || batchCreating || batchExtracting}
+                title="上一页"
+              >
+                上一页
+              </button>
+              <span className="pending-panel__pagination-info">
+                {pendingPage}/{totalPages} 页 · 共 {pendingTotal} 条
+              </span>
+              <button
+                type="button"
+                className="pending-panel__pagination-btn"
+                onClick={() => void loadPendingObservations(pendingPage + 1)}
+                disabled={pendingPage >= totalPages || extracting || batchCreating || batchExtracting}
+                title="下一页"
+              >
+                下一页
+              </button>
+            </div>
+          ) : (
+            <span className="pending-panel__bottombar-hint">暂无待抽取</span>
+          )}
+          <span
+            className={`pending-panel__bottombar-status${currentGraphId ? '' : ' is-warning'}`}
+            title={
+              currentGraphId
+                ? '将入图到当前选中图谱'
+                : '未选中图谱，请先在左侧选择一个图谱'
+            }
+          >
+            {currentGraphId ? (
+              '已选图谱'
+            ) : (
+              <>
+                <Icon name="warning" size={13} /> 未选中图谱
+              </>
+            )}
           </span>
-        </footer>
+        </div>
       </aside>
     </>
   )

@@ -4264,17 +4264,44 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
   gap: 10px;
 }
 
-.pending-panel__pagination {
+.pending-panel__bottombar {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   gap: 8px;
-  padding: 10px 20px;
+  padding: 8px 16px;
   border-top: 1px solid var(--border-soft);
   background: var(--surface-soft);
   font-size: 11.5px;
   color: var(--text-secondary);
+}
+
+.pending-panel__bottombar-pager {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.pending-panel__bottombar-hint {
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.pending-panel__bottombar-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+}
+
+.pending-panel__bottombar-status.is-warning {
+  color: var(--warning, #d97706);
 }
 
 .pending-panel__pagination-btn {
@@ -4578,19 +4605,6 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
 .pending-actions__btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-/* 面板底部状态条 */
-.pending-panel__footer {
-  flex-shrink: 0;
-  padding: 10px 20px;
-  border-top: 1px solid var(--border-soft);
-  background: var(--surface-soft);
-}
-
-.pending-panel__footer-text {
-  font-size: 11px;
-  color: var(--text-tertiary);
 }
 
 /* ----- Toast 全局提示 ----- */
