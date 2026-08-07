@@ -30,6 +30,7 @@ import type { ReactNode } from 'react'
 import { Icon } from '../Icon'
 import type { IconName } from '../Icon'
 import { useAppStore } from '../../store/useAppStore'
+import { api } from '../../lib/api'
 import type { CandidateNode, Observation } from '../../lib/types'
 import { formatShortTime } from '../../lib/date'
 
@@ -92,6 +93,14 @@ export function PendingNodes() {
   const batchCreateNodes = useAppStore((s) => s.batchCreateNodes)
   const currentGraphId = useAppStore((s) => s.currentGraphId)
   const pushToast = useAppStore((s) => s.pushToast)
+  const pendingPage = useAppStore((s) => s.pendingPage)
+  const pendingTotal = useAppStore((s) => s.pendingTotal)
+
+  /** 待抽取列表每页条数（与 store PENDING_PAGE_SIZE 对齐）。 */
+  const PENDING_PAGE_SIZE = 50
+  /** 批量抽取数量上限：超过则提示并仅抽取最新 N 条（按 created_at 倒序）。 */
+  const BATCH_EXTRACT_LIMIT = 100
+  const totalPages = Math.max(1, Math.ceil(pendingTotal / PENDING_PAGE_SIZE))
 
   // 候选项选中态：key = 候选索引（基于 candidateNodes 数组位置），
   // 因 CandidateNode 没有 id 字段（未入图），用索引作为稳定 key。
@@ -142,10 +151,16 @@ export function PendingNodes() {
     void extractCandidates(obsId)
   }
 
-  /** 批量抽取全部未处理对话：顺序抽取并自动全选入图。 */
+  /** 批量抽取未处理对话：顺序抽取并自动全选入图。
+   *
+   * 数量超过 ``BATCH_EXTRACT_LIMIT``（100）时弹确认提示，仅抽取最新 100 条
+   *（按 ``created_at`` 倒序，``offset=0``），避免一次性处理过多拖慢前端 / 触发大量
+   * LLM 调用。不复用当前页 ``pendingObservations``：当前页可能非第 1 页 / 不足上限条数。
+   */
   const handleBatchExtractAll = async () => {
     if (extracting || batchCreating || batchExtracting) return
-    if (pendingObservations.length === 0) {
+    const total = pendingTotal
+    if (total === 0) {
       pushToast('暂无待抽取对话', 'warning')
       return
     }
@@ -153,14 +168,29 @@ export function PendingNodes() {
       pushToast('请先选中一个图谱', 'warning')
       return
     }
+    const willExtract = Math.min(total, BATCH_EXTRACT_LIMIT)
+    if (total > BATCH_EXTRACT_LIMIT) {
+      const ok = window.confirm(
+        `当前共 ${total} 条待抽取对话，数量较多，仅抽取最新 ${willExtract} 条。是否继续？`,
+      )
+      if (!ok) return
+    }
     setBatchExtracting(true)
     let successCount = 0
     let failCount = 0
     let totalNodes = 0
     try {
-      for (let i = 0; i < pendingObservations.length; i++) {
-        const obs = pendingObservations[i]
-        setBatchExtractProgress({ current: i + 1, total: pendingObservations.length })
+      // 拉取要抽取的列表（最新 willExtract 条，按 created_at 倒序）
+      const resp = await api.listObservations({
+        processed: false,
+        limit: willExtract,
+        offset: 0,
+      })
+      const list = resp.items
+      setBatchExtractProgress({ current: 0, total: list.length })
+      for (let i = 0; i < list.length; i++) {
+        const obs = list[i]
+        setBatchExtractProgress({ current: i + 1, total: list.length })
         const ok = await extractCandidates(obs.id)
         if (!ok) {
           failCount++
@@ -172,10 +202,10 @@ export function PendingNodes() {
         const state = useAppStore.getState()
         const cands = state.candidateNodes
         if (cands.length > 0) {
-          const resp = await batchCreateNodes(cands, obs.id)
-          if (resp) {
+          const r = await batchCreateNodes(cands, obs.id)
+          if (r) {
             successCount++
-            totalNodes += resp.created_count
+            totalNodes += r.created_count
           } else {
             failCount++
           }
@@ -185,7 +215,10 @@ export function PendingNodes() {
         clearCandidates()
       }
       pushToast(
-        `批量抽取完成：成功 ${successCount} 条，失败 ${failCount} 条，共入图 ${totalNodes} 个节点`,
+        `批量抽取完成：成功 ${successCount} 条，失败 ${failCount} 条，共入图 ${totalNodes} 个节点` +
+          (total > BATCH_EXTRACT_LIMIT
+            ? `（共 ${total} 条，仅处理最新 ${willExtract} 条）`
+            : ''),
         failCount > 0 ? 'warning' : 'success',
       )
     } finally {
@@ -326,6 +359,31 @@ export function PendingNodes() {
                   />
                 ))}
               </ul>
+            )}
+            {pendingTotal > 0 && (
+              <div className="pending-pagination">
+                <button
+                  type="button"
+                  className="pending-pagination__btn"
+                  onClick={() => void loadPendingObservations(pendingPage - 1)}
+                  disabled={pendingPage <= 1 || extracting || batchCreating || batchExtracting}
+                  title="上一页"
+                >
+                  上一页
+                </button>
+                <span className="pending-pagination__info">
+                  第 {pendingPage} / {totalPages} 页（共 {pendingTotal} 条）
+                </span>
+                <button
+                  type="button"
+                  className="pending-pagination__btn"
+                  onClick={() => void loadPendingObservations(pendingPage + 1)}
+                  disabled={pendingPage >= totalPages || extracting || batchCreating || batchExtracting}
+                  title="下一页"
+                >
+                  下一页
+                </button>
+              </div>
             )}
           </section>
 

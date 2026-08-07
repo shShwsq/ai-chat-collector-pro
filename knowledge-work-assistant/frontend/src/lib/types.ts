@@ -378,6 +378,15 @@ export interface Observation {
   created_at: string
 }
 
+/** 观察记录分页响应（GET /observations）。 */
+export interface ObservationListResponse {
+  items: Observation[]
+  /** 符合过滤条件的记录总数（不受 limit/offset 影响），供前端计算页数。 */
+  total: number
+  limit: number
+  offset: number
+}
+
 /** 抽取请求体。 */
 export interface ExtractRequest {
   graph_id: string

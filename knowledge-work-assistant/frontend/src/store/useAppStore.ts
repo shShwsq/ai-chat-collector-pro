@@ -177,6 +177,10 @@ export interface ModeSnapshot {
   candidateNodes: CandidateNode[]
   candidateObservationId: string | null
   pendingPanelOpen: boolean
+  /** 当前待抽取列表页码（1-based）。 */
+  pendingPage: number
+  /** 待抽取记录总数（服务端 total，供分页与批量抽取判断）。 */
+  pendingTotal: number
   quizPanelOpen: boolean
   quizStage: 'config' | 'answering' | 'result'
   quizType: QuizType
@@ -267,6 +271,10 @@ interface AppState {
   batchCreating: boolean
   /** 待抽取面板是否展开（侧栏入口切换）。 */
   pendingPanelOpen: boolean
+  /** 当前待抽取列表页码（1-based）。 */
+  pendingPage: number
+  /** 待抽取记录总数（服务端 total，供分页与批量抽取判断）。 */
+  pendingTotal: number
 
   // Task 12：测验
   /** 测验面板是否展开（content-toolbar「开始测验」按钮切换）。 */
@@ -515,8 +523,8 @@ interface AppState {
   clearFlash: () => void
 
   // Task 11：候选节点抽取
-  /** 加载未处理观察记录列表（默认 processed=false）。 */
-  loadPendingObservations: () => Promise<void>
+  /** 加载未处理观察记录列表（默认 processed=false），可指定页码（1-based，默认当前页）。 */
+  loadPendingObservations: (page?: number) => Promise<void>
   /** 从一条观察记录抽取候选节点（不入图），存入 candidateNodes 供面板展示。返回是否成功。 */
   extractCandidates: (observationId: string) => Promise<boolean>
   /** 清空当前候选节点列表与关联的 observation id。 */
@@ -881,6 +889,9 @@ function errMsg(e: unknown): string {
 /** 闪烁高亮自动清除时长（ms）。 */
 const FLASH_AUTO_CLEAR_MS = 1800
 
+/** 待抽取列表分页大小（每页条数，与后端 list_observations 默认 limit 对齐）。 */
+const PENDING_PAGE_SIZE = 50
+
 /**
  * 批量导入对话时的分块大小（每块一次 HTTP 请求 + 一个后端事务）。
  *
@@ -963,6 +974,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   extracting: false,
   batchCreating: false,
   pendingPanelOpen: false,
+  pendingPage: 1,
+  pendingTotal: 0,
 
   // Task 12：测验
   quizPanelOpen: false,
@@ -1082,6 +1095,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       candidateNodes: cur.candidateNodes,
       candidateObservationId: cur.candidateObservationId,
       pendingPanelOpen: cur.pendingPanelOpen,
+      pendingPage: cur.pendingPage,
+      pendingTotal: cur.pendingTotal,
       quizPanelOpen: cur.quizPanelOpen,
       quizStage: cur.quizStage,
       quizType: cur.quizType,
@@ -1126,6 +1141,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         extracting: false,
         batchCreating: false,
         pendingPanelOpen: target.pendingPanelOpen,
+        pendingPage: target.pendingPage,
+        pendingTotal: target.pendingTotal,
         quizPanelOpen: target.quizPanelOpen,
         quizStage: target.quizStage,
         quizType: target.quizType,
@@ -1199,6 +1216,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         extracting: false,
         batchCreating: false,
         pendingPanelOpen: false,
+        pendingPage: 1,
+        pendingTotal: 0,
         quizPanelOpen: false,
         quizStage: 'config',
         quizType: 'single_choice',
@@ -1658,11 +1677,34 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   // ===== Task 11：候选节点抽取 =====
-  loadPendingObservations: async () => {
+  loadPendingObservations: async (page?: number) => {
     set({ error: '' })
+    const targetPage = page ?? get().pendingPage
     try {
-      const list = await api.listObservations({ processed: false, limit: 100 })
-      set({ pendingObservations: list })
+      const resp = await api.listObservations({
+        processed: false,
+        limit: PENDING_PAGE_SIZE,
+        offset: (targetPage - 1) * PENDING_PAGE_SIZE,
+      })
+      // 越界兜底：目标页无数据且非第 1 页（如批量抽取后剩余变少），回退第 1 页
+      if (resp.items.length === 0 && targetPage > 1 && resp.total > 0) {
+        const first = await api.listObservations({
+          processed: false,
+          limit: PENDING_PAGE_SIZE,
+          offset: 0,
+        })
+        set({
+          pendingObservations: first.items,
+          pendingPage: 1,
+          pendingTotal: first.total,
+        })
+      } else {
+        set({
+          pendingObservations: resp.items,
+          pendingPage: targetPage,
+          pendingTotal: resp.total,
+        })
+      }
     } catch (e) {
       set({ error: errMsg(e) })
     }

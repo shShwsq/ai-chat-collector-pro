@@ -100,7 +100,7 @@ describe('useAppStore plugin/chat 事件处理', () => {
     // 故下方显式重设实现）
     vi.clearAllMocks()
     // 显式重设 mock 返回值，确保每个 test 都有可用的 mock 实现
-    listObservationsMock.mockResolvedValue([])
+    listObservationsMock.mockResolvedValue({ items: [], total: 0, limit: 50, offset: 0 })
     confirmChatToolCallMock.mockResolvedValue({
       ok: true,
       request_id: 'r1',
@@ -117,7 +117,7 @@ describe('useAppStore plugin/chat 事件处理', () => {
 
   it('test_handlePluginConversationReceived_toast', async () => {
     // 默认 store 状态：activeNav='graph' + mode='study'，会触发 loadPendingObservations
-    // （mock api.listObservations 返回 []，无副作用）
+    // （mock api.listObservations 返回空分页，无副作用）
     const store = useAppStore.getState()
     store.handlePluginConversationReceived({
       observation_id: 'obs1',
@@ -162,10 +162,11 @@ describe('useAppStore plugin/chat 事件处理', () => {
     // 验证 loadPendingObservations 被调用 1 次
     expect(spy).toHaveBeenCalledTimes(1)
     // 顺便验证：study + graph 视图下，loadPendingObservations 调 api.listObservations
-    // （mock 返回 []，pendingObservations 被设为空数组）
+    // （mock 返回空分页，pendingObservations 被设为空数组）
     expect(api.listObservations).toHaveBeenCalledWith({
       processed: false,
-      limit: 100,
+      limit: 50,
+      offset: 0,
     })
     expect(useAppStore.getState().pendingObservations).toEqual([])
   })

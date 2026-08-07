@@ -58,7 +58,7 @@ import type {
   NodeCreate,
   NodeDetailResponse,
   NodeUpdate,
-  Observation,
+  ObservationListResponse,
   PluginBatchImportRequest,
   PluginBatchImportResponse,
   PluginConversationRequest,
@@ -330,7 +330,7 @@ export const api = {
     if (params?.graphId) q.graph_id = params.graphId
     if (params?.limit !== undefined) q.limit = String(params.limit)
     if (params?.offset !== undefined) q.offset = String(params.offset)
-    return request<Observation[]>(withQuery('/observations', q))
+    return request<ObservationListResponse>(withQuery('/observations', q))
   },
   /** 从一条 Observation 抽取候选节点（不入图，返回待确认列表）。 */
   extractNodes: (observationId: string, graphId: string) =>

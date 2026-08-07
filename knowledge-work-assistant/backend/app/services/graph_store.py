@@ -952,13 +952,13 @@ class GraphStore:
             graph_id: 可选图谱过滤。
             source: 可选来源过滤。
             processed: 可选处理状态过滤（True 仅已处理，False 仅未处理，None 全部）。
-            limit: 分页大小（默认 100，上限 500）。
+            limit: 分页大小（默认 100，上限 10000，仅作防滥用兜底，不实质限制）。
             offset: 偏移量。
 
         Returns:
             观察 dict 列表，按 ``created_at`` 倒序（最新在前）。
         """
-        limit = max(1, min(500, int(limit)))
+        limit = max(1, min(10000, int(limit)))
         offset = max(0, int(offset))
         async with AsyncSessionLocal() as db:
             stmt = select(ObservationRow).order_by(
@@ -973,6 +973,37 @@ class GraphStore:
             stmt = stmt.limit(limit).offset(offset)
             result = await db.execute(stmt)
             return [_observation_to_dict(r) for r in result.scalars().all()]
+
+    async def count_observations(
+        self,
+        *,
+        graph_id: str | None = None,
+        source: str | None = None,
+        processed: bool | None = None,
+    ) -> int:
+        """返回与 :meth:`list_observations` 相同过滤条件下的记录总数。
+
+        供路由层分页接口返回 ``total``，前端据此计算页数与判断批量抽取规模。
+        与 :meth:`list_observations` 共享 where 条件，但不应用 limit / offset。
+
+        Args:
+            graph_id: 可选图谱过滤。
+            source: 可选来源过滤。
+            processed: 可选处理状态过滤（True 仅已处理，False 仅未处理，None 全部）。
+
+        Returns:
+            符合过滤条件的记录总数。
+        """
+        async with AsyncSessionLocal() as db:
+            stmt = select(func.count(ObservationRow.id))
+            if graph_id is not None:
+                stmt = stmt.where(ObservationRow.graph_id == graph_id)
+            if source is not None:
+                stmt = stmt.where(ObservationRow.source == source)
+            if processed is not None:
+                stmt = stmt.where(ObservationRow.processed == processed)
+            total = await db.scalar(stmt)
+            return int(total or 0)
 
     async def list_observations_by_source(
         self,
