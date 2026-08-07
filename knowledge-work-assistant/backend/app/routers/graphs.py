@@ -175,6 +175,32 @@ async def delete_graph(
     return {"deleted": True, "id": graph_id}
 
 
+@router.post("/graphs/clear")
+async def clear_graphs(
+    mode: str | None = Query(
+        None, description="按模式过滤：study / work，省略则清空全部"
+    ),
+    store: GraphStore = Depends(get_graph_store),
+) -> dict[str, Any]:
+    """批量清空图谱（级联清理各图谱下的节点 / 边 / 测验）。
+
+    用 ``POST /graphs/clear`` 而非 ``DELETE /graphs`` 以避免与单条
+    ``DELETE /graphs/{graph_id}`` 动态路由冲突。observations 表的
+    ``graph_id`` 外键为 ``ondelete=SET NULL``，故相关 observations 不会被删除，
+    仅解绑（``graph_id`` 置空）——如需一并清空 observations，由前端额外调用
+    ``POST /observations/clear``。
+
+    幂等：无匹配数据时返回 ``deleted_count=0``。
+    """
+    if mode is not None and mode not in GRAPH_TYPES:
+        raise _bad_request(f"非法模式: {mode}（允许: {GRAPH_TYPES}）")
+    try:
+        count = await store.delete_graphs_by_type(mode)
+    except ValueError as exc:
+        raise _handle_value_error(exc) from exc
+    return {"ok": True, "deleted_count": count, "mode": mode}
+
+
 @router.get("/graphs/{graph_id}/stats", response_model=GraphStatsResponse)
 async def get_graph_stats(
     graph_id: str,

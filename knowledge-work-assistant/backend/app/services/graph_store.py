@@ -281,6 +281,36 @@ class GraphStore:
             await db.commit()
             return True
 
+    async def delete_graphs_by_type(self, graph_type: str | None) -> int:
+        """按 ``type`` 批量删除图谱（级联清理节点 / 边 / 测验）。
+
+        ``graph_type`` 为 ``study`` / ``work`` 时仅删该模式；``None`` 删全部。
+        observations 表的 ``graph_id`` 外键为 ``ondelete=SET NULL``，故相关
+        observations 不会被删除，仅解绑（``graph_id`` 置空）。
+
+        Args:
+            graph_type: 可选模式过滤，非法值抛 ``ValueError``。
+
+        Returns:
+            实际删除的图谱条数。
+        """
+        if graph_type is not None and graph_type not in GRAPH_TYPES:
+            raise ValueError(
+                f"非法图谱类型: {graph_type}（允许: {GRAPH_TYPES}）"
+            )
+        async with AsyncSessionLocal() as db:
+            stmt = select(GraphRow)
+            if graph_type is not None:
+                stmt = stmt.where(GraphRow.type == graph_type)
+            rows = list((await db.execute(stmt)).scalars().all())
+            count = len(rows)
+            if count == 0:
+                return 0
+            for row in rows:
+                await db.delete(row)
+            await db.commit()
+            return count
+
     # ------------------------------------------------------------------
     # Node CRUD
     # ------------------------------------------------------------------
@@ -913,6 +943,37 @@ class GraphStore:
             await db.delete(row)
             await db.commit()
             return True
+
+    async def delete_observations_by_source(self, source: str | None) -> int:
+        """按 ``source`` 批量删除观察记录。
+
+        observations 表无 mode 字段，故按来源（``plugin`` / ``import`` /
+        ``manual``）过滤；``source=None`` 删全部。observations 是抽取图谱的
+        源材料，与图谱解耦（删图谱时 ``graph_id`` 被 SET NULL），故本方法
+        不影响图谱数据。
+
+        Args:
+            source: 可选来源过滤，非法值抛 ``ValueError``。
+
+        Returns:
+            实际删除的观察记录条数。
+        """
+        if source is not None and source not in OBSERVATION_SOURCES:
+            raise ValueError(
+                f"非法观察来源: {source}（允许: {OBSERVATION_SOURCES}）"
+            )
+        async with AsyncSessionLocal() as db:
+            stmt = select(ObservationRow)
+            if source is not None:
+                stmt = stmt.where(ObservationRow.source == source)
+            rows = list((await db.execute(stmt)).scalars().all())
+            count = len(rows)
+            if count == 0:
+                return 0
+            for row in rows:
+                await db.delete(row)
+            await db.commit()
+            return count
 
     async def search_observations(
         self, query: str, *, limit: int = 20

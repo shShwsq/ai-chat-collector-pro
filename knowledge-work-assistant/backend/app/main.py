@@ -37,6 +37,8 @@ from app.routers import llm_admin as llm_admin_router
 from app.routers import stream as stream_router
 # Task 8：多轮对话 chat 路由（main_agent + 高风险拦截 + WS 推送）
 from app.routers import chat as chat_router
+# 数据管理：导出备份（批量清空分散在各域路由，导出跨域聚合在此）
+from app.routers import data_management as data_management_router
 from app.services.graph_agent import init_graph_agent
 # Task 8：main_agent + writer_agent 单例初始化
 from app.services.main_agent import init_main_agent
@@ -142,6 +144,11 @@ app.include_router(stream_router.router, prefix="/api", tags=["stream"])
 # /api/chat/sessions、/api/chat/sessions/{id}/messages|stream|checkpoint、
 # /api/chat/requests/{id}/cancel|confirm
 app.include_router(chat_router.router, prefix="/api", tags=["chat"])
+# 数据管理：/api/data/export（导出备份；批量清空在各域路由 /chat/sessions/clear、
+# /graphs/clear、/observations/clear）
+app.include_router(
+    data_management_router.router, prefix="/api", tags=["data-management"]
+)
 # WebSocket 挂载在根路径下：/ws（前端 lib/ws.ts 连接此处做收发测试）
 app.include_router(ws.router, tags=["ws"])
 
