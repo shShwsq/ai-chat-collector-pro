@@ -93,7 +93,36 @@ export function SettingsPanel() {
       <PluginIntegrationSection />
       <RequestQueueSection />
       <DangerZoneSection />
+      <HelpSection />
     </div>
+  )
+}
+
+// ============================================================================
+// 帮助区：重新查看引导
+// ============================================================================
+function HelpSection() {
+  const setOnboardingVisible = useAppStore((s) => s.setOnboardingVisible)
+  return (
+    <section className="settings-section">
+      <header className="settings-section__header">
+        <div>
+          <h2 className="settings-section__title">帮助</h2>
+          <p className="settings-section__desc">
+            忘了怎么用？随时可以重新查看首次启动引导，了解双模式、知识图谱、
+            AI 抽取、测验与报告等核心功能。
+          </p>
+        </div>
+      </header>
+      <button
+        type="button"
+        className="settings-section__ghost-btn"
+        onClick={() => setOnboardingVisible(true)}
+        title="重新查看首次启动引导向导"
+      >
+        重新查看引导 →
+      </button>
+    </section>
   )
 }
 

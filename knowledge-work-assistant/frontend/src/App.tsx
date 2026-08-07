@@ -19,6 +19,7 @@ import { TrendsSidebar } from './components/graph/TrendsSidebar'
 import { ReportPanel } from './components/graph/ReportPanel'
 import { QAPanel } from './components/graph/QAPanel'
 import { Toast } from './components/Toast'
+import { OnboardingWizard, isOnboardingDone } from './components/OnboardingWizard'
 import { useAppStore } from './store/useAppStore'
 import { generateSessionId, TestSocket } from './lib/ws'
 import type { HealthResponse } from './lib/types'
@@ -65,6 +66,13 @@ export default function App() {
   const navDirection = useAppStore((s) => s.navDirection)
   // 后台导入任务：运行中在 header 显示可点击的进度入口
   const importJob = useAppStore((s) => s.importJob)
+  // LLM 配置（启动时加载，用于判断是否显示「未配置」警告条）
+  const llmConfig = useAppStore((s) => s.llmConfig)
+  const loadLlmConfig = useAppStore((s) => s.loadLlmConfig)
+  const setActiveNav = useAppStore((s) => s.setActiveNav)
+  // 首次启动引导：localStorage 标记未完成时显示全屏向导
+  const onboardingVisible = useAppStore((s) => s.onboardingVisible)
+  const setOnboardingVisible = useAppStore((s) => s.setOnboardingVisible)
 
   const graphViewRef = useRef<GraphViewHandle>(null)
   // 持有 WebSocket 实例，避免重渲染时重建连接
@@ -73,6 +81,14 @@ export default function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [healthError, setHealthError] = useState<string>('')
   const [importModalOpen, setImportModalOpen] = useState(false)
+
+  // 启动时根据 localStorage 标记决定是否显示引导向导
+  useEffect(() => {
+    if (!isOnboardingDone()) setOnboardingVisible(true)
+  }, [setOnboardingVisible])
+
+  // LLM 未配置时显示警告条：llmConfig 已加载但 ready 为 false
+  const llmNotReady = llmConfig !== null && llmConfig.ready === false
 
   useEffect(() => {
     const dark = theme === 'simple-black'
@@ -104,13 +120,14 @@ export default function App() {
     }
   }, [])
 
-  // 启动时：首次加载当前模式图谱列表 + 健康检查轮询
+  // 启动时：首次加载当前模式图谱列表 + 健康检查轮询 + LLM 配置
   useEffect(() => {
     void loadGraphs()
     void checkHealth()
+    void loadLlmConfig()
     const timer = setInterval(() => void checkHealth(), 5000)
     return () => clearInterval(timer)
-  }, [loadGraphs, checkHealth])
+  }, [loadGraphs, checkHealth, loadLlmConfig])
 
   // WebSocket：连接 /ws?session_id=<uuid>，订阅「插件对话已接收」与流式事件。
   //
@@ -264,6 +281,22 @@ export default function App() {
         </div>
       </header>
 
+      {llmNotReady && (
+        <div className="llm-warning-bar" role="status">
+          <span className="llm-warning-bar__icon" aria-hidden="true">⚠</span>
+          <span className="llm-warning-bar__text">
+            LLM 未配置，AI 功能（节点抽取 / 延伸 / 报告 / 测验）将走降级路径或不可用。
+          </span>
+          <button
+            type="button"
+            className="llm-warning-bar__btn"
+            onClick={() => setActiveNav('settings')}
+          >
+            前往配置 →
+          </button>
+        </div>
+      )}
+
       <div className="app-body">
         {/* 最左侧竖排导航条：对话 / 图谱 / 设置 */}
         <SideNav />
@@ -370,6 +403,11 @@ export default function App() {
 
       {/* 全局 Toast（成功 / 警告 / 错误提示） */}
       <Toast />
+
+      {/* 首次启动全屏引导向导 */}
+      {onboardingVisible && (
+        <OnboardingWizard onFinish={() => setOnboardingVisible(false)} />
+      )}
 
       {/* 手动导入对话弹窗 */}
       {importModalOpen && (

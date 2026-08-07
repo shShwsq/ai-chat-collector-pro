@@ -64,6 +64,7 @@ export function ReportPanel() {
   const reportStreamingText = useAppStore((s) => s.reportStreamingText)
   const setReportPeriod = useAppStore((s) => s.setReportPeriod)
   const generateReportStream = useAppStore((s) => s.generateReportStream)
+  const cancelReportStream = useAppStore((s) => s.cancelReportStream)
   const exportReportDocx = useAppStore((s) => s.exportReportDocx)
   const currentGraphId = useAppStore((s) => s.currentGraphId)
 
@@ -86,6 +87,12 @@ export function ReportPanel() {
     if (reportGenerating) return
     // 流式生成：无 sessionId 时 store 内部自动回退到非流式
     await generateReportStream()
+  }
+
+  /** 取消正在进行的报告生成：调用后端 LLM 取消接口，
+   *  已生成部分会保留在预览区。 */
+  const handleCancel = async () => {
+    await cancelReportStream()
   }
 
   const handleExport = async () => {
@@ -213,6 +220,16 @@ ${renderMarkdown(reportResult.markdown)}
               >
                 {reportGenerating ? '生成中…' : '生成报告'}
               </button>
+              {reportGenerating && (
+                <button
+                  type="button"
+                  className="work-actions__btn work-actions__btn--ghost"
+                  onClick={handleCancel}
+                  title="取消当前生成请求，已生成部分会保留在预览区"
+                >
+                  取消
+                </button>
+              )}
             </div>
           </section>
 
