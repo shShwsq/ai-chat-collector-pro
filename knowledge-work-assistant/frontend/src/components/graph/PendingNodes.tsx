@@ -314,7 +314,7 @@ export function PendingNodes() {
               <h3 className="pending-section__title">
                 未处理对话
                 <span className="pending-section__count">
-                  {pendingObservations.length}
+                  {pendingTotal > PENDING_PAGE_SIZE ? `${PENDING_PAGE_SIZE}+` : pendingTotal}
                 </span>
               </h3>
               <div className="pending-section__actions">
@@ -359,31 +359,6 @@ export function PendingNodes() {
                   />
                 ))}
               </ul>
-            )}
-            {pendingTotal > 0 && (
-              <div className="pending-pagination">
-                <button
-                  type="button"
-                  className="pending-pagination__btn"
-                  onClick={() => void loadPendingObservations(pendingPage - 1)}
-                  disabled={pendingPage <= 1 || extracting || batchCreating || batchExtracting}
-                  title="上一页"
-                >
-                  上一页
-                </button>
-                <span className="pending-pagination__info">
-                  第 {pendingPage} / {totalPages} 页（共 {pendingTotal} 条）
-                </span>
-                <button
-                  type="button"
-                  className="pending-pagination__btn"
-                  onClick={() => void loadPendingObservations(pendingPage + 1)}
-                  disabled={pendingPage >= totalPages || extracting || batchCreating || batchExtracting}
-                  title="下一页"
-                >
-                  下一页
-                </button>
-              </div>
             )}
           </section>
 
@@ -513,6 +488,33 @@ export function PendingNodes() {
             </div>
           )}
         </div>
+
+        {/* 分页栏：固定在面板底部，不随列表滚动 */}
+        {pendingTotal > 0 && (
+          <div className="pending-panel__pagination">
+            <button
+              type="button"
+              className="pending-panel__pagination-btn"
+              onClick={() => void loadPendingObservations(pendingPage - 1)}
+              disabled={pendingPage <= 1 || extracting || batchCreating || batchExtracting}
+              title="上一页"
+            >
+              上一页
+            </button>
+            <span className="pending-panel__pagination-info">
+              第 {pendingPage} / {totalPages} 页（共 {pendingTotal} 条）
+            </span>
+            <button
+              type="button"
+              className="pending-panel__pagination-btn"
+              onClick={() => void loadPendingObservations(pendingPage + 1)}
+              disabled={pendingPage >= totalPages || extracting || batchCreating || batchExtracting}
+              title="下一页"
+            >
+              下一页
+            </button>
+          </div>
+        )}
 
         {/* 底部状态条 */}
         <footer className="pending-panel__footer">
