@@ -4773,8 +4773,8 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
   }
 
   .quiz-panel {
-    width: 100vw;
-    max-width: 100vw;
+    width: 100%;
+    max-width: 100%;
   }
 
   .toast {
@@ -4843,7 +4843,12 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
 }
 
 .quiz-panel {
-  position: fixed;
+  /* 用 absolute 而非 fixed：与 .pending-panel 同理，面板锚定到最近定位祖先
+     （.nav-view--graph，位于 app-header 之下），top:0 即内容区顶部，避免被
+     app-header 遮挡。.mode-slide-wrap 的 view-transition-name 会建立独立
+     stacking context，若用 fixed+top:0，面板 z-index:51 会被困在该 context 内，
+     反而低于根 context 中 app-header 的 z-index:10，导致顶部标题被 header 盖住。 */
+  position: absolute;
   top: 0;
   right: 0;
   bottom: 0;
@@ -5357,7 +5362,12 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
 }
 
 .work-panel {
-  position: fixed;
+  /* 用 absolute 而非 fixed：与 .pending-panel / .quiz-panel 同理，面板锚定到最近
+     定位祖先（.nav-view--graph，位于 app-header 之下），top:0 即内容区顶部，避免被
+     app-header 遮挡。.mode-slide-wrap 的 view-transition-name 会建立独立
+     stacking context，若用 fixed+top:0，面板 z-index 会被困在该 context 内，
+     反而低于根 context 中 app-header 的 z-index:10，导致顶部标题被 header 盖住。 */
+  position: absolute;
   top: 0;
   right: 0;
   bottom: 0;
@@ -6440,8 +6450,8 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
 /* 响应式：窄屏 Work 面板占满宽度 */
 @media (max-width: 600px) {
   .work-panel {
-    width: 100vw;
-    max-width: 100vw;
+    width: 100%;
+    max-width: 100%;
   }
 
   .report-sections-grid {
