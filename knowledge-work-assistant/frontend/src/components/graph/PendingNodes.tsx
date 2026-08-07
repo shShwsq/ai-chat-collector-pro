@@ -112,6 +112,9 @@ export function PendingNodes() {
   // 批量抽取全部进行中
   const [batchExtracting, setBatchExtracting] = useState(false)
   const [batchExtractProgress, setBatchExtractProgress] = useState({ current: 0, total: 0 })
+  // 底部页码输入框值（字符串，便于编辑中间态如清空）。与 pendingPage 保持同步：
+  // pendingPage 变化（翻页 / 刷新）时回填，用户编辑后回车 / 失焦提交跳转。
+  const [pageInput, setPageInput] = useState(String(pendingPage))
 
   // 候选列表变化时默认全选
   useEffect(() => {
@@ -124,6 +127,26 @@ export function PendingNodes() {
   useEffect(() => {
     if (open) void loadPendingObservations()
   }, [open, loadPendingObservations])
+
+  // pendingPage 变化时同步输入框（翻页按钮 / 批量抽取收尾都会改 pendingPage）
+  useEffect(() => {
+    setPageInput(String(pendingPage))
+  }, [pendingPage])
+
+  /** 提交页码输入：clamp 到 [1, totalPages]，与当前页不同则跳转，否则仅回填。 */
+  const commitPageInput = () => {
+    const n = parseInt(pageInput, 10)
+    if (Number.isNaN(n)) {
+      setPageInput(String(pendingPage))
+      return
+    }
+    const clamped = Math.min(Math.max(n, 1), totalPages)
+    if (clamped !== pendingPage) {
+      void loadPendingObservations(clamped)
+    } else {
+      setPageInput(String(clamped))
+    }
+  }
 
   const allSelected =
     candidateNodes.length > 0 && selectedIdx.size === candidateNodes.length
@@ -503,7 +526,22 @@ export function PendingNodes() {
                 上一页
               </button>
               <span className="pending-panel__pagination-info">
-                {pendingPage}/{totalPages} 页 · 共 {pendingTotal} 条
+                第
+                <input
+                  type="number"
+                  className="pending-panel__page-input"
+                  value={pageInput}
+                  min={1}
+                  max={totalPages}
+                  disabled={extracting || batchCreating || batchExtracting}
+                  onChange={(e) => setPageInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') e.currentTarget.blur()
+                  }}
+                  onBlur={commitPageInput}
+                  title={`跳转页码（1-${totalPages}）`}
+                />
+                / {totalPages} 页 · 共 {pendingTotal} 条
               </span>
               <button
                 type="button"
