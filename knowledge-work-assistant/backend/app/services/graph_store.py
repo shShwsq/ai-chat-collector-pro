@@ -36,7 +36,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, delete, func, or_, select, text
+from sqlalchemy import and_, bindparam, delete, func, or_, select, text
 from sqlalchemy.orm import selectinload
 
 from app.db import AsyncSessionLocal, with_sqlite_lock_retry
@@ -802,6 +802,131 @@ class GraphStore:
                 return _observation_to_dict(row)
 
         return await with_sqlite_lock_retry(_insert)
+
+    async def create_observations_batch(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        platform: str = "manual",
+        source: str = OBSERVATION_SOURCE_MANUAL,
+        within_hours: int = 24,
+    ) -> dict[str, Any]:
+        """批量创建观察记录（单事务 + FTS5 触发器临时禁用）。
+
+        用于手动导入大量对话时避免逐条 HTTP / 逐条 commit 的开销，把整批放进
+        **一个事务**一次提交，并临时禁用 ``observations_ai`` 触发器、插入后用一条
+        ``INSERT INTO observations_fts SELECT ...`` 批量回填全文索引，再重建触发器。
+
+        SQLite 的 DDL 是事务性的：若事务回滚，``DROP TRIGGER`` 也会回滚，触发器
+        自动恢复，因此即使中途失败也不会留下「触发器被删除」的破损状态。
+
+        Args:
+            items: 每项形如
+                ``{conversation_markdown, occurred_at, metadata, dedup_key}``。
+            platform: 来源平台。
+            source: 来源标记（plugin / import / manual）。
+            within_hours: 幂等去重时间窗口（小时）。
+
+        Returns:
+            ``{imported, deduplicated, failed, errors, imported_ids}``。
+        """
+        if source not in OBSERVATION_SOURCES:
+            raise ValueError(f"非法观察来源: {source}（允许: {OBSERVATION_SOURCES}）")
+
+        # 预收集所有非空 dedup_key，一次性查 24h 内已存在的，避免逐条查询
+        all_keys = [it["dedup_key"] for it in items if it.get("dedup_key")]
+
+        async def _bulk() -> dict[str, Any]:
+            async with AsyncSessionLocal() as db:
+                cutoff = _now() - timedelta(hours=max(1, int(within_hours)))
+                existing_keys: set[str] = set()
+                # 分块查询避免 IN 列表过长（SQLite 变量数上限）
+                for i in range(0, len(all_keys), 500):
+                    chunk = all_keys[i : i + 500]
+                    stmt = select(ObservationRow.dedup_key).where(
+                        ObservationRow.dedup_key.in_(chunk),
+                        ObservationRow.created_at >= cutoff,
+                    )
+                    rows = await db.execute(stmt)
+                    existing_keys.update(r[0] for r in rows)
+
+                seen_in_batch: set[str] = set()
+                rows_to_add: list[ObservationRow] = []
+                imported_ids: list[str] = []
+                deduplicated = 0
+
+                for it in items:
+                    dk = it.get("dedup_key")
+                    if dk and (dk in existing_keys or dk in seen_in_batch):
+                        deduplicated += 1
+                        continue
+                    if dk:
+                        seen_in_batch.add(dk)
+                    row_id = _new_id()
+                    rows_to_add.append(
+                        ObservationRow(
+                            id=row_id,
+                            platform=platform,
+                            occurred_at=it.get("occurred_at"),
+                            conversation_markdown=it["conversation_markdown"],
+                            metadata_json=_safe_json_dumps(it.get("metadata") or {}),
+                            dedup_key=dk,
+                            source=source,
+                            graph_id=None,
+                            processed=False,
+                        )
+                    )
+                    imported_ids.append(row_id)
+
+                # 检测 observations_fts 是否存在（FTS5 不可用时表与触发器均未创建）
+                fts_exists = (
+                    await db.execute(
+                        text(
+                            "SELECT name FROM sqlite_master "
+                            "WHERE type='table' AND name='observations_fts'"
+                        )
+                    )
+                ).first() is not None
+
+                if fts_exists:
+                    # 临时禁用 AFTER INSERT 触发器，避免逐行回填 FTS（批量回填更快）
+                    await db.execute(text("DROP TRIGGER IF EXISTS observations_ai"))
+
+                db.add_all(rows_to_add)
+                await db.flush()  # 写入但未提交，使后续 raw SQL 能读到新行
+
+                if fts_exists and imported_ids:
+                    # 一条 INSERT...SELECT 批量回填全文索引（分块避免绑定变量过多）
+                    populate_sql = text(
+                        "INSERT INTO observations_fts(row_id, conversation_markdown) "
+                        "SELECT id, conversation_markdown FROM observations "
+                        "WHERE id IN :ids"
+                    ).bindparams(bindparam("ids", expanding=True))
+                    for i in range(0, len(imported_ids), 500):
+                        await db.execute(
+                            populate_sql, {"ids": imported_ids[i : i + 500]}
+                        )
+                    # 重建触发器，恢复后续单条插入的自动同步
+                    await db.execute(
+                        text(
+                            "CREATE TRIGGER IF NOT EXISTS observations_ai "
+                            "AFTER INSERT ON observations BEGIN "
+                            "INSERT INTO observations_fts(row_id, conversation_markdown) "
+                            "VALUES (NEW.id, NEW.conversation_markdown); END"
+                        )
+                    )
+
+                await db.commit()
+                return {
+                    "imported": len(imported_ids),
+                    "deduplicated": deduplicated,
+                    "failed": 0,
+                    "errors": [],
+                    "imported_ids": imported_ids,
+                }
+
+        # 批量为单事务、单写者，锁冲突极少；仍保留重试以应对极端情况
+        return await with_sqlite_lock_retry(_bulk)
 
     async def get_observation(self, observation_id: str) -> dict[str, Any] | None:
         """获取观察记录。不存在返回 None。"""

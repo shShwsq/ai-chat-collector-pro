@@ -442,6 +442,31 @@ export interface PluginConversationRequest {
 export interface PluginConversationResponse {
   received: boolean
   observation_id: string
+  /** 是否命中 24h 幂等去重（同 conversation_id 已存在）。 */
+  deduplicated?: boolean
+}
+
+/** 批量导入单条对话项（与 PluginConversationRequest 字段一致，去掉 platform）。 */
+export interface PluginBatchConversationItem {
+  timestamp: string
+  conversation_markdown: string
+  metadata?: Record<string, unknown>
+}
+
+/** 批量导入对话请求（手动导入功能，一次提交多条）。 */
+export interface PluginBatchImportRequest {
+  platform: string
+  conversations: PluginBatchConversationItem[]
+}
+
+/** 批量导入对话响应：汇总 imported / deduplicated / failed。 */
+export interface PluginBatchImportResponse {
+  received: boolean
+  total: number
+  imported: number
+  deduplicated: number
+  failed: number
+  errors: string[]
 }
 
 // ============================================================================

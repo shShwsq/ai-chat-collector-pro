@@ -8,6 +8,7 @@ import { ContentToolbar } from './components/ContentToolbar'
 import { SideNav } from './components/SideNav'
 import { ChatPanel } from './components/ChatPanel'
 import { ChatExpandedOverlay } from './components/ChatExpandedOverlay'
+import { ImportConversationsModal } from './components/ImportConversationsModal'
 import { SettingsPanel } from './components/SettingsPanel'
 import { CardView } from './components/graph/CardView'
 import { GraphView, type GraphViewHandle } from './components/graph/GraphView'
@@ -62,6 +63,8 @@ export default function App() {
   const loadGraphs = useAppStore((s) => s.loadGraphs)
   const activeNav = useAppStore((s) => s.activeNav)
   const navDirection = useAppStore((s) => s.navDirection)
+  // 后台导入任务：运行中在 header 显示可点击的进度入口
+  const importJob = useAppStore((s) => s.importJob)
 
   const graphViewRef = useRef<GraphViewHandle>(null)
   // 持有 WebSocket 实例，避免重渲染时重建连接
@@ -69,6 +72,7 @@ export default function App() {
 
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [healthError, setHealthError] = useState<string>('')
+  const [importModalOpen, setImportModalOpen] = useState(false)
 
   useEffect(() => {
     const dark = theme === 'simple-black'
@@ -237,6 +241,25 @@ export default function App() {
             <span className="health-badge__dot" />
             {isHealthy ? `后端 ${health!.version}` : '后端未连接'}
           </span>
+          <button
+            type="button"
+            className="app-header__btn"
+            onClick={() => setImportModalOpen(true)}
+            title="手动导入平台导出的对话文件"
+          >
+            导入对话
+          </button>
+          {importJob?.status === 'running' && (
+            <button
+              type="button"
+              className="app-header__import-progress"
+              onClick={() => setImportModalOpen(true)}
+              title="查看导入进度"
+            >
+              <span className="app-header__import-progress-spinner" />
+              导入中 {importJob.done}/{importJob.total}
+            </button>
+          )}
           <ModeSwitch />
         </div>
       </header>
@@ -347,6 +370,11 @@ export default function App() {
 
       {/* 全局 Toast（成功 / 警告 / 错误提示） */}
       <Toast />
+
+      {/* 手动导入对话弹窗 */}
+      {importModalOpen && (
+        <ImportConversationsModal onClose={() => setImportModalOpen(false)} />
+      )}
     </div>
   )
 }

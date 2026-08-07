@@ -56,6 +56,10 @@
 import { create } from 'zustand'
 
 import { api, ApiError } from '../lib/api'
+import {
+  type ImportedConversation,
+  type ImportPlatform,
+} from '../lib/importers'
 import { resolveStoredTheme, THEME_STORAGE_KEY, type Theme } from '../lib/themes'
 import type {
   AskSource,
@@ -130,6 +134,31 @@ export interface ToastMessage {
 
 /** 左侧竖排导航当前激活项：chat 对话 / graph 图谱 / settings 设置。 */
 export type ActiveNav = 'chat' | 'graph' | 'settings'
+
+/** 批量导入对话的结果汇总（每条会话归入 imported / deduplicated / failed 之一）。 */
+export interface ImportConversationsResult {
+  total: number
+  imported: number
+  deduplicated: number
+  failed: number
+  /** 失败项的错误消息（最多保留前 5 条，避免刷屏）。 */
+  errors: string[]
+}
+
+/**
+ * 后台导入任务状态。上提到全局 store，使得弹窗关闭后任务继续运行、
+ * 用户可从 header 进度入口随时重开弹窗查看进度与结果。
+ * - ``null``：无任务（或已清除）；
+ * - ``status='running'``：进行中，``done/total`` 实时更新；
+ * - ``status='done'``：已完成，``result`` 含汇总，用户查看后可 ``clearImportJob`` 清除。
+ */
+export interface ImportJobState {
+  status: 'running' | 'done'
+  platform: ImportPlatform
+  done: number
+  total: number
+  result: ImportConversationsResult | null
+}
 
 // ============================================================================
 // 模式快照：切换 study/work 时保存当前模式的关键状态，切回时直接恢复
@@ -328,6 +357,15 @@ interface AppState {
   pluginRecentError: string
   /** 插件对接接口契约 JSON，null = 未加载。 */
   pluginContract: Record<string, unknown> | null
+
+  /** 批量导入对话进行中标记：为 true 时抑制 WS 广播的逐条 Toast，由导入动作统一收尾。 */
+  batchImporting: boolean
+
+  /**
+   * 后台导入任务状态：null=无任务。running 期间弹窗关闭后任务继续，
+   * header 进度入口可重开弹窗查看；done 后保留结果供查看，由用户清除。
+   */
+  importJob: ImportJobState | null
 
   // ===== 流式输出状态 =====
   /** WebSocket 连接的 session_id（App.tsx 启动时生成并设置）。 */
@@ -608,6 +646,25 @@ interface AppState {
     title: string
     timestamp: string | null
   }) => void
+  /**
+   * 批量导入平台导出的对话：逐条调用 ``POST /api/plugin/conversations`` 落库为
+   * Observation（source='plugin'，进入「待抽取」流水线）。
+   *
+   * - 复用插件推送接口：``metadata.conversation_id`` 透传平台会话 id，后端按
+   *   ``{platform}:{id}`` 做 24h 幂等去重，重复导入安全；
+   * - 并发限制（6）避免瞬时打满后端；
+   * - 导入期间置 ``batchImporting=true`` 抑制 WS 广播的逐条 Toast，结束后统一
+   *   刷新最近推送列表与待抽取列表，并弹一条汇总 Toast；
+   * - **进度与结果写入 ``importJob`` 全局状态**，弹窗关闭后任务继续运行，
+   *   用户可从 header 进度入口随时重开弹窗查看。返回结果汇总。
+   */
+  importConversations: (
+    platform: ImportPlatform,
+    conversations: ImportedConversation[],
+  ) => Promise<ImportConversationsResult>
+
+  /** 清除已完成的导入任务记录（运行中不可清除，避免丢失进度）。 */
+  clearImportJob: () => void
 
   // ===== 流式输出动作 =====
   /** 设置 WebSocket session_id（App.tsx 启动时调用）。 */
@@ -824,6 +881,15 @@ function errMsg(e: unknown): string {
 /** 闪烁高亮自动清除时长（ms）。 */
 const FLASH_AUTO_CLEAR_MS = 1800
 
+/**
+ * 批量导入对话时的分块大小（每块一次 HTTP 请求 + 一个后端事务）。
+ *
+ * 取 200：在进度反馈粒度（3000 条约 15 次更新）与 HTTP/事务开销间取平衡。
+ * 后端单次上限 MAX_BATCH_SIZE=1000，200 远低于上限。
+ * 串行发送（非并发）：SQLite 单写者，并发只会增加写锁争用。
+ */
+const IMPORT_CHUNK_SIZE = 200
+
 /** 全局自增 toast id，避免短时间多条消息 id 冲突。 */
 let _toastSeq = 0
 
@@ -947,6 +1013,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   pluginRecentLoading: false,
   pluginRecentError: '',
   pluginContract: null,
+
+  // 批量导入对话标记：为 true 时抑制 WS 广播的逐条 Toast
+  batchImporting: false,
+  // 后台导入任务状态：null=无任务
+  importJob: null,
 
   // ===== 流式输出状态 =====
   streamingSessionId: null,
@@ -2337,6 +2408,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   handlePluginConversationReceived: (payload) => {
+    // 批量导入进行中：抑制逐条 Toast 与列表刷新，由 importConversations 统一收尾
+    if (get().batchImporting) return
     // 1. 弹 Toast 提示收到新对话
     get().pushToast(
       `收到新对话：${payload.title || payload.platform}`,
@@ -2346,6 +2419,89 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (get().activeNav === 'graph' && get().mode === 'study') {
       void get().loadPendingObservations()
     }
+  },
+
+  importConversations: async (platform, conversations) => {
+    const total = conversations.length
+    if (total === 0) {
+      return { total: 0, imported: 0, deduplicated: 0, failed: 0, errors: [] }
+    }
+    // 初始化后台任务状态：弹窗即使立即关闭，store 仍持有进度供 header 查看
+    set({
+      batchImporting: true,
+      importJob: { status: 'running', platform, done: 0, total, result: null },
+    })
+    let imported = 0
+    let deduplicated = 0
+    let failed = 0
+    const errors: string[] = []
+
+    // 串行分块调用批量接口：
+    // - 每块一次 HTTP / 一个事务，避免 3000 次逐条请求的固定开销
+    // - 串行（非并发）：SQLite 单写者，并发只会增加写锁争用，串行反而最快
+    // - 每块完成更新一次进度，粒度 = IMPORT_CHUNK_SIZE
+    for (let i = 0; i < total; i += IMPORT_CHUNK_SIZE) {
+      const chunk = conversations.slice(i, i + IMPORT_CHUNK_SIZE)
+      try {
+        const resp = await api.pushPluginConversationsBatch({
+          platform,
+          conversations: chunk.map((c) => ({
+            timestamp: c.occurredAt || new Date().toISOString(),
+            conversation_markdown: c.markdown,
+            metadata: {
+              conversation_id: c.id,
+              title: c.title,
+              model: c.model,
+            },
+          })),
+        })
+        imported += resp.imported
+        deduplicated += resp.deduplicated
+        failed += resp.failed
+        for (const e of resp.errors) {
+          if (errors.length < 5) errors.push(e)
+        }
+      } catch (e) {
+        // 整块失败（网络 / 4xx / 5xx）：该块全部计入 failed
+        failed += chunk.length
+        if (errors.length < 5) errors.push(errMsg(e))
+      } finally {
+        // 更新全局进度（弹窗关闭后 header 仍可读取）
+        const job = get().importJob
+        if (job && job.status === 'running') {
+          set({ importJob: { ...job, done: Math.min(i + chunk.length, total) } })
+        }
+      }
+    }
+
+    const result: ImportConversationsResult = {
+      total,
+      imported,
+      deduplicated,
+      failed,
+      errors,
+    }
+    set({
+      batchImporting: false,
+      importJob: { status: 'done', platform, done: total, total, result },
+    })
+    // 统一收尾：刷新最近推送列表 + 待抽取列表（一次性，而非逐条刷新）
+    void get().loadPluginRecent()
+    if (get().activeNav === 'graph' && get().mode === 'study') {
+      void get().loadPendingObservations()
+    }
+    // 汇总 Toast
+    const parts: string[] = [`导入 ${imported} 条`]
+    if (deduplicated > 0) parts.push(`${deduplicated} 条已存在跳过`)
+    if (failed > 0) parts.push(`${failed} 条失败`)
+    get().pushToast(parts.join('，'), failed > 0 ? 'warning' : 'success')
+    return result
+  },
+
+  clearImportJob: () => {
+    // 运行中不可清除，避免丢失正在写入的进度
+    if (get().importJob?.status === 'running') return
+    set({ importJob: null })
   },
 
   // ===== 流式输出动作 =====
