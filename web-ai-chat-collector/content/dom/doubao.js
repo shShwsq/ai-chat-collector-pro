@@ -18,11 +18,11 @@
 //             .container-fBOrXO > .container-enLQFx           段落（html-to-markdown.js 按段落处理）
 //       助手消息:
 //         .grid.grid-cols-[...]                              grid 布局
-//           [data-plugin-identifier*="block_type:10040"]      思考块
+//           [data-plugin-identifier*="block_type:10040"]      思考块（可多个，多步搜索时交替出现）
 //             [class*="thinking-box-root"]                    思考容器
-//               [data-thinking-box="title"]                   标题（"已完成思考，参考 N 篇资料"）
+//               [data-thinking-box="title"]                   标题（"已完成思考，参考 N 篇资料" 或步骤名）
 //               [data-thinking-box-collapsed-step-content]    折叠时的内容
-//           [data-plugin-identifier*="block_type:10000"]      正式回答
+//           [data-plugin-identifier*="block_type:10000"]      正式回答（可多个，与思考块交替出现）
 //             .md-box-root                                    回答 markdown 容器
 //           [data-plugin-identifier*="block_type:10025"]      搜索结果块（噪声，移除）
 //           [data-plugin-identifier*="block_type:10050"]      相关视频/卡片块（噪声，移除）
@@ -140,42 +140,60 @@ DOM_ADAPTERS.doubao = {
   },
 
   // 提取助手消息内容（思考 + 回答）
+  // 豆包助手消息可包含多个 block_type:10040（思考）和 block_type:10000（回答），
+  // 多步搜索/Agent 场景下交替出现：思考→回答→思考→回答→...
+  // 按 DOM 顺序遍历所有 block，分别累积思考和回答，避免只取首个块丢失后续内容。
   _extractAssistantContent: (el) => {
-    let thinking = '';
-    let answer = '';
+    const thinkParts = [];
+    const answerParts = [];
 
-    // 1. 提取思考内容
-    const thinkingRoot = el.querySelector('[class*="thinking-box-root"]');
-    if (thinkingRoot) {
-      // 思考内容：优先取展开后的内容，折叠时只有标题
-      const contentEl = thinkingRoot.querySelector('[data-thinking-box="content"]');
-      if (contentEl) {
-        const clone = contentEl.cloneNode(true);
-        // 移除标题（"已完成思考，参考 N 篇资料"）
-        clone.querySelectorAll('[data-thinking-box="title"]').forEach(n => n.remove());
-        thinking = (clone.innerText || clone.textContent || '').trim();
-      } else {
-        // 折叠状态：取整个 thinkingRoot 文本并清理标题
-        let thinkText = thinkingRoot.textContent.trim();
-        thinkText = thinkText.replace(/^已完成思考[，,]\s*参考\s*\d+\s*篇资料\s*/, '');
-        thinkText = thinkText.replace(/\s*已完成\s*$/, '');
-        thinking = thinkText.trim();
+    const blocks = el.querySelectorAll('[data-plugin-identifier]');
+    for (const block of blocks) {
+      const id = block.getAttribute('data-plugin-identifier') || '';
+      // 跳过噪声块：搜索结果(10025)、相关视频/卡片(10050)
+      if (id.includes('block_type:10025') || id.includes('block_type:10050')) continue;
+
+      if (id.includes('block_type:10040')) {
+        const text = DOM_ADAPTERS.doubao._extractThinkingText(block);
+        if (text) thinkParts.push(text);
+      } else if (id.includes('block_type:10000')) {
+        const mdBox = block.querySelector('.md-box-root');
+        if (!mdBox) continue;
+        const text = DOM_ADAPTERS.doubao._extractMarkdownText(mdBox);
+        if (text) answerParts.push(text);
       }
     }
 
-    // 2. 提取回答正文：找到不在 thinking-box-root 内的 md-box-root
-    const allMdBoxes = el.querySelectorAll('.md-box-root');
-    for (const md of allMdBoxes) {
-      if (md.closest('[class*="thinking-box-root"]')) continue;
-      answer = DOM_ADAPTERS.doubao._extractMarkdownText(md);
-      if (answer) break;
-    }
-
-    // 3. 拼接为标准格式（与网络适配器一致）
+    // 拼接为标准格式（与网络适配器一致）
+    const thinking = thinkParts.join('\n\n');
+    const answer = answerParts.join('\n\n');
     let fullContent = '';
     if (thinking) fullContent += `<think>\n${thinking}\n</think>\n\n`;
     fullContent += answer;
     return fullContent.trim();
+  },
+
+  // 从单个思考块（block_type:10040）提取文本
+  // 展开态：取 [data-thinking-box="content"] 内容（移除标题噪声）
+  // 折叠态：展开内容为空时降级取标题文本（多步搜索的步骤名，如"明确问题类型"），
+  //         并清理"已完成思考，参考 N 篇资料"等无意义前缀
+  _extractThinkingText: (block) => {
+    const thinkingRoot = block.querySelector('[class*="thinking-box-root"]');
+    if (!thinkingRoot) return '';
+
+    const contentEl = thinkingRoot.querySelector('[data-thinking-box="content"]');
+    if (contentEl) {
+      const clone = contentEl.cloneNode(true);
+      clone.querySelectorAll('[data-thinking-box="title"]').forEach(n => n.remove());
+      const text = (clone.innerText || clone.textContent || '').trim();
+      if (text) return text;
+    }
+
+    // 折叠态：取 thinkingRoot 全文本，清理标题前缀后作为思考线索
+    let thinkText = thinkingRoot.textContent.trim();
+    thinkText = thinkText.replace(/^已完成思考[，,]\s*参考\s*\d+\s*篇资料\s*/, '');
+    thinkText = thinkText.replace(/\s*已完成\s*$/, '');
+    return thinkText.trim();
   },
 
   // 从 .md-box-root 元素提取 Markdown 文本
