@@ -30,6 +30,7 @@ import type { ReactNode } from 'react'
 import { Icon } from '../Icon'
 import type { IconName } from '../Icon'
 import { useAppStore } from '../../store/useAppStore'
+import { api } from '../../lib/api'
 import type { CandidateNode, Observation } from '../../lib/types'
 import { formatShortTime } from '../../lib/date'
 
@@ -92,6 +93,14 @@ export function PendingNodes() {
   const batchCreateNodes = useAppStore((s) => s.batchCreateNodes)
   const currentGraphId = useAppStore((s) => s.currentGraphId)
   const pushToast = useAppStore((s) => s.pushToast)
+  const pendingPage = useAppStore((s) => s.pendingPage)
+  const pendingTotal = useAppStore((s) => s.pendingTotal)
+
+  /** 待抽取列表每页条数（与 store PENDING_PAGE_SIZE 对齐）。 */
+  const PENDING_PAGE_SIZE = 50
+  /** 批量抽取数量上限：超过则提示并仅抽取最新 N 条（按 created_at 倒序）。 */
+  const BATCH_EXTRACT_LIMIT = 100
+  const totalPages = Math.max(1, Math.ceil(pendingTotal / PENDING_PAGE_SIZE))
 
   // 候选项选中态：key = 候选索引（基于 candidateNodes 数组位置），
   // 因 CandidateNode 没有 id 字段（未入图），用索引作为稳定 key。
@@ -103,6 +112,9 @@ export function PendingNodes() {
   // 批量抽取全部进行中
   const [batchExtracting, setBatchExtracting] = useState(false)
   const [batchExtractProgress, setBatchExtractProgress] = useState({ current: 0, total: 0 })
+  // 底部页码输入框值（字符串，便于编辑中间态如清空）。与 pendingPage 保持同步：
+  // pendingPage 变化（翻页 / 刷新）时回填，用户编辑后回车 / 失焦提交跳转。
+  const [pageInput, setPageInput] = useState(String(pendingPage))
 
   // 候选列表变化时默认全选
   useEffect(() => {
@@ -115,6 +127,26 @@ export function PendingNodes() {
   useEffect(() => {
     if (open) void loadPendingObservations()
   }, [open, loadPendingObservations])
+
+  // pendingPage 变化时同步输入框（翻页按钮 / 批量抽取收尾都会改 pendingPage）
+  useEffect(() => {
+    setPageInput(String(pendingPage))
+  }, [pendingPage])
+
+  /** 提交页码输入：clamp 到 [1, totalPages]，与当前页不同则跳转，否则仅回填。 */
+  const commitPageInput = () => {
+    const n = parseInt(pageInput, 10)
+    if (Number.isNaN(n)) {
+      setPageInput(String(pendingPage))
+      return
+    }
+    const clamped = Math.min(Math.max(n, 1), totalPages)
+    if (clamped !== pendingPage) {
+      void loadPendingObservations(clamped)
+    } else {
+      setPageInput(String(clamped))
+    }
+  }
 
   const allSelected =
     candidateNodes.length > 0 && selectedIdx.size === candidateNodes.length
@@ -142,10 +174,16 @@ export function PendingNodes() {
     void extractCandidates(obsId)
   }
 
-  /** 批量抽取全部未处理对话：顺序抽取并自动全选入图。 */
+  /** 批量抽取未处理对话：顺序抽取并自动全选入图。
+   *
+   * 数量超过 ``BATCH_EXTRACT_LIMIT``（100）时弹确认提示，仅抽取最新 100 条
+   *（按 ``created_at`` 倒序，``offset=0``），避免一次性处理过多拖慢前端 / 触发大量
+   * LLM 调用。不复用当前页 ``pendingObservations``：当前页可能非第 1 页 / 不足上限条数。
+   */
   const handleBatchExtractAll = async () => {
     if (extracting || batchCreating || batchExtracting) return
-    if (pendingObservations.length === 0) {
+    const total = pendingTotal
+    if (total === 0) {
       pushToast('暂无待抽取对话', 'warning')
       return
     }
@@ -153,14 +191,29 @@ export function PendingNodes() {
       pushToast('请先选中一个图谱', 'warning')
       return
     }
+    const willExtract = Math.min(total, BATCH_EXTRACT_LIMIT)
+    if (total > BATCH_EXTRACT_LIMIT) {
+      const ok = window.confirm(
+        `当前共 ${total} 条待抽取对话，数量较多，仅抽取最新 ${willExtract} 条。是否继续？`,
+      )
+      if (!ok) return
+    }
     setBatchExtracting(true)
     let successCount = 0
     let failCount = 0
     let totalNodes = 0
     try {
-      for (let i = 0; i < pendingObservations.length; i++) {
-        const obs = pendingObservations[i]
-        setBatchExtractProgress({ current: i + 1, total: pendingObservations.length })
+      // 拉取要抽取的列表（最新 willExtract 条，按 created_at 倒序）
+      const resp = await api.listObservations({
+        processed: false,
+        limit: willExtract,
+        offset: 0,
+      })
+      const list = resp.items
+      setBatchExtractProgress({ current: 0, total: list.length })
+      for (let i = 0; i < list.length; i++) {
+        const obs = list[i]
+        setBatchExtractProgress({ current: i + 1, total: list.length })
         const ok = await extractCandidates(obs.id)
         if (!ok) {
           failCount++
@@ -172,10 +225,10 @@ export function PendingNodes() {
         const state = useAppStore.getState()
         const cands = state.candidateNodes
         if (cands.length > 0) {
-          const resp = await batchCreateNodes(cands, obs.id)
-          if (resp) {
+          const r = await batchCreateNodes(cands, obs.id)
+          if (r) {
             successCount++
-            totalNodes += resp.created_count
+            totalNodes += r.created_count
           } else {
             failCount++
           }
@@ -185,7 +238,10 @@ export function PendingNodes() {
         clearCandidates()
       }
       pushToast(
-        `批量抽取完成：成功 ${successCount} 条，失败 ${failCount} 条，共入图 ${totalNodes} 个节点`,
+        `批量抽取完成：成功 ${successCount} 条，失败 ${failCount} 条，共入图 ${totalNodes} 个节点` +
+          (total > BATCH_EXTRACT_LIMIT
+            ? `（共 ${total} 条，仅处理最新 ${willExtract} 条）`
+            : ''),
         failCount > 0 ? 'warning' : 'success',
       )
     } finally {
@@ -281,7 +337,7 @@ export function PendingNodes() {
               <h3 className="pending-section__title">
                 未处理对话
                 <span className="pending-section__count">
-                  {pendingObservations.length}
+                  {pendingTotal > PENDING_PAGE_SIZE ? `${PENDING_PAGE_SIZE}+` : pendingTotal}
                 </span>
               </h3>
               <div className="pending-section__actions">
@@ -456,14 +512,67 @@ export function PendingNodes() {
           )}
         </div>
 
-        {/* 底部状态条 */}
-        <footer className="pending-panel__footer">
-          <span className="pending-panel__footer-text">
-            {currentGraphId
-              ? '将入图到当前选中图谱'
-              : (<><Icon name="warning" size={14} /> 未选中图谱，请先在左侧选择一个图谱</>)}
+        {/* 底部工具栏：分页 + 图谱状态合并一行，固定在面板底部，不随列表滚动 */}
+        <div className="pending-panel__bottombar">
+          {pendingTotal > 0 ? (
+            <div className="pending-panel__bottombar-pager">
+              <button
+                type="button"
+                className="pending-panel__pagination-btn"
+                onClick={() => void loadPendingObservations(pendingPage - 1)}
+                disabled={pendingPage <= 1 || extracting || batchCreating || batchExtracting}
+                title="上一页"
+              >
+                上一页
+              </button>
+              <span className="pending-panel__pagination-info">
+                第
+                <input
+                  type="number"
+                  className="pending-panel__page-input"
+                  value={pageInput}
+                  min={1}
+                  max={totalPages}
+                  disabled={extracting || batchCreating || batchExtracting}
+                  onChange={(e) => setPageInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') e.currentTarget.blur()
+                  }}
+                  onBlur={commitPageInput}
+                  title={`跳转页码（1-${totalPages}）`}
+                />
+                / {totalPages} 页 · 共 {pendingTotal} 条
+              </span>
+              <button
+                type="button"
+                className="pending-panel__pagination-btn"
+                onClick={() => void loadPendingObservations(pendingPage + 1)}
+                disabled={pendingPage >= totalPages || extracting || batchCreating || batchExtracting}
+                title="下一页"
+              >
+                下一页
+              </button>
+            </div>
+          ) : (
+            <span className="pending-panel__bottombar-hint">暂无待抽取</span>
+          )}
+          <span
+            className={`pending-panel__bottombar-status${currentGraphId ? '' : ' is-warning'}`}
+            title={
+              currentGraphId
+                ? '将入图到当前选中图谱'
+                : '未选中图谱，请先在左侧选择一个图谱'
+            }
+          >
+            {currentGraphId ? (
+              '已选图谱'
+            ) : (
+              <>
+                <Icon name="warning" size={13} /> 未选中图谱
+              </>
+            )}
           </span>
-        </footer>
+        </div>
       </aside>
     </>
   )

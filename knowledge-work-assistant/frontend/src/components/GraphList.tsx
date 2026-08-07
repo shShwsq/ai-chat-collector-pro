@@ -40,7 +40,9 @@ export function GraphList() {
   const renameGraph = useAppStore((s) => s.renameGraph)
   const deleteGraph = useAppStore((s) => s.deleteGraph)
   // Task 11：待抽取入口
-  const pendingObservations = useAppStore((s) => s.pendingObservations)
+  // 注意：用 pendingTotal（服务端总数）而非 pendingObservations.length（当前页条数），
+  // 否则当总数超过每页 50 条时角标只会显示 50。
+  const pendingTotal = useAppStore((s) => s.pendingTotal)
   const pendingPanelOpen = useAppStore((s) => s.pendingPanelOpen)
   const togglePendingPanel = useAppStore((s) => s.togglePendingPanel)
   const loadPendingObservations = useAppStore((s) => s.loadPendingObservations)
@@ -140,7 +142,9 @@ export function GraphList() {
     if (!pendingPanelOpen) void loadPendingObservations()
   }
 
-  const pendingCount = pendingObservations.length
+  /** 待抽取列表每页条数（与 store PENDING_PAGE_SIZE 对齐）。 */
+  const PENDING_PAGE_SIZE = 50
+  const pendingCount = pendingTotal
 
   return (
     <aside className="graph-list">
@@ -296,7 +300,11 @@ export function GraphList() {
             </span>
             <span className="graph-list__pending-label">待抽取对话</span>
             {pendingCount > 0 && (
-              <span className="graph-list__pending-badge">{pendingCount}</span>
+              <span className="graph-list__pending-badge">
+                {pendingCount > PENDING_PAGE_SIZE
+                  ? `${PENDING_PAGE_SIZE}+`
+                  : pendingCount}
+              </span>
             )}
           </button>
         </div>

@@ -4264,6 +4264,107 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
   gap: 10px;
 }
 
+.pending-panel__bottombar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border-soft);
+  background: var(--surface-soft);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.pending-panel__bottombar-pager {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.pending-panel__bottombar-hint {
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.pending-panel__bottombar-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+}
+
+.pending-panel__bottombar-status.is-warning {
+  color: var(--warning, #d97706);
+}
+
+.pending-panel__pagination-btn {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.pending-panel__pagination-btn:hover:not(:disabled) {
+  border-color: var(--text-tertiary);
+  background: var(--hover);
+}
+
+.pending-panel__pagination-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pending-panel__pagination-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+}
+
+.pending-panel__page-input {
+  width: 38px;
+  height: 22px;
+  padding: 0 2px;
+  text-align: center;
+  font-size: 11.5px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--transition-fast);
+  /* 隐藏 number input 的上下箭头，保持紧凑 */
+  -moz-appearance: textfield;
+}
+
+.pending-panel__page-input::-webkit-outer-spin-button,
+.pending-panel__page-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.pending-panel__page-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.pending-panel__page-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .obs-item {
   padding: 12px;
   background: var(--surface-soft);
@@ -4539,19 +4640,6 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
 .pending-actions__btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-/* 面板底部状态条 */
-.pending-panel__footer {
-  flex-shrink: 0;
-  padding: 10px 20px;
-  border-top: 1px solid var(--border-soft);
-  background: var(--surface-soft);
-}
-
-.pending-panel__footer-text {
-  font-size: 11px;
-  color: var(--text-tertiary);
 }
 
 /* ----- Toast 全局提示 ----- */

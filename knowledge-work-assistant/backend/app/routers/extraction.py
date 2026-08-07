@@ -125,25 +125,40 @@ class BatchCreateResponse(BaseModel):
     observation_processed: bool = False
 
 
+class ObservationListResponse(BaseModel):
+    """观察记录分页响应。
+
+    ``total`` 为符合过滤条件的记录总数（不受 limit/offset 影响），供前端
+    计算页数与判断批量抽取规模；``items`` 为当前页数据。
+    """
+
+    items: list[ObservationResponse] = Field(default_factory=list)
+    total: int = Field(0, description="符合过滤条件的记录总数")
+    limit: int
+    offset: int
+
+
 # ============================================================================
 # 路由
 # ============================================================================
 
 
-@router.get("/observations", response_model=list[ObservationResponse])
+@router.get("/observations", response_model=ObservationListResponse)
 async def list_observations(
     processed: bool | None = Query(
         None, description="处理状态过滤：True 仅已处理，False 仅未处理，None 全部"
     ),
     source: str | None = Query(None, description="来源过滤：plugin/import/manual"),
     graph_id: str | None = Query(None, description="图谱过滤"),
-    limit: int = Query(100, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=10000),
     offset: int = Query(0, ge=0),
     store: GraphStore = Depends(get_graph_store_dep),
-) -> list[ObservationResponse]:
+) -> ObservationListResponse:
     """列出观察记录，默认按创建时间倒序。
 
     前端「待抽取」入口通常传 ``processed=false`` 拉取未处理列表。
+    ``limit`` 默认 50（前端分页每页 50），上限 10000 仅作防滥用兜底，不实质限制；
+    返回 ``total`` 供前端计算页数与判断批量抽取规模。
     """
     items = await store.list_observations(
         graph_id=graph_id,
@@ -152,7 +167,17 @@ async def list_observations(
         limit=limit,
         offset=offset,
     )
-    return [ObservationResponse(**o) for o in items]
+    total = await store.count_observations(
+        graph_id=graph_id,
+        source=source,
+        processed=processed,
+    )
+    return ObservationListResponse(
+        items=[ObservationResponse(**o) for o in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.post("/observations/clear")
