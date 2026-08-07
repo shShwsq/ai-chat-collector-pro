@@ -19,6 +19,7 @@ import type {
   BatchCreateNodesResponse,
   CancelChatResponse,
   ChatCheckpoint,
+  ClearResult,
   ChatMessage,
   ChatSession,
   ChatStreamStartedResponse,
@@ -745,6 +746,76 @@ export const api = {
    */
   getChatCheckpoint: (sessionId: string) =>
     request<ChatCheckpoint>(`/chat/sessions/${sessionId}/checkpoint`),
+
+  // ===== 数据管理（设置面板「数据管理 / Danger Zone」用）=====
+  /**
+   * 批量清空 chat 会话（级联清理 messages / checkpoints）。
+   * mode 省略=清空全部，study/work 仅清该模式。幂等。
+   */
+  clearChatSessions: (mode?: Mode) =>
+    request<ClearResult>(withQuery('/chat/sessions/clear', mode ? { mode } : {}), {
+      method: 'POST',
+    }),
+  /**
+   * 批量清空图谱（级联清理各图谱下 nodes / edges / quizzes）。
+   * mode 省略=清空全部，study/work 仅清该模式。observations 不会被删除
+   *（其 graph_id 被 SET NULL 解绑）；需一并清空请额外调 clearObservations。
+   */
+  clearGraphs: (mode?: Mode) =>
+    request<ClearResult>(withQuery('/graphs/clear', mode ? { mode } : {}), {
+      method: 'POST',
+    }),
+  /**
+   * 批量清空观察记录（observations 不区分模式，按 source 过滤）。
+   * source 省略=清空全部。
+   */
+  clearObservations: (source?: string) =>
+    request<ClearResult>(
+      withQuery('/observations/clear', source ? { source } : {}),
+      { method: 'POST' },
+    ),
+  /**
+   * 导出全部数据为 JSON 备份文件并触发浏览器下载。
+   * mode 仅过滤 sessions/graphs 及其级联子表；observations 始终全量导出。
+   * 复用 exportReportDocx 的 blob 下载模式（fetch → blob → anchor）。
+   */
+  exportData: async (mode?: Mode) => {
+    const url = `${httpBase()}/api/data/export${mode ? `?mode=${mode}` : ''}`
+    const res = await fetch(url, { method: 'GET' })
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new ApiError(
+        `导出失败：HTTP ${res.status}`,
+        'http_error',
+        res.status,
+        text,
+      )
+    }
+    // 从响应头解析文件名（支持 RFC5987 filename*=UTF-8''xxx）
+    const disp = res.headers.get('Content-Disposition') ?? ''
+    let filename = `kwa_backup.json`
+    const m1 = /filename\*=UTF-8''([^;]+)/i.exec(disp)
+    if (m1?.[1]) {
+      try {
+        filename = decodeURIComponent(m1[1])
+      } catch {
+        filename = m1[1]
+      }
+    } else {
+      const m2 = /filename="?([^";]+)"?/i.exec(disp)
+      if (m2?.[1]) filename = m2[1]
+    }
+    const blob = await res.blob()
+    const objUrl = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = objUrl
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    setTimeout(() => URL.revokeObjectURL(objUrl), 1000)
+    return { ok: true, filename }
+  },
 }
 
 export type ApiClient = typeof api

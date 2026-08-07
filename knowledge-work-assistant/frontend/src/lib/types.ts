@@ -248,6 +248,17 @@ export interface DeleteResult {
   id: string
 }
 
+/** 批量清空操作响应（清空会话 / 图谱 / 观察记录通用）。 */
+export interface ClearResult {
+  ok: boolean
+  /** 实际删除条数。 */
+  deleted_count: number
+  /** 过滤的模式（study/work），清空会话与图谱时回传；observations 不用。 */
+  mode?: string | null
+  /** 过滤的来源（plugin/import/manual），清空 observations 时回传。 */
+  source?: string | null
+}
+
 // ============================================================================
 // 节点详情卡与用户留白（Task 7 / Task 9，与 backend/app/routers/nodes.py 对齐）
 // ============================================================================
