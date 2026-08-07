@@ -281,6 +281,47 @@ class GraphStore:
             await db.commit()
             return True
 
+    async def delete_graphs_by_type(self, graph_type: str | None) -> int:
+        """按 ``type`` 批量删除图谱（级联清理节点 / 边 / 测验）。
+
+        ``graph_type`` 为 ``study`` / ``work`` 时仅删该模式；``None`` 删全部。
+        observations 表的 ``graph_id`` 外键为 ``ondelete=SET NULL``，故相关
+        observations 不会被删除，仅解绑（``graph_id`` 置空）。
+
+        实现用单条 ``DELETE`` 语句（而非 ORM 逐行 ``db.delete``）：批量行数可能
+        很大，逐行 flush 会触发 ``executemany`` 长事务持锁，叠加 FTS / 级联触发
+        器易超 SQLite busy_timeout。DB 级 ``ondelete=CASCADE`` 仍会自动清理
+        nodes / edges / quizzes。外层用 :func:`with_sqlite_lock_retry` 兜底
+        瞬时锁冲突。
+
+        Args:
+            graph_type: 可选模式过滤，非法值抛 ``ValueError``。
+
+        Returns:
+            实际删除的图谱条数。
+        """
+        if graph_type is not None and graph_type not in GRAPH_TYPES:
+            raise ValueError(
+                f"非法图谱类型: {graph_type}（允许: {GRAPH_TYPES}）"
+            )
+
+        async def _bulk_delete() -> int:
+            async with AsyncSessionLocal() as db:
+                count_stmt = select(func.count()).select_from(GraphRow)
+                if graph_type is not None:
+                    count_stmt = count_stmt.where(GraphRow.type == graph_type)
+                count = (await db.execute(count_stmt)).scalar_one()
+                if count == 0:
+                    return 0
+                del_stmt = delete(GraphRow)
+                if graph_type is not None:
+                    del_stmt = del_stmt.where(GraphRow.type == graph_type)
+                await db.execute(del_stmt)
+                await db.commit()
+                return count
+
+        return await with_sqlite_lock_retry(_bulk_delete)
+
     # ------------------------------------------------------------------
     # Node CRUD
     # ------------------------------------------------------------------
@@ -913,6 +954,49 @@ class GraphStore:
             await db.delete(row)
             await db.commit()
             return True
+
+    async def delete_observations_by_source(self, source: str | None) -> int:
+        """按 ``source`` 批量删除观察记录。
+
+        observations 表无 mode 字段，故按来源（``plugin`` / ``import`` /
+        ``manual``）过滤；``source=None`` 删全部。observations 是抽取图谱的
+        源材料，与图谱解耦（删图谱时 ``graph_id`` 被 SET NULL），故本方法
+        不影响图谱数据。
+
+        实现用单条 ``DELETE`` 语句（而非 ORM 逐行 ``db.delete``）：observations
+        可能积累数千条，逐行 flush 会触发 ``executemany`` 长事务持锁，叠加
+        ``observations_ad`` FTS 触发器（每行删一次 ``observations_fts``）易超
+        SQLite busy_timeout（实测 3046 条触发 ``database is locked``）。单条
+        bulk DELETE 在 SQLite 内部一次性执行 + 触发触发器，持锁时间大幅缩短；
+        外层用 :func:`with_sqlite_lock_retry` 兜底瞬时锁冲突。
+
+        Args:
+            source: 可选来源过滤，非法值抛 ``ValueError``。
+
+        Returns:
+            实际删除的观察记录条数。
+        """
+        if source is not None and source not in OBSERVATION_SOURCES:
+            raise ValueError(
+                f"非法观察来源: {source}（允许: {OBSERVATION_SOURCES}）"
+            )
+
+        async def _bulk_delete() -> int:
+            async with AsyncSessionLocal() as db:
+                count_stmt = select(func.count()).select_from(ObservationRow)
+                if source is not None:
+                    count_stmt = count_stmt.where(ObservationRow.source == source)
+                count = (await db.execute(count_stmt)).scalar_one()
+                if count == 0:
+                    return 0
+                del_stmt = delete(ObservationRow)
+                if source is not None:
+                    del_stmt = del_stmt.where(ObservationRow.source == source)
+                await db.execute(del_stmt)
+                await db.commit()
+                return count
+
+        return await with_sqlite_lock_retry(_bulk_delete)
 
     async def search_observations(
         self, query: str, *, limit: int = 20

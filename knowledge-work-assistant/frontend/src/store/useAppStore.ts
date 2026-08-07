@@ -385,6 +385,10 @@ interface AppState {
   /** Plan 模式开关（false = Build 默认；true = Plan 只读模式）。
    *  仅 Work 模式有意义；Study 模式忽略此开关。 */
   planMode: boolean
+  /** 数据管理批量清空进行中（设置面板 Danger Zone 用，禁用按钮）。 */
+  clearingData: boolean
+  /** 数据导出进行中（设置面板 Danger Zone 用，禁用导出按钮）。 */
+  exportingData: boolean
   /** 待处理的高风险工具确认请求（非 null 时弹确认对话框）。 */
   pendingToolConfirmation: ToolConfirmation | null
   /** 工作对象逐条确认开关（false = 批量确认默认；true = 每项可勾选）。
@@ -741,6 +745,30 @@ interface AppState {
   /** 清空当前 chat 会话与消息（用于「返回首页」按钮）。 */
   clearChat: () => void
 
+  // ===== 数据管理（设置面板 Danger Zone）=====
+  /**
+   * 批量清空 chat 会话（级联清理 messages / checkpoints）。
+   * mode 省略=清空全部，study/work 仅清该模式。成功后刷新 chatSessions，
+   * 若当前会话被清空则回到首页瀑布流。返回是否成功。
+   */
+  clearAllChatSessions: (mode?: Mode) => Promise<boolean>
+  /**
+   * 批量清空图谱（级联清理各图谱下 nodes / edges / quizzes）。
+   * mode 省略=清空全部。成功后刷新 graphs 列表，若当前图谱被清空则重置
+   * currentGraphId / fullGraph / selectedNodeId。返回是否成功。
+   */
+  clearAllGraphs: (mode?: Mode) => Promise<boolean>
+  /**
+   * 批量清空观察记录（observations 不区分模式，全量清空）。
+   * 返回是否成功。
+   */
+  clearAllObservations: () => Promise<boolean>
+  /**
+   * 导出全部数据为 JSON 备份文件并触发浏览器下载。
+   * mode 仅过滤 sessions/graphs；observations 始终全量导出。返回是否成功。
+   */
+  exportAllData: (mode?: Mode) => Promise<boolean>
+
   // ===== Task 9：chat WS 事件处理 =====
   /**
    * 处理 chat 流式 token 事件（op="chat"）：
@@ -951,6 +979,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   currentCheckpoint: null,
   // 默认 Build 模式；Work 模式下用户可切到 Plan
   planMode: false,
+  // 数据管理批量清空 / 导出进行中标志（设置面板 Danger Zone 用）
+  clearingData: false,
+  exportingData: false,
   pendingToolConfirmation: null,
   // 工作对象逐条确认（默认关闭=批量）；从 localStorage 读取
   workObjectSingleConfirm: _loadBoolSetting('kwa.workObjectSingleConfirm', false),
@@ -3100,6 +3131,102 @@ export const useAppStore = create<AppState>((set, get) => ({
       currentCheckpoint: null,
       pendingToolConfirmation: null,
     }),
+
+  // ===== 数据管理（设置面板 Danger Zone）=====
+
+  clearAllChatSessions: async (mode) => {
+    set({ clearingData: true, error: '' })
+    try {
+      const res = await api.clearChatSessions(mode)
+      // 仅当清空范围覆盖当前模式时，当前会话才会被删
+      const curMode = get().mode
+      const affectsCurrent = mode === undefined || mode === curMode
+      if (affectsCurrent) {
+        set({
+          chatSessions: [],
+          currentChatSession: null,
+          chatMessages: [],
+          chatStreamingActive: false,
+          chatStreamingText: '',
+          chatStreamingRequestId: null,
+          chatAsking: false,
+          currentCheckpoint: null,
+          pendingToolConfirmation: null,
+        })
+      }
+      get().pushToast(`已清空 ${res.deleted_count} 条对话会话`, 'success')
+      return true
+    } catch (e) {
+      const msg = errMsg(e)
+      set({ error: msg })
+      get().pushToast(`清空对话失败：${msg}`, 'error')
+      return false
+    } finally {
+      set({ clearingData: false })
+    }
+  },
+
+  clearAllGraphs: async (mode) => {
+    set({ clearingData: true, error: '' })
+    try {
+      const res = await api.clearGraphs(mode)
+      const curMode = get().mode
+      const affectsCurrent = mode === undefined || mode === curMode
+      if (affectsCurrent) {
+        // 当前模式的图谱被清空：重置当前图谱相关态
+        set({
+          graphs: [],
+          currentGraphId: null,
+          fullGraph: null,
+          selectedNodeId: null,
+        })
+      } else {
+        // 清空的是其他模式：刷新当前模式图谱列表（应无变化，保持一致）
+        void get().loadGraphs()
+      }
+      get().pushToast(`已清空 ${res.deleted_count} 个图谱`, 'success')
+      return true
+    } catch (e) {
+      const msg = errMsg(e)
+      set({ error: msg })
+      get().pushToast(`清空图谱失败：${msg}`, 'error')
+      return false
+    } finally {
+      set({ clearingData: false })
+    }
+  },
+
+  clearAllObservations: async () => {
+    set({ clearingData: true, error: '' })
+    try {
+      const res = await api.clearObservations()
+      get().pushToast(`已清空 ${res.deleted_count} 条观察记录`, 'success')
+      return true
+    } catch (e) {
+      const msg = errMsg(e)
+      set({ error: msg })
+      get().pushToast(`清空观察记录失败：${msg}`, 'error')
+      return false
+    } finally {
+      set({ clearingData: false })
+    }
+  },
+
+  exportAllData: async (mode) => {
+    set({ exportingData: true, error: '' })
+    try {
+      await api.exportData(mode)
+      get().pushToast('已导出数据备份', 'success')
+      return true
+    } catch (e) {
+      const msg = errMsg(e)
+      set({ error: msg })
+      get().pushToast(`导出失败：${msg}`, 'error')
+      return false
+    } finally {
+      set({ exportingData: false })
+    }
+  },
 
   // ===== Task 9：chat WS 事件处理 =====
 

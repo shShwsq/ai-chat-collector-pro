@@ -10740,3 +10740,235 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ============================================================================
+ * 设置面板「数据管理 / Danger Zone」：批量清空 + 导出备份
+ * ============================================================================ */
+
+.danger-zone {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+}
+
+.danger-zone .settings-section__title {
+  color: var(--danger);
+}
+
+.danger-zone__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 范围分段选择器 */
+.danger-zone__scope {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.danger-zone__scope-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.danger-zone__segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.danger-zone__segmented-btn {
+  padding: 5px 14px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: none;
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.danger-zone__segmented-btn:last-child {
+  border-right: none;
+}
+
+.danger-zone__segmented-btn:hover:not(:disabled):not(.is-active) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.danger-zone__segmented-btn.is-active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.danger-zone__segmented-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.danger-zone__scope-hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+/* 操作行 */
+.danger-zone__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.danger-zone__row--export {
+  border-color: var(--accent-soft);
+}
+
+.danger-zone__row-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.danger-zone__row-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.danger-zone__row-desc {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+
+.danger-zone__export-btn {
+  flex-shrink: 0;
+  padding: 6px 16px;
+  font-size: 12px;
+  font-family: inherit;
+  color: #fff;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: filter var(--transition-fast);
+}
+
+.danger-zone__export-btn:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+
+.danger-zone__export-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.danger-zone__danger-btn {
+  flex-shrink: 0;
+  padding: 6px 16px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--danger);
+  background: var(--surface);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.danger-zone__danger-btn:hover:not(:disabled) {
+  background: var(--danger);
+  color: #fff;
+}
+
+.danger-zone__danger-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ============================================================================
+ * ConfirmDialog 扩展：type-to-confirm 输入框 / 导出按钮 / 额外勾选项
+ * ============================================================================ */
+
+.confirm-dialog__phrase {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.confirm-dialog__phrase-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.confirm-dialog__phrase-input {
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+
+.confirm-dialog__phrase-input:focus {
+  border-color: var(--danger);
+}
+
+.confirm-dialog__extra {
+  margin-top: 2px;
+}
+
+.confirm-dialog__checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.confirm-dialog__checkbox input {
+  cursor: pointer;
+}
+
+.confirm-dialog__btn--export {
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.confirm-dialog__btn--export:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.confirm-dialog__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  filter: none;
+}
+
+.confirm-dialog__btn--primary:disabled {
+  background: var(--border);
+  border-color: var(--border);
+  color: var(--text-tertiary);
+}
