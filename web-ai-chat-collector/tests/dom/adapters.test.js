@@ -1,4 +1,4 @@
-﻿// tests/dom/adapters.test.js
+// tests/dom/adapters.test.js
 // 6 个平台 DOM 适配器测试：kimi / deepseek / qianwen / doubao / yuanbao / wenxin
 //
 // 这是"平台 DOM 改了立刻发现"的核心防线：
@@ -592,7 +592,7 @@ describe('豆包适配器', () => {
     // 修复前 bug：_extractAssistantContent 用 break 只取首个回答块，
     //   导致"我来帮你查一下..."后面的回答全部丢失。
     // 修复后：按 DOM 顺序遍历所有 block，累积全部思考和回答。
-    document.body.innerHTML = 
+    document.body.innerHTML = `
       <div class="list_items">
         <div class="v_list_row" data-observe-row="block_user">
           <div class="flex flex-row justify-end">
@@ -643,7 +643,7 @@ describe('豆包适配器', () => {
             </div>
           </div>
         </div>
-      </div>;
+      </div>`;
     const msgs = doubao.extractMessages();
     expect(msgs).toHaveLength(2);
     expect(msgs[0].role).toBe('user');
