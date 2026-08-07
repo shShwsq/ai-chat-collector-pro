@@ -381,6 +381,19 @@ describe('AIAssistant._parseEmbId', () => {
       .toEqual({ msgHash: 'hash', chunkIdx: 1 });
   });
 
+  it('convId 自身含 ::（真实格式 `${platform}::${platformConversationId}`）也能正确解析', () => {
+    // db.js: convId = `${platform}::${platformConversationId}`，含 :: 分隔符
+    // embId 形如 `deepseek::abc123::msg::h1::chunk::0`，split 后长度为 6
+    // 旧的 parts[1]/parts[3] 写法会把 parts[1]='abc123' 当成 'msg' 校验，导致所有命中被跳过
+    expect(AIAssistant._parseEmbId('deepseek::abc123::msg::h1::chunk::0'))
+      .toEqual({ msgHash: 'h1', chunkIdx: 0 });
+    expect(AIAssistant._parseEmbId('kimi::conv_xyz-456::msg::hash9::chunk::7'))
+      .toEqual({ msgHash: 'hash9', chunkIdx: 7 });
+    // platformConversationId 内部还可能含 ::（极端情况）也应当从末尾稳定解析
+    expect(AIAssistant._parseEmbId('qianwen::a::b::msg::h::chunk::3'))
+      .toEqual({ msgHash: 'h', chunkIdx: 3 });
+  });
+
   it('parts 长度不足 5 → 返回 null', () => {
     expect(AIAssistant._parseEmbId('a::b::c')).toBeNull();
     expect(AIAssistant._parseEmbId('a::b::c::d')).toBeNull();

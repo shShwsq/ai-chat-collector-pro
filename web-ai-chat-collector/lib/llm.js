@@ -459,15 +459,22 @@ JSON 注意事项：
 
   // 从 embId 解析消息定位信息
   // embId 格式：${convId}::msg::${msgHash}::chunk::${chunkIdx}
+  // ⚠️ convId 自身含 ::（db.js 中 convId = `${platform}::${platformConversationId}`），
+  //    不能用 parts[1] / parts[3] 定位 'msg' / 'chunk'，否则含 :: 的 convId 会让解析全部失败
+  //    （所有检索命中被 _buildContexts 跳过，表现为"检索命中无法映射到原始 chunk"）。
+  //    后缀 ::msg::<msgHash>::chunk::<chunkIdx> 中各字段（base36 hash / 数字 idx）不含 ::，
+  //    从末尾反向取最后 4 段即可稳定解析。
   // 返回 { msgHash, chunkIdx } 或 null（格式不匹配时）
   _parseEmbId(id) {
     if (!id || typeof id !== 'string') return null;
     const parts = id.split('::');
     if (parts.length < 5) return null;
-    // parts: [convId, 'msg', msgHash, 'chunk', chunkIdx]
-    if (parts[1] !== 'msg' || parts[3] !== 'chunk') return null;
-    const chunkIdx = parseInt(parts[4], 10);
-    return { msgHash: parts[2], chunkIdx: isNaN(chunkIdx) ? -1 : chunkIdx };
+    // parts: [...convIdParts, 'msg', msgHash, 'chunk', chunkIdx]
+    const len = parts.length;
+    if (parts[len - 4] !== 'msg' || parts[len - 2] !== 'chunk') return null;
+    const msgHash = parts[len - 3];
+    const chunkIdx = parseInt(parts[len - 1], 10);
+    return { msgHash, chunkIdx: isNaN(chunkIdx) ? -1 : chunkIdx };
   },
 
   // 构建上下文文本：父子文档检索
