@@ -16,9 +16,9 @@ let mainWindow: BrowserWindow | null = null
 /**
  * 创建主窗口。
  *
- * 当前为骨架联调版：一个标准桌面窗口，加载 Vite dev server（开发）或
- * 打包后的 dist/index.html（生产）。后续随业务模块（模式切换开关、图谱视图等）
- * 落地，可在此扩展窗口属性（最小尺寸、自定义标题栏等）。
+ * 标准桌面窗口，加载 Vite dev server（开发）或打包后的 dist/index.html（生产）。
+ * 业务模块（模式切换开关、图谱视图等）已在渲染进程落地；如需扩展窗口属性
+ * （自定义标题栏等）可在此调整。
  */
 function createWindow(): void {
   mainWindow = new BrowserWindow({
