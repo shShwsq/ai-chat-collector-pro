@@ -95,6 +95,41 @@ const RETRYABLE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504])
 const DEFAULT_RETRY_DELAYS_MS = [250, 750]
 
+/**
+ * 后端本地 API 鉴权 token。
+ *
+ * 后端 enforce_request_limits_and_cache_policy 中间件要求所有 /api/ 请求
+ * 携带 `x-local-api-token` 头，值等于后端 settings.local_api_token（见
+ * backend/app/main.py 与 backend/app/config.py）。
+ *
+ * 统一来源：backend/.env 的 LOCAL_API_TOKEN。取值优先级：
+ * 1. Electron 环境（含 file:// 生产与 dev:electron）：通过 preload 桥
+ *    backend.getApiToken() 获取（launcher 解析 backend/.env 后经 IPC 下发，
+ *    见 electron/launcher.ts）。
+ * 2. 纯浏览器 dev（Vite，无 electronAPI）：读取 vite.config.ts 经 define
+ *    注入的 import.meta.env.VITE_LOCAL_API_TOKEN（同样源自 backend/.env）。
+ * 3. 兜底 DEV_LOCAL_API_TOKEN：仅在以上两路均缺失时使用（如 vitest 环境
+ *    未走完整 Vite 加载）。该值必须与后端 config.py 默认值保持一致。
+ */
+const DEV_LOCAL_API_TOKEN = 'kwa-development-token'
+
+function getLocalApiToken(): string {
+  const fromBridge = window.electronAPI?.backend?.getApiToken?.()
+  if (fromBridge) return fromBridge
+  return import.meta.env.VITE_LOCAL_API_TOKEN ?? DEV_LOCAL_API_TOKEN
+}
+
+/**
+ * 构造带本地鉴权头的 headers。
+ * 鉴权头始终置入（调用方一般不传，即使传入也会被覆盖以确保一致）。
+ */
+function withAuthHeaders(init?: RequestInit): Record<string, string> {
+  return {
+    ...(init?.headers as Record<string, string> | undefined),
+    'x-local-api-token': getLocalApiToken(),
+  }
+}
+
 /** 解析 HTTP 基地址：dev 用相对路径走 Vite 代理；file:// 直连后端。 */
 function httpBase(): string {
   if (typeof window !== 'undefined' && window.location.protocol === FILE_PROTOCOL) {
@@ -154,9 +189,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `${httpBase()}/api${path}`
   const method = (init?.method ?? 'GET').toUpperCase()
 
-  const headers: Record<string, string> = {
-    ...(init?.headers as Record<string, string> | undefined),
-  }
+  const headers = withAuthHeaders(init)
   const body = init?.body
   if (body !== undefined && !(body instanceof FormData) && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json'
@@ -503,7 +536,7 @@ export const api = {
     const url = `${httpBase()}/api/graphs/${graphId}/work/report/export-docx`
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { ...withAuthHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ period } satisfies ReportRequest),
     })
     if (!res.ok) {
@@ -838,7 +871,7 @@ export const api = {
    */
   exportData: async (mode?: Mode) => {
     const url = `${httpBase()}/api/data/export${mode ? `?mode=${mode}` : ''}`
-    const res = await fetch(url, { method: 'GET' })
+    const res = await fetch(url, { method: 'GET', headers: withAuthHeaders() })
     if (!res.ok) {
       const text = await res.text().catch(() => '')
       throw new ApiError(
