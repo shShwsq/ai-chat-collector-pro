@@ -128,6 +128,8 @@ export function ToolConfirmDialog({ confirmation }: ToolConfirmDialogProps) {
   const [remaining, setRemaining] = useState(confirmation.timeout)
   const dialogRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLElement | null>(null)
+  // 保存最新的 handleReject，供 ESC 键监听（deps=[]）调用，避免 stale 闭包
+  const rejectRef = useRef<() => Promise<void>>(async () => {})
 
   useEffect(() => {
     triggerRef.current = document.activeElement as HTMLElement | null
@@ -137,6 +139,12 @@ export function ToolConfirmDialog({ confirmation }: ToolConfirmDialogProps) {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      // Escape：主动拒绝（不必等后端倒计时超时），行为与点击「拒绝」一致
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        void rejectRef.current()
+        return
+      }
       if (event.key !== 'Tab' || !dialogRef.current) return
       const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>('button:not(:disabled), textarea:not(:disabled), input:not(:disabled)'))
       if (focusable.length < 2) return
@@ -224,6 +232,7 @@ export function ToolConfirmDialog({ confirmation }: ToolConfirmDialogProps) {
     setSubmitting(false)
     setReason('')
   }
+  rejectRef.current = handleReject
 
   const toolLabel = TOOL_NAME_LABEL[confirmation.tool] ?? confirmation.tool
   const riskLabel = TOOL_RISK_LABEL[confirmation.tool]

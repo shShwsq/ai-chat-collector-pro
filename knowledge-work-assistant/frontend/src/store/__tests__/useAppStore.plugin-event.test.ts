@@ -175,9 +175,11 @@ describe('useAppStore plugin/chat 事件处理', () => {
 
   it('test_chat_token_event', () => {
     // 预设 chatMessages 为一条空 content 的 assistant 占位消息
+    // chatStreamingActive=true 模拟 sendChatMessage 已激活流式状态
     useAppStore.setState({
       chatMessages: [makeAssistantPlaceholder('')],
       chatStreamingText: '',
+      chatStreamingActive: true,
     })
 
     // 调用 handleChatToken（模拟 WS 推送 op="chat" 的 token 事件）

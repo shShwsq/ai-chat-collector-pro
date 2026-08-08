@@ -107,16 +107,29 @@ export default function App() {
     return () => window.removeEventListener('storage', syncTheme)
   }, [])
 
+  // 追踪上一次健康状态，仅在「健康↔断开」翻转时弹 Toast，避免轮询刷屏
+  const prevHealthyRef = useRef<boolean | null>(null)
   const checkHealth = useCallback(async () => {
     try {
       const resp = await api.getHealth()
       setHealth(resp)
       setHealthError('')
+      if (prevHealthyRef.current === false) {
+        useAppStore.getState().pushToast('后端已重新连接', 'success')
+      }
+      prevHealthyRef.current = true
     } catch (e) {
       setHealth(null)
       setHealthError(
         e instanceof ApiError ? e.message : (e as Error).message || '未知错误',
       )
+      if (prevHealthyRef.current === true) {
+        useAppStore.getState().pushToast(
+          '后端连接已断开，流式功能将降级',
+          'warning',
+        )
+      }
+      prevHealthyRef.current = false
     }
   }, [])
 
@@ -235,7 +248,7 @@ export default function App() {
 
   return (
     <div className="app-shell" data-mode={mode} data-theme={theme}>
-      <a className="skip-link" href="#main-content">跳到主要内容</a>
+      {!onboardingVisible && <a className="skip-link" href="#main-content">跳到主要内容</a>}
       <header className="app-header">
         <div className="app-header__left">
           <h1 className="app-header__title">知识工作助手</h1>

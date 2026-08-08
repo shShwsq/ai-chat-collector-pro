@@ -7,9 +7,9 @@
    clipboard_read / clipboard_write / append_note`` 共 11 个工具被
    ``_KWA_SKIP_TOOLS`` 跳过，注册后 ``has_tool`` 返回 False。
 2. **KWA 业务工具保留注册**：``knowledge_search`` + 4 个 ``task_*`` +
-   21 个 ``graph_*`` 工具。
-3. **总数正确**：build 模式 26 个（5 通用 + 21 图谱），plan 模式 16 个
-   （5 通用 + 11 只读图谱）。
+   2 个 ``skill_*`` + 21 个 ``graph_*`` 工具。
+3. **总数正确**：build 模式 28 个（7 通用 + 21 图谱），plan 模式 18 个
+   （7 通用 + 11 只读图谱）。
 4. **高风险工具在 plan 模式不可见**：``graph_extract_from_observation`` 与
    ``graph_confirm_work_objects`` 在 plan 模式下不可见。
 
@@ -52,13 +52,15 @@ _SKIPPED_DESKTOP_TOOLS: tuple[str, ...] = (
     "append_note",
 )
 
-#: KWA 保留的通用工具（非图谱）
+#: KWA 保留的通用工具（非图谱）：knowledge_search + task_* + skill_*
 _KWA_KEPT_GENERAL_TOOLS: tuple[str, ...] = (
     "knowledge_search",
     "task_create",
     "task_list",
     "task_update",
     "task_delete",
+    "skill_list",
+    "skill_activate",
 )
 
 
@@ -127,18 +129,18 @@ def test_graph_tool_count(registry: ToolRegistry) -> None:
 
 
 def test_total_tool_count_build_mode(registry: ToolRegistry) -> None:
-    """build 模式应有 26 个工具（5 通用 + 21 图谱）。"""
+    """build 模式应有 28 个工具（7 通用 + 21 图谱）。"""
     build_tools = registry.get_tool_names("build")
-    assert len(build_tools) == 26, (
-        f"expected 26 build-mode tools, got {len(build_tools)}: {sorted(build_tools)}"
+    assert len(build_tools) == 28, (
+        f"expected 28 build-mode tools, got {len(build_tools)}: {sorted(build_tools)}"
     )
 
 
 def test_total_tool_count_plan_mode(registry: ToolRegistry) -> None:
-    """plan 模式应有 16 个工具（5 通用 + 11 只读图谱）。"""
+    """plan 模式应有 18 个工具（7 通用 + 11 只读图谱）。"""
     plan_tools = registry.get_tool_names("plan")
-    assert len(plan_tools) == 16, (
-        f"expected 16 plan-mode tools, got {len(plan_tools)}: {sorted(plan_tools)}"
+    assert len(plan_tools) == 18, (
+        f"expected 18 plan-mode tools, got {len(plan_tools)}: {sorted(plan_tools)}"
     )
 
 
@@ -254,9 +256,9 @@ def test_is_tool_allowed(registry: ToolRegistry) -> None:
 
 
 def test_get_tool_schemas_build(registry: ToolRegistry) -> None:
-    """get_tool_schemas('build') 应返回 26 个 schema（含 function 字段）。"""
+    """get_tool_schemas('build') 应返回 28 个 schema（含 function 字段）。"""
     schemas = registry.get_tool_schemas("build")
-    assert len(schemas) == 26
+    assert len(schemas) == 28
     # 每个 schema 应是 OpenAI function calling 格式
     for schema in schemas:
         assert schema["type"] == "function"
@@ -266,9 +268,9 @@ def test_get_tool_schemas_build(registry: ToolRegistry) -> None:
 
 
 def test_get_tool_schemas_plan(registry: ToolRegistry) -> None:
-    """get_tool_schemas('plan') 应返回 16 个 schema（5 通用 + 11 只读图谱）。"""
+    """get_tool_schemas('plan') 应返回 18 个 schema（7 通用 + 11 只读图谱）。"""
     schemas = registry.get_tool_schemas("plan")
-    assert len(schemas) == 16
+    assert len(schemas) == 18
     plan_names = {s["function"]["name"] for s in schemas}
     # 高风险工具不应出现
     assert "graph_extract_from_observation" not in plan_names

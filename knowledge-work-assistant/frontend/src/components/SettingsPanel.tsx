@@ -333,7 +333,7 @@ function ApiConfigSection() {
               {llmTesting ? '测试中…' : '测试连接'}
             </button>
             <span className="settings-form__tip">
-              保存后请重启后端进程，或等待后端热加载配置。
+              保存后将在下一次 LLM 调用时生效，无需重启后端。
             </span>
           </div>
 

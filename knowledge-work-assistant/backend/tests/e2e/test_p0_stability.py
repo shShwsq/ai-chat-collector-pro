@@ -92,7 +92,9 @@ async def test_background_registry_rejects_and_closes_coroutine_after_shutdown()
 async def test_ws_send_failure_removes_stale_connection() -> None:
     ws = AsyncMock()
     ws.client_state = ws.application_state = ws_notify.WebSocketState.CONNECTED
-    ws.send_json.side_effect = RuntimeError("closed")
+    # 实现已改用 send_text 预序列化（避免 send_json 内部 dumps 对 datetime/UUID
+    # 抛 TypeError 被静默吞掉），此处需 mock send_text 才能模拟发送失败。
+    ws.send_text.side_effect = RuntimeError("closed")
 
     await ws_notify.register("stale-session", ws)
     assert await ws_notify.is_session_online("stale-session") is True

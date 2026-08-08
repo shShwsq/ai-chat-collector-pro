@@ -125,11 +125,18 @@ import type {
 /** Toast 类型。 */
 export type ToastType = 'info' | 'success' | 'warning' | 'error'
 
+/** Toast 动作按钮（可选，用于「立即处理」直达）。 */
+export interface ToastAction {
+  label: string
+  onClick: () => void
+}
+
 /** Toast 消息体。 */
 export interface ToastMessage {
   id: number
   type: ToastType
   message: string
+  action?: ToastAction
 }
 
 /** 左侧竖排导航当前激活项：chat 对话 / graph 图谱 / settings 设置。 */
@@ -631,7 +638,7 @@ interface AppState {
 
   // 通用 Toast
   /** 推送一条 Toast 消息。 */
-  pushToast: (message: string, type?: ToastType) => void
+  pushToast: (message: string, type?: ToastType, action?: ToastAction) => void
   /** 清空当前 Toast 消息。 */
   clearToast: () => void
 
@@ -2342,9 +2349,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   // ===== 通用 Toast =====
-  pushToast: (message, type = 'info') => {
+  pushToast: (message, type = 'info', action) => {
     _toastSeq += 1
-    set({ toast: { id: _toastSeq, type, message } })
+    set({ toast: { id: _toastSeq, type, message, action } })
   },
 
   clearToast: () => set({ toast: null }),
@@ -2372,7 +2379,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // 立即刷新列表，反映取消后的状态
       await get().loadLlmRequests()
       set({ llmCancellingId: null })
-      if (resp.cancelled) {
+      if (resp.ok) {
         get().pushToast('已取消该 LLM 请求', 'success')
       } else {
         get().pushToast(
@@ -2380,7 +2387,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           'info',
         )
       }
-      return resp.cancelled
+      return resp.ok
     } catch (e) {
       set({ llmCancellingId: null })
       const msg = errMsg(e)
@@ -2402,10 +2409,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       return
     }
     try {
-      await api.cancelLlmRequest(requestId)
-      set({ reportStreamingRequestId: null })
+      const resp = await api.cancelLlmRequest(requestId)
+      set({
+        reportStreamingActive: false,
+        reportGenerating: false,
+        reportStreamingText: '',
+        reportStreamingRequestId: null,
+      })
+      get().pushToast(
+        resp.ok ? '已取消报告生成' : '报告请求已结束，无需取消',
+        resp.ok ? 'info' : 'warning',
+      )
     } catch (e) {
-      // 取消失败也要复位前端状态，避免卡在「生成中」
       set({
         reportStreamingActive: false,
         reportGenerating: false,
@@ -2420,8 +2435,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ llmConfigLoading: true })
     try {
       const cfg = await api.getLlmConfig()
-      // 派生 ready：api_key 已配置且 base_url 非空才视为就绪
-      const ready = !!cfg.api_key_configured && !!cfg.base_url
+      const ready =
+        !!cfg.api_key_configured &&
+        !!cfg.base_url.trim() &&
+        !!cfg.model.trim()
       set({ llmConfig: { ...cfg, ready }, llmConfigLoading: false })
     } catch (e) {
       const msg = errMsg(e)
@@ -2433,17 +2450,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   updateLlmConfig: async (config) => {
     set({ llmConfigSaving: true })
     try {
-      const resp = await api.updateLlmConfig(config)
-      // 用响应中的最新配置覆盖本地，并派生 ready 字段
-      const cfg = resp.config
-      const ready = !!cfg.api_key_configured && !!cfg.base_url
+      const cfg = await api.updateLlmConfig(config)
+      const ready =
+        !!cfg.api_key_configured &&
+        !!cfg.base_url.trim() &&
+        !!cfg.model.trim()
       set({ llmConfig: { ...cfg, ready }, llmConfigSaving: false })
-      get().pushToast(
-        resp.message
-          ? `配置已保存：${resp.message}`
-          : 'LLM 配置已保存，新配置将在下次调用时生效',
-        'success',
-      )
+      get().pushToast('LLM 配置已保存，新配置将在下次调用时生效', 'success')
       return true
     } catch (e) {
       set({ llmConfigSaving: false })
@@ -2510,10 +2523,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   handlePluginConversationReceived: (payload) => {
     // 批量导入进行中：抑制逐条 Toast 与列表刷新，由 importConversations 统一收尾
     if (get().batchImporting) return
-    // 1. 弹 Toast 提示收到新对话
+    // 1. 弹 Toast 提示收到新对话，附「立即处理」直达图谱待抽取区
     get().pushToast(
       `收到新对话：${payload.title || payload.platform}`,
       'info',
+      {
+        label: '立即处理',
+        onClick: () => {
+          get().setActiveNav('graph')
+          void get().loadPendingObservations()
+        },
+      },
     )
     // 2. 若处于图谱视图且为学习模式，刷新待抽取列表（PendingNodes）
     if (get().activeNav === 'graph' && get().mode === 'study') {
@@ -3496,6 +3516,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   handleChatToken: (event) => {
     const { content } = event
     if (!content) return
+    // 取消/终结后到达的迟到 token 直接丢弃，避免覆盖已重置的消息内容
+    // （取消后后端可能仍有少量在途 token，会导致界面闪现新文本）
+    if (!get().chatStreamingActive) return
     // 累加流式文本
     const nextText = get().chatStreamingText + content
     set({ chatStreamingText: nextText })

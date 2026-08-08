@@ -772,19 +772,11 @@ export interface LlmConfigUpdate {
 /** 取消 LLM 请求响应。 */
 export interface LlmCancelResponse {
   /** 是否取消成功（请求不存在或已终态时返回 false）。 */
-  cancelled: boolean
-  /** 被取消的请求 id（失败时为空字符串）。 */
+  ok: boolean
+  /** 被取消的请求 id。 */
   id: string
-}
-
-/** LLM 配置更新响应。 */
-export interface LlmConfigUpdateResponse {
-  /** 是否更新成功。 */
-  updated: boolean
-  /** 更新后的配置快照（掩码后的 api_key）。 */
-  config: LlmConfig
-  /** 提示信息（如建议重启后端）。 */
-  message?: string
+  /** 取消后的状态或 not_found。 */
+  status: LlmRequestStatus | 'not_found'
 }
 
 /** LLM 连接测试请求体（所有字段可选，未传则用后端已保存配置）。 */

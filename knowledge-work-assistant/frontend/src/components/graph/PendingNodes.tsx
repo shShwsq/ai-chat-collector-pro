@@ -114,6 +114,8 @@ export function PendingNodes() {
   const [batchExtractProgress, setBatchExtractProgress] = useState({ current: 0, total: 0 })
   // 抽取超时 / 取消控制：每次抽取生成新的 AbortController，30s 未返回自动取消
   const abortRef = useRef<AbortController | null>(null)
+  const batchAbortRef = useRef<AbortController | null>(null)
+  const [extractingObservationId, setExtractingObservationId] = useState<string | null>(null)
   const [extractTimedOut, setExtractTimedOut] = useState(false)
   // 底部页码输入框值（字符串，便于编辑中间态如清空）。与 pendingPage 保持同步：
   // pendingPage 变化（翻页 / 刷新）时回填，用户编辑后回车 / 失焦提交跳转。
@@ -178,15 +180,19 @@ export function PendingNodes() {
     if (abortRef.current) abortRef.current.abort()
     const controller = new AbortController()
     abortRef.current = controller
+    setExtractingObservationId(obsId)
     setExtractTimedOut(false)
     const timeoutId = window.setTimeout(() => {
+      if (abortRef.current !== controller) return
       controller.abort()
+      abortRef.current = null
       setExtractTimedOut(true)
-      pushToast('抽取超时（30s），已自动取消。可重试或手工添加节点。', 'warning')
+      pushToast('抽取超时（30s），已停止等待。服务端请求可能仍在运行。', 'warning')
     }, 30000)
     void extractCandidates(obsId, controller.signal).finally(() => {
       window.clearTimeout(timeoutId)
-      abortRef.current = null
+      if (abortRef.current === controller) abortRef.current = null
+      setExtractingObservationId(null)
     })
   }
 
@@ -195,7 +201,8 @@ export function PendingNodes() {
     if (abortRef.current) {
       abortRef.current.abort()
       abortRef.current = null
-      pushToast('已取消抽取', 'info')
+      setExtractingObservationId(null)
+      pushToast('已停止等待，服务端请求可能仍在运行', 'info')
     }
   }
 
@@ -223,6 +230,8 @@ export function PendingNodes() {
       )
       if (!ok) return
     }
+    const controller = new AbortController()
+    batchAbortRef.current = controller
     setBatchExtracting(true)
     let successCount = 0
     let failCount = 0
@@ -237,9 +246,11 @@ export function PendingNodes() {
       const list = resp.items
       setBatchExtractProgress({ current: 0, total: list.length })
       for (let i = 0; i < list.length; i++) {
+        if (controller.signal.aborted) break
         const obs = list[i]
         setBatchExtractProgress({ current: i + 1, total: list.length })
-        const ok = await extractCandidates(obs.id)
+        const ok = await extractCandidates(obs.id, controller.signal)
+        if (controller.signal.aborted) break
         if (!ok) {
           failCount++
           continue
@@ -263,18 +274,27 @@ export function PendingNodes() {
         clearCandidates()
       }
       pushToast(
-        `批量抽取完成：成功 ${successCount} 条，失败 ${failCount} 条，共入图 ${totalNodes} 个节点` +
-          (total > BATCH_EXTRACT_LIMIT
-            ? `（共 ${total} 条，仅处理最新 ${willExtract} 条）`
-            : ''),
-        failCount > 0 ? 'warning' : 'success',
+        controller.signal.aborted
+          ? `已停止批量抽取：完成 ${successCount} 条，共入图 ${totalNodes} 个节点`
+          : `批量抽取完成：成功 ${successCount} 条，失败 ${failCount} 条，共入图 ${totalNodes} 个节点` +
+              (total > BATCH_EXTRACT_LIMIT
+                ? `（共 ${total} 条，仅处理最新 ${willExtract} 条）`
+                : ''),
+        controller.signal.aborted || failCount > 0 ? 'warning' : 'success',
       )
     } finally {
+      if (batchAbortRef.current === controller) batchAbortRef.current = null
       setBatchExtracting(false)
       setBatchExtractProgress({ current: 0, total: 0 })
       clearCandidates()
       void loadPendingObservations()
     }
+  }
+
+  const handleCancelBatchExtract = () => {
+    if (!batchAbortRef.current) return
+    batchAbortRef.current.abort()
+    batchAbortRef.current = null
   }
 
   const startEditTitle = (idx: number) => {
@@ -307,6 +327,8 @@ export function PendingNodes() {
   }
 
   const handleClose = () => {
+    if (batchExtracting) handleCancelBatchExtract()
+    if (abortRef.current) handleCancelExtract()
     togglePendingPanel(false)
   }
 
@@ -314,8 +336,7 @@ export function PendingNodes() {
     clearCandidates()
   }
 
-  // 当前正在抽取的 observation id（用于列表项加载态）
-  const extractingObsId = extracting ? candidateObservationId : null
+  const extractingObsId = extracting ? extractingObservationId : null
 
   // 面板关闭时不渲染（避免动画期间的内部状态干扰）
   if (!open) return null
@@ -369,12 +390,24 @@ export function PendingNodes() {
                 <button
                   type="button"
                   className="pending-section__batch-btn"
-                  onClick={() => void handleBatchExtractAll()}
-                  disabled={extracting || batchCreating || batchExtracting || pendingObservations.length === 0}
-                  title="自动依次抽取所有对话并将候选节点加入图谱"
+                  onClick={
+                    batchExtracting
+                      ? handleCancelBatchExtract
+                      : () => void handleBatchExtractAll()
+                  }
+                  disabled={
+                    batchExtracting
+                      ? false
+                      : extracting || batchCreating || pendingObservations.length === 0
+                  }
+                  title={
+                    batchExtracting
+                      ? '停止批量抽取'
+                      : '自动依次抽取所有对话并将候选节点加入图谱'
+                  }
                 >
                   {batchExtracting
-                    ? `批量抽取中 ${batchExtractProgress.current}/${batchExtractProgress.total}…`
+                    ? `停止批量抽取 ${batchExtractProgress.current}/${batchExtractProgress.total}`
                     : '批量抽取全部'}
                 </button>
                 <button
