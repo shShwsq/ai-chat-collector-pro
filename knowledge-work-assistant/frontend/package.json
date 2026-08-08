@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "main": "electron/dist/main.js",
-  "description": "知识工作助手前端 - Electron + React + Vite（双模式 Study/Work 知识图谱桌面应用）",
+  "description": "对话回声桌面端前端 - Electron + React + Vite（双模式 Study/Work 知识图谱桌面应用）",
   "scripts": {
     "dev": "vite",
     "dev:electron": "concurrently -k \"vite\" \"wait-on tcp:5174 && npm run build:electron && cross-env VITE_DEV_SERVER_URL=http://localhost:5174 electron .\"",
@@ -49,8 +49,8 @@
     "wait-on": "^7.2.0"
   },
   "build": {
-    "appId": "com.knowledge-work-assistant.app",
-    "productName": "知识工作助手",
+    "appId": "com.echolog.app",
+    "productName": "对话回声",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -69,7 +69,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "知识工作助手"
+      "shortcutName": "对话回声"
     },
     "extraResources": [
       {

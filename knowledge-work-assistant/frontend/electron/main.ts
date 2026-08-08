@@ -26,7 +26,7 @@ function createWindow(): void {
     height: WINDOW_HEIGHT,
     minWidth: 960,
     minHeight: 640,
-    title: '知识工作助手',
+    title: '对话回声',
     backgroundColor: '#f5f5f7',
     show: false,
     webPreferences: {

@@ -149,7 +149,7 @@ pnpm dev:electron
 - **WebSocket 日志**：前端 DevTools → Network → WS → 看 `ws://localhost:5174/ws?session_id=...` 的帧（`plugin.conversation_received` / `graph_agent_token` / `graph_agent_done` / `graph_agent_cancelled` / `graph_agent_error`）。
 - **数据库内容**：用 DB Browser for SQLite 打开 `backend/data/app.db`，查看 `graphs/nodes/edges/observations/quizzes/sessions/messages/settings` 等表；FTS5 虚拟表（`messages_fts` 等）也可查询。
 - **Electron 主进程日志**：`pnpm dev:electron` 启动时的终端输出（`[main]` 前缀）；后端子进程的 stdout 也会被重定向到这里。
-- **生产模式调试**：`pnpm dist` 打包后安装运行，Electron 主进程日志在 `%APPDATA%/知识工作助手/logs/main.log`（如启用 electron-log）。
+- **生产模式调试**：`pnpm dist` 打包后安装运行，Electron 主进程日志在 `%APPDATA%/对话回声/logs/main.log`（如启用 electron-log）。
 - **种子数据自检**：`cd backend && powershell -File seed-graph.ps1` 注入一个最小 study 图谱，用于验证图谱可视化是否正常。
 
 ## 代码约定

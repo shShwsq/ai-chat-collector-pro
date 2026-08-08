@@ -79,7 +79,7 @@ async def ws_test(websocket: WebSocket) -> None:
     await websocket.send_json(
         {
             "type": "welcome",
-            "message": "已连接知识工作助手后端 WebSocket",
+            "message": "已连接对话回声后端 WebSocket",
             "session_id": session_id,
         }
     )

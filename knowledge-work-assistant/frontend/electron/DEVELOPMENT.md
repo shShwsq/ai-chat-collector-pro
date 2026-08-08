@@ -42,7 +42,7 @@ pnpm build:electron              # tsc -p electron/tsconfig.json
 - `pnpm dev:electron` 启动时的终端输出（`[main]` / `[launcher]` / `[backend]` 前缀）；
 - 后端子进程的 stdout / stderr 由 `launcher.ts` 转发到主进程控制台（`[backend]` 前缀）；
 - Electron 渲染进程的 DevTools 日志在窗口右键 → 检查（或 `Ctrl+Shift+I`）；
-- 生产模式调试：`pnpm dist` 打包后安装运行，主进程日志在 `%APPDATA%/知识工作助手/logs/main.log`（如启用 electron-log；当前未启用，日志只输出到 stdout）。
+- 生产模式调试：`pnpm dist` 打包后安装运行，主进程日志在 `%APPDATA%/对话回声/logs/main.log`（如启用 electron-log；当前未启用，日志只输出到 stdout）。
 
 ### 验证 IPC
 
@@ -115,7 +115,7 @@ pnpm build:electron              # tsc -p electron/tsconfig.json
 1. 在 [main.ts](./main.ts) 的 `createWindow()` 中调整 `new BrowserWindow({ ... })` 选项：
    - `width` / `height`：初始尺寸（默认 1280×820）；
    - `minWidth` / `minHeight`：最小尺寸（默认 960×640）；
-   - `title`：窗口标题（默认"知识工作助手"）；
+   - `title`：窗口标题（默认"对话回声"）；
    - `backgroundColor`：窗口背景色（默认 `#f5f5f7`）；
    - `frame: false` + `titleBarStyle: 'hidden'`：自定义标题栏（macOS 用 `trafficLightPosition`）；
    - `webPreferences.devTools`: `isDev` 时自动打开 DevTools。

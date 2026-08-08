@@ -1,4 +1,4 @@
-# 知识工作助手（Knowledge Work Assistant）
+# 对话回声 · 桌面端（echolog desktop）
 
 双模式（Study / Work）知识图谱桌面软件：接收浏览器插件采集的 AI 对话，由 Agent 自动抽取知识点并沉淀为可问答、可测验、可辅助工作的知识图谱。
 

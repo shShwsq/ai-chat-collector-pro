@@ -1,8 +1,8 @@
 # 自动打包：浏览器插件（zip）+ 桌面应用（Windows NSIS 安装包）
 #
 # 产物：
-#   - ai-chat-collector-extension-v<版本>.zip   未打包扩展，Chrome「加载已解压」或分发
-#   - knowledge-work-assistant-windows           Electron NSIS 安装包（含 backend 源码）
+#   - echolog-extension-v<版本>.zip   未打包扩展，Chrome「加载已解压」或分发
+#   - echolog-desktop-windows           Electron NSIS 安装包（含 backend 源码）
 #
 # 触发：推送到 main / 推送 v* 标签 / 手动运行。打 v* 标签时会额外发布 GitHub Release。
 name: Build & Package
@@ -110,7 +110,7 @@ jobs:
           # 注意：不排除 *.md。docs/*-setup.md 是运行时帮助文档，由 popup/settings.js
           #   通过 chrome.runtime.getURL + fetch 加载，必须打包；docs/skills/ 供用户下载。
           # docs/skills/.env 含 API Key，绝不能进 release（.gitignore 已忽略，但 zip 不读 .gitignore）。
-          zip -r "dist/ai-chat-collector-v${{ steps.ver.outputs.version }}.zip" . \
+          zip -r "dist/echolog-extension-v${{ steps.ver.outputs.version }}.zip" . \
             -x ".git/*" \
             -x ".github/*" \
             -x "references/*" \
@@ -128,7 +128,7 @@ jobs:
 
       - name: 安全验证：zip 不得包含 .env / __pycache__
         run: |
-          if unzip -l "dist/ai-chat-collector-v${{ steps.ver.outputs.version }}.zip" | grep -E '(\.env$|__pycache__)'; then
+          if unzip -l "dist/echolog-extension-v${{ steps.ver.outputs.version }}.zip" | grep -E '(\.env$|__pycache__)'; then
             echo "::error::Release zip contains sensitive files (.env / __pycache__)!"
             exit 1
           fi
@@ -139,7 +139,7 @@ jobs:
           missing=0
           for f in docs/chroma-setup.md docs/milvus-setup.md docs/pgvector-setup.md \
                    docs/supabase-setup.md docs/qdrant-setup.md; do
-            if ! unzip -l "dist/ai-chat-collector-v${{ steps.ver.outputs.version }}.zip" | grep -q "$f"; then
+            if ! unzip -l "dist/echolog-extension-v${{ steps.ver.outputs.version }}.zip" | grep -q "$f"; then
               echo "::error::Missing runtime help doc: $f"
               missing=$((missing + 1))
             fi
@@ -149,8 +149,8 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ai-chat-collector-extension-v${{ steps.ver.outputs.version }}
-          path: web-ai-chat-collector/dist/ai-chat-collector-v${{ steps.ver.outputs.version }}.zip
+          name: echolog-extension-v${{ steps.ver.outputs.version }}
+          path: web-ai-chat-collector/dist/echolog-extension-v${{ steps.ver.outputs.version }}.zip
           if-no-files-found: error
 
   # ──────────────────────────────────────────────────────────────────────────
@@ -183,7 +183,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: knowledge-work-assistant-windows
+          name: echolog-desktop-windows
           path: knowledge-work-assistant/frontend/release/*
           if-no-files-found: error
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ai-chat-collector - 设置</title>
+  <title>对话回声 - 设置</title>
   <link rel="stylesheet" href="settings.css">
 </head>
 <body>
@@ -137,7 +137,7 @@
     <!-- 本地软件对接 -->
     <section class="setting-section">
       <h2 class="section-title-with-action">本地软件对接 <button class="btn btn-sm" id="testLocalAppBtn">测试连通性</button></h2>
-      <p class="desc">将采集到的对话推送到本地运行的 knowledge-work-assistant 软件（FastAPI 后端默认监听 8788 端口）</p>
+      <p class="desc">将采集到的对话推送到本地运行的对话回声桌面端（FastAPI 后端默认监听 8788 端口）</p>
 
       <div class="form-group">
         <div class="checkbox-row">
@@ -159,7 +159,7 @@
           <input type="text" id="localAppPairCode" inputmode="numeric" maxlength="6" placeholder="软件端生成的 6 位配对码" />
           <button class="btn btn-sm" id="pairLocalAppBtn" type="button">配对</button>
         </div>
-        <small>在知识工作助手的插件对接设置中生成配对码，5 分钟内输入；凭据仅保存在插件本地。</small>
+        <small>在对话回声桌面端的插件对接设置中生成配对码，5 分钟内输入；凭据仅保存在插件本地。</small>
       </div>
 
       <div class="form-group">
@@ -392,7 +392,7 @@
         <div class="collapsible-body collapsed" id="devtoolsBody">
           <ol class="info-list">
             <li>点击上方「打开扩展页」按钮（或访问 chrome://extensions）</li>
-            <li>找到「ai-chat-collector」扩展，点击详情中的「Service Worker」链接</li>
+            <li>找到「对话回声」扩展，点击详情中的「Service Worker」链接</li>
             <li>在弹出的 DevTools 窗口中切换到 <code>Application</code> 标签</li>
             <li>左侧展开 <code>IndexedDB</code>，即可看到 <code>AIChatCollector</code> 和 <code>AIChatEmbeddings</code> 两个数据库</li>
             <li>展开数据库可查看各 objectStore 的内容；右键可刷新或清空</li>

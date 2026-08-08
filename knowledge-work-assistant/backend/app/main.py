@@ -106,7 +106,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
-    title="知识工作助手后端",
+    title="对话回声 后端",
     description="双模式（Study/Work）知识图谱软件后端 - Agent + 知识库 + 图谱服务",
     version=__version__,
     lifespan=lifespan,

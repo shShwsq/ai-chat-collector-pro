@@ -26,7 +26,7 @@ import type { HealthResponse } from './lib/types'
 import { isValidTheme, THEME_STORAGE_KEY } from './lib/themes'
 
 /**
- * 知识工作助手根组件（Task 5 / Task 6 / Task 8 / Task 11 / Task 12 落地版）。
+ * 对话回声根组件（Task 5 / Task 6 / Task 8 / Task 11 / Task 12 落地版）。
  *
  * 布局（重构后）：
  *   ┌─────────────────────────────────────────────────────┐
@@ -263,7 +263,7 @@ export default function App() {
       {!onboardingVisible && <a className="skip-link" href="#main-content">跳到主要内容</a>}
       <header className="app-header">
         <div className="app-header__left">
-          <h1 className="app-header__title">知识工作助手</h1>
+          <h1 className="app-header__title">对话回声</h1>
           <span className="app-header__subtitle">
             双模式知识图谱 · {modeLabel}模式
           </span>

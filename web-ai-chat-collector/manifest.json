@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "ai-chat-collector",
+  "name": "对话回声",
   "version": "2.0.0",
   "description": "采集与 AI 平台的对话记录，支持语义搜索和 AI 问答",
   "permissions": [
@@ -168,7 +168,7 @@
   ],
   "action": {
     "default_popup": "popup/popup.html",
-    "default_title": "ai-chat-collector"
+    "default_title": "对话回声"
   },
   "web_accessible_resources": [{
     "resources": ["lib/katex.min.css"],
