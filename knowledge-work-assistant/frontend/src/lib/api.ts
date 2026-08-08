@@ -102,20 +102,21 @@ const DEFAULT_RETRY_DELAYS_MS = [250, 750]
  * 携带 `x-local-api-token` 头，值等于后端 settings.local_api_token（见
  * backend/app/main.py 与 backend/app/config.py）。
  *
- * 取值优先级：
+ * 统一来源：backend/.env 的 LOCAL_API_TOKEN。取值优先级：
  * 1. Electron 环境（含 file:// 生产与 dev:electron）：通过 preload 桥
- *    backend.getApiToken() 获取（launcher 在 spawn 后端时注入一致的环境变量，
+ *    backend.getApiToken() 获取（launcher 解析 backend/.env 后经 IPC 下发，
  *    见 electron/launcher.ts）。
- * 2. 纯浏览器 dev（Vite，无 electronAPI）：使用 DEV_LOCAL_API_TOKEN 兜底，
- *    该值必须与后端 config.py 中 local_api_token 默认值保持一致，否则
- *    手动启动的后端（未设 LOCAL_API_TOKEN）会与本端不匹配而 401。
+ * 2. 纯浏览器 dev（Vite，无 electronAPI）：读取 vite.config.ts 经 define
+ *    注入的 import.meta.env.VITE_LOCAL_API_TOKEN（同样源自 backend/.env）。
+ * 3. 兜底 DEV_LOCAL_API_TOKEN：仅在以上两路均缺失时使用（如 vitest 环境
+ *    未走完整 Vite 加载）。该值必须与后端 config.py 默认值保持一致。
  */
 const DEV_LOCAL_API_TOKEN = 'kwa-development-token'
 
 function getLocalApiToken(): string {
   const fromBridge = window.electronAPI?.backend?.getApiToken?.()
   if (fromBridge) return fromBridge
-  return DEV_LOCAL_API_TOKEN
+  return import.meta.env.VITE_LOCAL_API_TOKEN ?? DEV_LOCAL_API_TOKEN
 }
 
 /**

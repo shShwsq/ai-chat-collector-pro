@@ -33,9 +33,9 @@ const HEALTH_CHECK_TIMEOUT_MS = 30_000
 let backendProcess: ChildProcess | null = null
 
 /**
- * dev 环境后端默认 API token。
+ * dev 环境后端默认 API token（兜底）。
  * 必须与 backend/app/config.py 中 local_api_token 默认值保持一致：
- * 开发者手动启动后端（未设 LOCAL_API_TOKEN）时即使用该默认值。
+ * 仅在 backend/.env 缺失且无环境变量时使用。
  */
 const DEV_LOCAL_API_TOKEN = 'kwa-development-token'
 
@@ -43,12 +43,61 @@ const DEV_LOCAL_API_TOKEN = 'kwa-development-token'
 let _backendApiToken: string | null = null
 
 /**
- * 解析后端本地 API token。
+ * 解析简易 .env 文件内容（KEY=VALUE，支持注释与成对引号）。
+ *
+ * 仅用于读取 backend/.env 的 LOCAL_API_TOKEN，不引入 dotenv 依赖、不做变量插值。
+ */
+function parseEnvFile(content: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line || line.startsWith('#')) continue
+    const eq = line.indexOf('=')
+    if (eq < 0) continue
+    const key = line.slice(0, eq).trim()
+    let val = line.slice(eq + 1).trim()
+    if (
+      (val.startsWith('"') && val.endsWith('"')) ||
+      (val.startsWith("'") && val.endsWith("'"))
+    ) {
+      val = val.slice(1, -1)
+    }
+    if (key) out[key] = val
+  }
+  return out
+}
+
+/**
+ * 读取 backend/.env（候选多个路径以兼容 dev / 打包产物）。
+ *
+ * - dev：process.cwd() 为 frontend 目录，backend 在 ../backend。
+ * - 生产打包：backend 随 extraResources 位于 resources/backend。
+ * 找不到则返回 null（生产环境通常不随包发布 .env，改走随机生成）。
+ */
+function readBackendEnvFile(): Record<string, string> | null {
+  const candidates = [
+    path.join(process.cwd(), '..', 'backend', '.env'),
+    path.join(process.resourcesPath, 'backend', '.env'),
+  ]
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) {
+        return parseEnvFile(fs.readFileSync(p, 'utf-8'))
+      }
+    } catch {
+      // 忽略读取异常，尝试下一个候选路径
+    }
+  }
+  return null
+}
+
+/**
+ * 解析后端本地 API token（统一来源：backend/.env 的 LOCAL_API_TOKEN）。
  *
  * 优先级：
- * 1. LOCAL_API_TOKEN 环境变量（显式指定，前后端共享同一来源）；
- * 2. dev 环境：DEV_LOCAL_API_TOKEN（与手动启动的后端默认值一致）；
- * 3. 生产环境：随机生成 32 字节 token（每次启动不同，前后端通过 spawn env 一致）。
+ * 1. LOCAL_API_TOKEN 环境变量（生产部署显式指定 / 手动覆盖）；
+ * 2. backend/.env 的 LOCAL_API_TOKEN（dev：与手动启动的后端读取同一文件）；
+ * 3. dev 兜底 DEV_LOCAL_API_TOKEN / 生产随机 32 字节 token。
  *
  * 生产随机 token 之所以可行：startBackend 在 spawn 后端时会把本值通过
  * LOCAL_API_TOKEN 环境变量注入子进程，使后端 settings.local_api_token 与
@@ -58,11 +107,14 @@ function resolveBackendApiToken(): string {
   if (_backendApiToken !== null) return _backendApiToken
   if (process.env.LOCAL_API_TOKEN) {
     _backendApiToken = process.env.LOCAL_API_TOKEN
-  } else if (isDev()) {
-    _backendApiToken = DEV_LOCAL_API_TOKEN
-  } else {
-    _backendApiToken = randomBytes(32).toString('base64url')
+    return _backendApiToken
   }
+  const fromEnvFile = readBackendEnvFile()?.LOCAL_API_TOKEN
+  if (fromEnvFile) {
+    _backendApiToken = fromEnvFile
+    return _backendApiToken
+  }
+  _backendApiToken = isDev() ? DEV_LOCAL_API_TOKEN : randomBytes(32).toString('base64url')
   return _backendApiToken
 }
 
