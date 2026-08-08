@@ -53,8 +53,8 @@ class Settings(BaseSettings):
     def ensure_dirs(self) -> None:
         """确保运行所需目录存在。
 
-        创建 data_dir 及其子目录 files（上传文件落盘）/ sessions（会话级数据，
-        复用步影思路）。开发期创建在当前工作目录下。
+        创建 data_dir 及其子目录 files（上传文件落盘）/ sessions（会话级数据）。
+        开发期创建在当前工作目录下。
         """
         self.data_dir.mkdir(parents=True, exist_ok=True)
         (self.data_dir / "files").mkdir(parents=True, exist_ok=True)
