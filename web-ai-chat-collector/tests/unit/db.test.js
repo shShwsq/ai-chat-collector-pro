@@ -346,17 +346,17 @@ describe('_reorderByDomOrder', () => {
 });
 
 
-describe('saveConversation ????', () => {
+describe('saveConversation 并发安全', () => {
   beforeEach(() => {
     window.indexedDB = new IDBFactory();
     window.triggerEmbedding = () => {};
   });
 
-  it('?????????????????', async () => {
+  it('同一对话并发保存时串行化且保留全部消息', async () => {
     const base = {
       platform: 'deepseek',
       platformConversationId: 'concurrent-1',
-      title: '????',
+      title: '并发保存测试对话',
       url: 'https://example.com/chat/concurrent-1'
     };
 

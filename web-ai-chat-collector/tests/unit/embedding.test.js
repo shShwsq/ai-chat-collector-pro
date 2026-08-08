@@ -257,24 +257,24 @@ describe('cosineSimilarity', () => {
 });
 
 
-describe('??????', () => {
+describe('向量维度校验', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('DashScope ???????????', async () => {
+  it('DashScope 返回维度不符的向量时返回 null', async () => {
     window.fetch = vi.fn().mockResolvedValue({
       json: async () => ({ output: { embeddings: [{ embedding: [1, 2] }] } })
     });
     await expect(EmbeddingService._embedDashscopeText('test')).resolves.toBeNull();
   });
 
-  it('???????????', async () => {
+  it('保存维度不符的向量时抛出异常', async () => {
     window.indexedDB = new IDBFactory();
     await expect(saveEmbedding('id-1', 'conv-1', [1, 2])).rejects.toThrow('Embedding dimension mismatch');
   });
 
-  it('??????????????', async () => {
+  it('向量检索过滤掉维度不符的记录', async () => {
     window.indexedDB = new IDBFactory();
     const db = await window.openEmbeddingDB();
     await new Promise((resolve, reject) => {
