@@ -48,6 +48,12 @@
     "vitest": "^1.6.1",
     "wait-on": "^7.2.0"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild"
+    ]
+  },
   "build": {
     "appId": "com.echolog.app",
     "productName": "对话回声",
