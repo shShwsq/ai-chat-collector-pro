@@ -2,10 +2,11 @@
 // lib/db.js 纯函数测试：_stripAugmentBlocks / tokenize / highlightSearchResult
 // 这些函数是 IIFE 外的函数声明，加载后挂到 window 全局。
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
+import { IDBFactory } from 'fake-indexeddb';
 import { loadDb } from '../helpers/load-source.js';
 
-let _stripAugmentBlocks, _reorderByDomOrder, tokenize, highlightSearchResult;
+let _stripAugmentBlocks, _reorderByDomOrder, tokenize, highlightSearchResult, saveConversation, getConversation;
 
 beforeAll(() => {
   const lib = loadDb();
@@ -13,6 +14,8 @@ beforeAll(() => {
   _reorderByDomOrder = lib._reorderByDomOrder;
   tokenize = lib.tokenize;
   highlightSearchResult = lib.highlightSearchResult;
+  saveConversation = lib.saveConversation;
+  getConversation = lib.getConversation;
 });
 
 // think 块的开闭标签用拼接构造，避免在源码中直接出现被工具误处理
@@ -339,5 +342,30 @@ describe('_reorderByDomOrder', () => {
     const originalHashes = hashes(existing);
     _reorderByDomOrder(existing, domOrder);
     expect(hashes(existing)).toEqual(originalHashes);
+  });
+});
+
+
+describe('saveConversation ????', () => {
+  beforeEach(() => {
+    window.indexedDB = new IDBFactory();
+    window.triggerEmbedding = () => {};
+  });
+
+  it('?????????????????', async () => {
+    const base = {
+      platform: 'deepseek',
+      platformConversationId: 'concurrent-1',
+      title: '????',
+      url: 'https://example.com/chat/concurrent-1'
+    };
+
+    await Promise.all([
+      saveConversation({ ...base, messages: [{ role: 'user', content: 'A', hash: 'a' }] }),
+      saveConversation({ ...base, messages: [{ role: 'assistant', content: 'B', hash: 'b' }] })
+    ]);
+
+    const conv = await getConversation('deepseek::concurrent-1');
+    expect(conv.messages.map(message => message.hash).sort()).toEqual(['a', 'b']);
   });
 });

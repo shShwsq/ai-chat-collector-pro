@@ -243,19 +243,6 @@ async def update_llm_config(
 
 
 class LlmTestConnectionRequest(BaseModel):
-    """LLM 连接测试请求（所有字段可选，未传则用已保存配置）。
-
-    用于「测试连接」按钮：用户可在保存前填入新的 base_url / api_key / model，
-    后端用这些临时值构造客户端并发送一条极简消息验证连通性。未传字段回退
-    到 ``settings`` 表已保存的值，便于对已保存配置做连通性复查。
-    """
-
-    base_url: str | None = Field(
-        None, min_length=1, max_length=512, description="测试用 base_url，未传则用已保存值"
-    )
-    api_key: str | None = Field(
-        None, min_length=1, max_length=2048, description="测试用 api_key 明文，未传则用已保存值"
-    )
     model: str | None = Field(
         None, min_length=1, max_length=128, description="测试用 model，未传则用已保存值"
     )
@@ -299,11 +286,10 @@ async def test_llm_connection(
         LLMServerError,
     )
 
-    # 解析有效配置：请求体 > 已保存 > app_settings 兜底
-    base_url = body.base_url or await get_setting(
+    base_url = await get_setting(
         session, "llm.base_url", app_settings.llm_base_url
     )
-    api_key = body.api_key or await get_secret(
+    api_key = await get_secret(
         session, "llm.api_key", app_settings.llm_api_key
     )
     model = body.model or await get_setting(

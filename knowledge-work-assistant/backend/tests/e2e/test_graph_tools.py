@@ -23,16 +23,16 @@
 
 from __future__ import annotations
 
-from typing import Any
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from app.services.tools.graph_tools import (
+    _GRAPH_TOOL_DEFS,
     ALL_GRAPH_TOOLS,
     HIGH_RISK_TOOLS,
     READONLY_GRAPH_TOOLS,
-    _GRAPH_TOOL_DEFS,
     get_tools_for_mode,
     graph_add_user_fill,
     graph_answer_quiz,
@@ -50,7 +50,6 @@ from app.services.tools.graph_tools import (
     graph_unstar_node,
     register_graph_tools,
 )
-
 
 # ============================================================================
 # 常量 / 断言
@@ -136,7 +135,6 @@ async def test_graph_touch_node_not_found(monkeypatch: pytest.MonkeyPatch) -> No
         "app.services.graph_store.graph_store", mock_store, raising=False
     )
     # 同时 monkeypatch handler 内部的 lazy import 路径
-    import app.services.tools.graph_tools as gt_mod
 
     monkeypatch.setattr(
         "app.services.graph_store.graph_store", mock_store
@@ -555,9 +553,9 @@ async def test_graph_get_recommendations_work_ok(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """work 模式推荐：到期优先 + 星标加权。"""
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     overdue = (now - timedelta(days=1)).isoformat()
 
     mock_store = MagicMock()

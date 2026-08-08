@@ -11,44 +11,56 @@ services 层（main_agent / knowledge_store / llm_client 等）已从步影适�
 但当前**未接入业务路由**，仅作为后续 Study/Work 双模式与知识图谱功能的实现基础。
 """
 
+import hmac
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app import __version__
 from app.config import settings
 from app.db import engine, init_db
 from app.models.db_models import migrate_node_columns, migrate_session_columns
 from app.routers import auth as auth_router
-from app.routers import graphs, health, nodes, plugin, ws
+
+# Task 8：多轮对话 chat 路由（main_agent + 高风险拦截 + WS 推送）
+from app.routers import chat as chat_router
+
+# 数据管理：导出备份（批量清空分散在各域路由，导出跨域聚合在此）
+from app.routers import data_management as data_management_router
+
 # Task 8 / Task 11：节点延伸与对话抽取路由
 from app.routers import extensions as extensions_router
 from app.routers import extraction as extraction_router
-# Task 12：Study 测验路由
-from app.routers import quiz as quiz_router
-# Task 13/14/15/16：Work 模式业务路由（抽取入图/风口/报告/提问）
-from app.routers import work as work_router
-# Task 5：智能推荐（按学习 / 工作模式计算推荐分并排序）
-from app.routers import recommendations as recommendations_router
+from app.routers import graphs, health, nodes, plugin, ws
+
 # LLM 请求队列与配置管理（前端设置面板用）
 from app.routers import llm_admin as llm_admin_router
+
+# Task 12：Study 测验路由
+from app.routers import quiz as quiz_router
+
+# Task 5：智能推荐（按学习 / 工作模式计算推荐分并排序）
+from app.routers import recommendations as recommendations_router
+
 # 流式触发路由（详情卡 / 问答 / 报告）
 from app.routers import stream as stream_router
-# Task 8：多轮对话 chat 路由（main_agent + 高风险拦截 + WS 推送）
-from app.routers import chat as chat_router
-# 数据管理：导出备份（批量清空分散在各域路由，导出跨域聚合在此）
-from app.routers import data_management as data_management_router
+
+# Task 13/14/15/16：Work 模式业务路由（抽取入图/风口/报告/提问）
+from app.routers import work as work_router
+from app.services import ws_notify
 from app.services.graph_agent import init_graph_agent
+from app.services.graph_store import graph_store
+
 # Task 8：main_agent + writer_agent 单例初始化
 from app.services.main_agent import init_main_agent
 from app.services.model_config import _REGISTRY
-from app.services.writer_agent import init_writer_agent
+
 # 新手引导种子图谱（首次启动自动创建）
 from app.services.onboarding_seed import seed_onboarding_if_empty
-from app.services.graph_store import graph_store
 from app.services.task_registry import background_tasks
-from app.services import ws_notify
+from app.services.writer_agent import init_writer_agent
 
 
 @asynccontextmanager
@@ -108,10 +120,75 @@ app.add_middleware(
 
 
 # 业务路由
+@app.middleware("http")
+async def enforce_request_limits_and_cache_policy(request: Request, call_next):
+    def error_response(status_code: int, detail: str) -> JSONResponse:
+        return JSONResponse(
+            status_code=status_code,
+            content={"detail": detail},
+            headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+        )
+
+    if request.url.path.startswith("/api/"):
+        is_plugin_pair = request.url.path == "/api/plugin/pair"
+        plugin_credential = request.headers.get("x-plugin-credential", "")
+        token = request.headers.get("x-local-api-token", "")
+        local_authorized = bool(token) and hmac.compare_digest(
+            token, settings.local_api_token
+        )
+        if not is_plugin_pair and not plugin_credential and not local_authorized:
+            return error_response(401, "invalid local API token")
+
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared_size = int(content_length)
+        except ValueError:
+            return error_response(400, "invalid Content-Length")
+        if declared_size < 0:
+            return error_response(400, "invalid Content-Length")
+        if declared_size > settings.max_request_size_bytes:
+            return error_response(413, "request body too large")
+
+    received = 0
+    original_receive = request.receive
+
+    async def limited_receive():
+        nonlocal received
+        message = await original_receive()
+        if message["type"] == "http.request":
+            received += len(message.get("body", b""))
+            if received > settings.max_request_size_bytes:
+                raise ValueError("request body too large")
+        return message
+
+    request._receive = limited_receive
+    try:
+        response = await call_next(request)
+    except ValueError as exc:
+        if str(exc) != "request body too large":
+            raise
+        return error_response(413, str(exc))
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return response
+
+
 # health 挂载在 /api 前缀下：GET /api/health
-app.include_router(health.router, prefix="/api", tags=["health"])
+app.include_router(
+    health.router,
+    prefix="/api",
+    tags=["health"],
+    dependencies=[Depends(auth_router.require_local_api_token)],
+)
 # 鉴权路由：GET /api/auth/ws-token（WebSocket 短期 token 签发）
-app.include_router(auth_router.router, prefix="/api", tags=["auth"])
+app.include_router(
+    auth_router.router,
+    prefix="/api",
+    tags=["auth"],
+    dependencies=[Depends(auth_router.require_local_api_token)],
+)
+
 # 图谱管理（Task 4）：/api/graphs、/api/graphs/{id}/nodes|edges 等
 app.include_router(graphs.router, prefix="/api", tags=["graphs"])
 # 节点详情与留白（Task 7 / Task 9）：/api/graphs/{id}/nodes/{nid}/detail|user-fill

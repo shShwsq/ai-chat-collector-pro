@@ -100,3 +100,28 @@ async def test_ws_send_failure_removes_stale_connection() -> None:
     assert await ws_notify.is_session_online("stale-session") is True
     assert await ws_notify.notify_session("stale-session", {"type": "test"}) == 0
     assert await ws_notify.is_session_online("stale-session") is False
+
+
+async def test_http_responses_disable_caching(async_client: AsyncClient) -> None:
+    response = await async_client.get("/api/health")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["pragma"] == "no-cache"
+
+
+async def test_request_body_size_limit_uses_configured_threshold(
+    async_client: AsyncClient, monkeypatch
+) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "max_request_size_bytes", 128)
+    response = await async_client.post(
+        "/api/plugin/conversations",
+        content=b"x" * 129,
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "request body too large"
+    assert response.headers["cache-control"] == "no-store"

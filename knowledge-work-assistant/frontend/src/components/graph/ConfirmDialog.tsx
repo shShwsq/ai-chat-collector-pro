@@ -11,7 +11,9 @@
  * - 内容受控（``open``），由父组件控制显隐
  */
 
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+
+import { useDialogFocus } from '../../hooks/useDialogFocus'
 
 export interface ConfirmDialogProps {
   /** 是否显示。 */
@@ -58,79 +60,48 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
-  const dialogRef = useRef<HTMLDivElement>(null)
+  const titleId = useId()
+  const descriptionId = useId()
   const inputRef = useRef<HTMLInputElement>(null)
-  const triggerRef = useRef<HTMLElement | null>(null)
   const [phraseInput, setPhraseInput] = useState('')
+  const dialogRef = useDialogFocus<HTMLDivElement>({
+    active: open,
+    initialFocus: confirmPhrase
+      ? '[data-dialog-initial="phrase"]'
+      : '[data-dialog-initial="cancel"]',
+    onEscape: onCancel,
+  })
 
   const phraseOk = !confirmPhrase || phraseInput === confirmPhrase
 
-  // 打开时记录触发元素、重置输入、聚焦首个可交互元素
   useEffect(() => {
     if (!open) return
-    triggerRef.current = document.activeElement as HTMLElement | null
     setPhraseInput('')
-    // 下一帧聚焦，确保 DOM 已渲染
-    requestAnimationFrame(() => {
-      if (confirmPhrase) {
-        inputRef.current?.focus()
-      } else {
-        dialogRef.current
-          ?.querySelector<HTMLElement>('button:not(:disabled)')?.focus()
-      }
-    })
-    return () => triggerRef.current?.focus()
-  }, [open, confirmPhrase])
-
-  // Esc 关闭 + Tab 焦点陷阱
-  useEffect(() => {
-    if (!open) return
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key === 'Escape') {
-        ev.preventDefault()
-        onCancel()
-      }
-      if (ev.key !== 'Tab' || !dialogRef.current) return
-      // 焦点陷阱含按钮与输入框
-      const focusable = Array.from(
-        dialogRef.current.querySelectorAll<HTMLElement>(
-          'button:not(:disabled), input:not(:disabled)',
-        ),
-      )
-      if (focusable.length < 2) return
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      if (ev.shiftKey && document.activeElement === first) {
-        ev.preventDefault()
-        last.focus()
-      } else if (!ev.shiftKey && document.activeElement === last) {
-        ev.preventDefault()
-        first.focus()
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, onCancel])
+  }, [open])
 
   if (!open) return null
 
   return (
     <div
       className="modal-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="confirm-title"
-      onClick={onCancel}
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onCancel()
+      }}
     >
       <div
         className="confirm-dialog"
         ref={dialogRef}
-        onClick={(ev) => ev.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        tabIndex={-1}
       >
-        <h3 id="confirm-title" className="confirm-dialog__title">
+        <h3 id={titleId} className="confirm-dialog__title">
           {title}
         </h3>
-        <p className="confirm-dialog__message">{message}</p>
+        <p id={descriptionId} className="confirm-dialog__message">{message}</p>
 
         {confirmPhrase && (
           <div className="confirm-dialog__phrase">
@@ -140,8 +111,10 @@ export function ConfirmDialog({
             <input
               id="confirm-phrase-input"
               ref={inputRef}
+              data-dialog-initial="phrase"
               className="confirm-dialog__phrase-input"
               type="text"
+              name="confirmPhrase"
               value={phraseInput}
               onChange={(e) => setPhraseInput(e.target.value)}
               autoComplete="off"
@@ -157,6 +130,7 @@ export function ConfirmDialog({
           <button
             type="button"
             className="confirm-dialog__btn confirm-dialog__btn--ghost"
+            data-dialog-initial="cancel"
             onClick={onCancel}
           >
             {cancelText}

@@ -63,6 +63,7 @@ import type {
   PluginConversationRequest,
   PluginConversationResponse,
   PluginHealthResponse,
+  PluginPairCodeResponse,
   PluginRecentConversationsResponse,
   Quiz,
   QuizAnswerRequest,
@@ -90,6 +91,9 @@ const FILE_PROTOCOL = 'file:'
 // 兜底地址：preload 桥不可用时（纯浏览器 / electronAPI 未注入）使用。
 // 后端默认监听 8788 端口（见 backend/app/main.py）。
 const FALLBACK_BACKEND_ORIGIN = 'http://127.0.0.1:8788'
+const RETRYABLE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
+const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504])
+const DEFAULT_RETRY_DELAYS_MS = [250, 750]
 
 /** 解析 HTTP 基地址：dev 用相对路径走 Vite 代理；file:// 直连后端。 */
 function httpBase(): string {
@@ -115,9 +119,40 @@ export class ApiError extends Error {
   }
 }
 
+function wait(ms: number, signal?: AbortSignal | null): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('请求已取消', 'AbortError'))
+      return
+    }
+    const timer = setTimeout(resolve, ms)
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer)
+        reject(new DOMException('请求已取消', 'AbortError'))
+      },
+      { once: true },
+    )
+  })
+}
+
+export function shouldRetryRequest(
+  method: string,
+  attempt: number,
+  status?: number,
+): boolean {
+  return (
+    RETRYABLE_METHODS.has(method.toUpperCase()) &&
+    attempt < DEFAULT_RETRY_DELAYS_MS.length &&
+    (status === undefined || RETRYABLE_STATUSES.has(status))
+  )
+}
+
 /** 底层 fetch 封装：统一加 /api 前缀、JSON 处理与错误抛出。 */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `${httpBase()}/api${path}`
+  const method = (init?.method ?? 'GET').toUpperCase()
 
   const headers: Record<string, string> = {
     ...(init?.headers as Record<string, string> | undefined),
@@ -127,40 +162,49 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers['Content-Type'] = 'application/json'
   }
 
-  let res: Response
-  try {
-    res = await fetch(url, { ...init, headers })
-  } catch (e) {
-    // AbortError 透传，让调用方区分「用户取消」与「真实网络错误」
-    if ((e as Error).name === 'AbortError') throw e
-    throw new ApiError(
-      (e as Error).message || '网络请求失败',
-      'network_error',
-      0,
-    )
-  }
-
-  const text = await res.text()
-  let data: unknown = null
-  if (text) {
+  for (let attempt = 0; ; attempt += 1) {
+    let res: Response
     try {
-      data = JSON.parse(text)
-    } catch {
-      data = text
+      res = await fetch(url, { ...init, headers })
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') throw e
+      if (shouldRetryRequest(method, attempt)) {
+        await wait(DEFAULT_RETRY_DELAYS_MS[attempt], init?.signal)
+        continue
+      }
+      throw new ApiError(
+        (e as Error).message || '网络请求失败，请检查后端连接后重试',
+        'network_error',
+        0,
+      )
     }
-  }
 
-  if (!res.ok) {
-    const err = data as { error?: string; code?: string; detail?: string } | null
-    throw new ApiError(
-      err?.error ?? `HTTP ${res.status}`,
-      err?.code ?? 'http_error',
-      res.status,
-      err?.detail,
-    )
-  }
+    const text = await res.text()
+    let data: unknown = null
+    if (text) {
+      try {
+        data = JSON.parse(text)
+      } catch {
+        data = text
+      }
+    }
 
-  return data as T
+    if (!res.ok) {
+      if (shouldRetryRequest(method, attempt, res.status)) {
+        await wait(DEFAULT_RETRY_DELAYS_MS[attempt], init?.signal)
+        continue
+      }
+      const err = data as { error?: string; code?: string; detail?: string } | null
+      throw new ApiError(
+        err?.error ?? `HTTP ${res.status}，请稍后重试`,
+        err?.code ?? 'http_error',
+        res.status,
+        err?.detail,
+      )
+    }
+
+    return data as T
+  }
 }
 
 /** 拼接查询字符串（跳过空值）。 */
@@ -180,7 +224,8 @@ export const api = {
 
   // ===== 鉴权 =====
   /** 获取 WebSocket 短期 token(15 分钟有效),用于 WS 握手鉴权。 */
-  getWsToken: () => request<WsTokenResponse>('/auth/ws-token'),
+  getWsToken: (sessionId: string) =>
+    request<WsTokenResponse>(withQuery('/auth/ws-token', { session_id: sessionId })),
 
   // ===== 图谱管理（Task 4）=====
   /** 列出图谱，可选按模式过滤（study/work 隔离）。 */
@@ -291,6 +336,7 @@ export const api = {
     }),
 
   // ===== 浏览器插件对接（Task 10）=====
+  getPluginPairCode: () => request<PluginPairCodeResponse>('/plugin/pair-code'),
   /** 推送插件采集的对话，后端持久化为 Observation。 */
   pushPluginConversation: (body: PluginConversationRequest) =>
     request<PluginConversationResponse>('/plugin/conversations', {
@@ -573,7 +619,7 @@ export const api = {
     }),
   /**
    * 测试 LLM 连接是否可用。
-   * 请求体字段均可选，未传则用后端已保存配置；用于保存前验证配置正确性。
+   * 仅允许覆盖模型名，base_url 与 API Key 始终使用后端已保存配置。
    * 后端发送一条极简 ping 消息，返回 ok/latency_ms/message。
    * 该端点不抛 HTTP 异常，所有错误通过 ok=false 返回。
    */

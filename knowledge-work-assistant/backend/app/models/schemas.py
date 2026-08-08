@@ -111,7 +111,10 @@ class NodeResponse(BaseModel):
 class UserFillAppend(BaseModel):
     """向节点 user_fill 追加一条内容。"""
 
-    fill_type: str = Field(..., description="留白类型：doubt/association/exam_point/error_point/note")
+    fill_type: str = Field(
+        ...,
+        description="留白类型：doubt/association/exam_point/error_point/note",
+    )
     content: str = Field(..., min_length=1, description="留白内容")
 
 

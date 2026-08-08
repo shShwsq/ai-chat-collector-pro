@@ -330,7 +330,6 @@ async def answer_quiz(
         )
 
     qtype = quiz.get("type", "")
-    payload = quiz.get("payload") or {}
 
     if qtype == "feynman":
         return await _answer_feynman(quiz, body, store, agent)

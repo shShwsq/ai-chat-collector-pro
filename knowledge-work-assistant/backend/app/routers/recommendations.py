@@ -47,7 +47,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -98,8 +98,8 @@ def _to_aware_utc(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _days_since(last_reviewed_at: datetime | None, now: datetime) -> int | None:
@@ -316,7 +316,7 @@ def _work_recommend(
         remind_sort = (
             remind_aware
             if remind_aware is not None
-            else datetime.max.replace(tzinfo=timezone.utc)
+            else datetime.max.replace(tzinfo=UTC)
         )
         created_at = node.get("created_at") or datetime.min
 
@@ -385,7 +385,7 @@ async def get_recommendations(
         )
 
     nodes = await store.list_nodes(graph_id)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     if mode == GRAPH_TYPE_STUDY:
         quizzes = await store.list_quizzes(graph_id=graph_id)

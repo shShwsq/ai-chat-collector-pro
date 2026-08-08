@@ -29,6 +29,7 @@
 import { useEffect, useState } from 'react'
 
 import { Icon } from '../Icon'
+import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { useAppStore } from '../../store/useAppStore'
 import type { Trend } from '../../lib/types'
 
@@ -75,9 +76,10 @@ export function TrendsSidebar() {
     }
   }, [trends])
 
-  if (!open) return null
-
   const handleClose = () => setWorkPanel('none')
+  const dialogRef = useDialogFocus<HTMLElement>({ active: open, initialFocus: '.work-actions__btn--primary', onEscape: handleClose })
+
+  if (!open) return null
 
   const handleGenerate = async () => {
     if (trendsLoading) return
@@ -104,6 +106,7 @@ export function TrendsSidebar() {
       />
 
       <aside
+        ref={dialogRef}
         className="work-panel trends-panel"
         role="dialog"
         aria-label="行业风口推荐"

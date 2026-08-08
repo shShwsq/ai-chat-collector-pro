@@ -10325,7 +10325,8 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
   font-size: 12px;
   font-weight: 700;
   font-family: var(--font-mono, monospace);
-  transition: all 180ms ease;
+  transition: background-color 180ms ease, border-color 180ms ease,
+    color 180ms ease, box-shadow 180ms ease;
 }
 
 .onboarding__step:hover .onboarding__step-dot {
@@ -12206,4 +12207,57 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
   background: var(--border);
   border-color: var(--border);
   color: var(--text-tertiary);
+}
+
+
+.chat-home__input-row,
+.qa-input-footer,
+.plugin-url-box {
+  transition: box-shadow var(--transition-fast), border-color var(--transition-fast);
+}
+
+.chat-home__input-row:focus-within,
+.qa-input-footer:focus-within,
+.plugin-url-box:focus-within {
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.empty-state__cta {
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  background: var(--surface);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chat-home__empty,
+.plugin-recent-empty,
+.settings-section__error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.work-panel__close,
+.quiz-panel__close,
+.pending-panel__close,
+.error-bar__close {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.work-actions__btn,
+.view-switch__btn,
+.report-period-toggle__btn,
+.quiz-history__toggle,
+.pending-section__refresh,
+.pending-section__batch-btn,
+.settings-section__ghost-btn,
+.plugin-url-box__copy-btn {
+  min-height: 44px;
 }

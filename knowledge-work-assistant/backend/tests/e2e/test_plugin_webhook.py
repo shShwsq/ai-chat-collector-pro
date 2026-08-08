@@ -14,8 +14,10 @@
 2. ``test_push_conversation_dedup``：同 conversation_id 重复推送 → 第二次 deduplicated=true
 3. ``test_push_conversation_invalid_platform``：非法 platform → 400
 4. ``test_push_conversation_missing_field``：缺 conversation_markdown → 422（Pydantic）
-5. ``test_plugin_health``：GET /api/plugin/health → 200 + {ok, version, supported_platforms, queue_size}
-6. ``test_plugin_contract``：GET /api/plugin/contract → 200 + 含 version / supported_platforms / push_examples
+5. ``test_plugin_health``：GET /api/plugin/health → 200 +
+   {ok, version, supported_platforms, queue_size}
+6. ``test_plugin_contract``：GET /api/plugin/contract → 200 +
+   含 version / supported_platforms / push_examples
 7. ``test_plugin_recent``：先推 N 条再 GET recent → 倒序列表
 8. ``test_push_conversation_metadata_validation``：metadata.title 非 string → 422
 
@@ -32,14 +34,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
-import pytest
 from httpx import AsyncClient
 from sqlalchemy import func, select
 
 import app.db as db_module
 from app.models.db_models import Observation
 from app.services.graph_store import graph_store
-
 
 # ============================================================================
 # 辅助函数
@@ -200,6 +200,40 @@ class TestPushConversation:
         # 数据库仅 1 条
         count = await _count_observations("plugin")
         assert count == 1, f"去重后应仅 1 条记录，实际: {count}"
+
+    async def test_push_conversation_dedup_updates_existing_observation(
+        self, async_client: AsyncClient
+    ) -> None:
+        conv_id = "conv-dedup-update"
+        first = _make_payload(
+            conversation_id=conv_id,
+            title="old title",
+            conversation_markdown="## User\nold question\n\n## Assistant\nold answer",
+        )
+        second = _make_payload(
+            conversation_id=conv_id,
+            title="new title",
+            conversation_markdown="## User\nnew question\n\n## Assistant\nnew answer",
+        )
+
+        first_response = await async_client.post("/api/plugin/conversations", json=first)
+        observation_id = first_response.json()["observation_id"]
+        await graph_store.mark_observation_processed(observation_id)
+
+        second_response = await async_client.post("/api/plugin/conversations", json=second)
+
+        assert second_response.status_code == 200
+        assert second_response.json() == {
+            "received": True,
+            "observation_id": observation_id,
+            "deduplicated": True,
+        }
+        observation = await graph_store.get_observation(observation_id)
+        assert observation is not None
+        assert observation["conversation_markdown"] == second["conversation_markdown"]
+        assert observation["metadata"]["title"] == "new title"
+        assert observation["processed"] is False
+        assert await _count_observations("plugin") == 1
 
     async def test_push_conversation_invalid_platform(
         self, async_client: AsyncClient
@@ -377,6 +411,11 @@ class TestPluginMeta:
         assert "response" in body
         for field in ("received", "observation_id", "deduplicated"):
             assert field in body["response"], f"response 应含 {field} 描述"
+        assert body["websocket_event"]["type"] == "plugin.conversation_received"
+        assert body["websocket_event"]["payload"]["updated"] == "boolean"
+        example_metadata = body["push_examples"][0]["metadata"]
+        assert "source_conversation_id" in example_metadata
+        assert "conversation_revision" in example_metadata
 
     async def test_plugin_recent(self, async_client: AsyncClient) -> None:
         """先推送 N 条，再 GET /api/plugin/conversations/recent?limit=20 → 倒序列表。

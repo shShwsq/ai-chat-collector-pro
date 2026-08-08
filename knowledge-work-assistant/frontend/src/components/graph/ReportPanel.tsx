@@ -37,6 +37,7 @@
 import { useMemo } from 'react'
 
 import { Icon } from '../Icon'
+import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { useAppStore } from '../../store/useAppStore'
 import { renderMarkdown } from '../../lib/markdown'
 import type { ReportPeriod } from '../../lib/types'
@@ -76,12 +77,14 @@ export function ReportPanel() {
         ? renderMarkdown(reportResult.markdown) +
           (reportStreamingActive ? '<span class="report-streaming-cursor">▋</span>' : '')
         : '',
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reportStreamingText 为有意订阅
     [reportResult, reportStreamingActive, reportStreamingText],
   )
 
-  if (!open) return null
-
   const handleClose = () => setWorkPanel('none')
+  const dialogRef = useDialogFocus<HTMLElement>({ active: open, initialFocus: '.report-period-toggle__btn', onEscape: handleClose })
+
+  if (!open) return null
 
   const handleGenerate = async () => {
     if (reportGenerating) return
@@ -153,6 +156,7 @@ ${renderMarkdown(reportResult.markdown)}
       />
 
       <aside
+        ref={dialogRef}
         className="work-panel report-panel"
         role="dialog"
         aria-label="工作报告生成"

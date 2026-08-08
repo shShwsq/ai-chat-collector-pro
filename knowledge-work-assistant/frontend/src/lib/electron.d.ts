@@ -20,6 +20,7 @@ declare global {
     getUrl: () => string
     /** 获取后端 WebSocket 基地址（生产环境为 ws://127.0.0.1:8788）。 */
     getWsUrl: () => string
+    getApiToken: () => string
   }
 
   /** 渲染进程可用的 Electron API 集合。 */

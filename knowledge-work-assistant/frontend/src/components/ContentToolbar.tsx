@@ -19,6 +19,7 @@
 import { useAppStore } from '../store/useAppStore'
 import type { ViewType } from '../lib/types'
 import type { WorkPanel } from '../store/useAppStore'
+import type { KeyboardEvent } from 'react'
 import { Icon } from './Icon'
 
 const VIEWS: { value: ViewType; label: string }[] = [
@@ -95,6 +96,14 @@ export function ContentToolbar({ graphName, onRelayout }: ContentToolbarProps) {
     setQuizPanelOpen(!quizPanelOpen)
   }
 
+  const handleViewKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+    event.preventDefault()
+    const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? VIEWS.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + VIEWS.length) % VIEWS.length
+    setView(VIEWS[nextIndex].value)
+    event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus()
+  }
+
   const handleToggleWorkPanel = (panel: WorkPanel) => {
     // 再次点击当前激活面板则关闭，否则切换
     setWorkPanel(workActivePanel === panel ? 'none' : panel)
@@ -161,16 +170,20 @@ export function ContentToolbar({ graphName, onRelayout }: ContentToolbarProps) {
             )
           })}
         <div className="view-switch" role="tablist" aria-label="视图切换：图谱 / 卡片">
-          {VIEWS.map((v) => {
+          {VIEWS.map((v, index) => {
             const active = view === v.value
             return (
               <button
                 key={v.value}
                 type="button"
                 role="tab"
+                id={`view-tab-${v.value}`}
                 aria-selected={active}
+                aria-controls={`view-panel-${v.value}`}
+                tabIndex={active ? 0 : -1}
                 className={`view-switch__btn${active ? ' is-active' : ''}`}
                 onClick={() => setView(v.value)}
+                onKeyDown={(event) => handleViewKeyDown(event, index)}
               >
                 {v.label}
               </button>

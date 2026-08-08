@@ -148,7 +148,7 @@ class ConversationViewer {
 
     // 用 marked 渲染 Markdown
     let html = '';
-    if (typeof marked !== 'undefined') {
+    if (typeof marked !== 'undefined' && typeof HtmlSanitizer !== 'undefined') {
       html = HtmlSanitizer.sanitize(marked.parse(processed, { breaks: true, gfm: true }));
     } else {
       html = this.escapeHtml(processed).replace(/\n/g, '<br>');
@@ -168,7 +168,7 @@ class ConversationViewer {
 
       // think / search 块内内容也用 marked 渲染
       let inner = '';
-      if (typeof marked !== 'undefined') {
+      if (typeof marked !== 'undefined' && typeof HtmlSanitizer !== 'undefined') {
         inner = HtmlSanitizer.sanitize(marked.parse(block.content, { breaks: true, gfm: true }));
       } else {
         inner = this.escapeHtml(block.content).replace(/\n/g, '<br>');

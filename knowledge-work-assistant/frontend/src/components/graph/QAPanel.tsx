@@ -35,6 +35,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { Icon } from '../Icon'
+import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { useAppStore } from '../../store/useAppStore'
 import type { QaMessage } from '../../store/useAppStore'
 import type { AskSource } from '../../lib/types'
@@ -75,9 +76,10 @@ export function QAPanel() {
     }
   }, [qaMessages, open, qaAsking, qaStreamingActive, qaStreamingText])
 
-  if (!open) return null
-
   const handleClose = () => setWorkPanel('none')
+  const dialogRef = useDialogFocus<HTMLElement>({ active: open, initialFocus: '.qa-input', onEscape: handleClose })
+
+  if (!open) return null
 
   const handleAsk = async () => {
     if (qaAsking) return
@@ -110,6 +112,7 @@ export function QAPanel() {
       />
 
       <aside
+        ref={dialogRef}
         className="work-panel qa-panel"
         role="dialog"
         aria-label="Work 用户提问"
@@ -186,6 +189,7 @@ export function QAPanel() {
             }
             rows={2}
             disabled={qaAsking || !currentGraphId}
+            aria-label="向工作图谱提问"
           />
           <button
             type="button"

@@ -2,24 +2,52 @@
 // 依赖：lib/embedding.js (EmbeddingService), lib/llm.js (LLMService),
 //       lib/vector-store.js (VectorStore), lib/db.js (get/save*Settings)
 
-async function handleGetSettings(category) {
+const SENSITIVE_SETTING_KEYS = new Set([
+  'apiKey',
+  'api_key',
+  'dashscopeKey',
+  'token',
+  'accessToken',
+  'refreshToken',
+  'password',
+  'secret'
+]);
+
+function redactSensitiveSettings(value) {
+  if (Array.isArray(value)) return value.map(redactSensitiveSettings);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key,
+    SENSITIVE_SETTING_KEYS.has(key) ? '' : redactSensitiveSettings(item)
+  ]));
+}
+
+async function handleGetSettings(category, options = {}) {
   try {
+    let settings;
     switch (category) {
       case 'embedding':
-        return await getEmbeddingSettings();
+        settings = await getEmbeddingSettings();
+        break;
       case 'vectorStore':
-        return await getVectorStoreSettings();
+        settings = await getVectorStoreSettings();
+        break;
       case 'retrieval':
-        return await getRetrievalSettings();
+        settings = await getRetrievalSettings();
+        break;
       case 'llm':
-        return await getLLMSettings();
+        settings = await getLLMSettings();
+        break;
       case 'platforms':
-        return await getPlatformSettings();
+        settings = await getPlatformSettings();
+        break;
       case 'localApp':
-        return await getLocalAppSettings();
+        settings = await getLocalAppSettings();
+        break;
       default:
         return { error: '未知设置类别' };
     }
+    return options.includeSecrets ? settings : redactSensitiveSettings(settings);
   } catch (e) {
     return { error: e.message };
   }
@@ -29,12 +57,15 @@ async function handleSaveSettings(category, settings) {
   try {
     let extraResult = {};
     switch (category) {
-      case 'embedding':
+      case 'embedding': {
+        const oldSettings = await getEmbeddingSettings();
+        const apiKey = settings.apiKey || settings.dashscopeKey || oldSettings.apiKey || oldSettings.dashscopeKey || '';
+        settings = { ...settings, apiKey, dashscopeKey: apiKey };
         await saveEmbeddingSettings(settings);
         await EmbeddingService.setConfig({
           provider: settings.provider,
-          apiKey: settings.apiKey,
-          dashscopeKey: settings.dashscopeKey, // 兼容旧字段
+          apiKey,
+          dashscopeKey: apiKey,
           model: settings.model,
           baseUrl: settings.baseUrl,
           includeThinking: settings.includeThinking,
@@ -43,6 +74,7 @@ async function handleSaveSettings(category, settings) {
           chunkOverlap: settings.chunkOverlap
         });
         break;
+      }
       case 'retrieval':
         await saveRetrievalSettings(settings);
         break;
@@ -52,7 +84,11 @@ async function handleSaveSettings(category, settings) {
         const oldBackend = oldSettings.backend;
         const oldConfig = oldSettings.config || {};
         const newBackend = settings.backend;
-        const newConfig = settings.config || {};
+        const requestedConfig = settings.config || {};
+        const newConfig = {
+          ...requestedConfig,
+          apiKey: requestedConfig.apiKey || oldConfig.apiKey || ''
+        };
 
         // 后端变化判定：backend 字段变化，或 remote 模式下 type/url/collection 变化
         // apiKey 单独变化不视为数据位置变化（不触发清理/重建）
@@ -94,17 +130,30 @@ async function handleSaveSettings(category, settings) {
         extraResult = { cleared, rebuilt };
         break;
       }
-      case 'llm':
+      case 'llm': {
+        const oldSettings = await getLLMSettings();
+        const oldConfig = oldSettings.config || {};
+        const config = {
+          ...(settings.config || {}),
+          apiKey: settings.config?.apiKey || oldConfig.apiKey || ''
+        };
+        settings = { ...settings, config };
         await saveLLMSettings(settings);
-        await LLMService.setBackend(settings.backend, settings.config || {});
+        await LLMService.setBackend(settings.backend, config);
         break;
+      }
       case 'platforms':
         await savePlatformSettings(settings);
         break;
-      case 'localApp':
-        // 保存并应用到 LocalApp 模块（同步更新定时器）
+      case 'localApp': {
+        const oldSettings = await getLocalAppSettings();
+        settings = {
+          ...settings,
+          credential: settings.credential || oldSettings.credential || ''
+        };
         await LocalApp_applySettings(settings);
         break;
+      }
     }
     return { success: true, ...extraResult };
   } catch (e) {

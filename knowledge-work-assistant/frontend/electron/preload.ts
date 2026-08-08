@@ -25,5 +25,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getWsUrl(): string {
       return ipcRenderer.sendSync('backend:get-ws-url') as string
     },
+    getApiToken(): string {
+      return ipcRenderer.sendSync('backend:get-api-token') as string
+    },
   },
 })

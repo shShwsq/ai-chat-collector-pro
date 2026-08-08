@@ -1415,6 +1415,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ loading: true, error: '' })
     try {
       const graphs = await api.getGraphs(mode)
+      if (get().mode !== mode) return
       set({ graphs, loading: false })
     } catch (e) {
       set({ loading: false, error: errMsg(e) })
@@ -1425,6 +1426,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ loading: true, error: '' })
     try {
       const full = await api.getFullGraph(id)
+      if (get().currentGraphId !== id) return
       set({ fullGraph: full, loading: false })
     } catch (e) {
       set({ loading: false, error: errMsg(e) })
@@ -3038,6 +3040,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ currentChatSession: session, error: '' })
     try {
       const messages = await api.getChatMessages(session.id)
+      if (get().currentChatSession?.id !== session.id) return
       set({ chatMessages: messages })
     } catch (e) {
       const msg = errMsg(e)

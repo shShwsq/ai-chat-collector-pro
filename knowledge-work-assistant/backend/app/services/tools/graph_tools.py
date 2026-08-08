@@ -64,6 +64,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -517,9 +518,9 @@ async def graph_extend_node(args: dict[str, Any]) -> dict[str, Any]:
         direction_name = str(direction_name).strip() or None
 
     try:
-        from app.services.graph_agent import graph_agent, _titles_similar
-        from app.services.graph_store import graph_store
         from app.models.node_types import EDGE_EXTENDS, NODE_SOURCE_EXTENSION
+        from app.services.graph_agent import _titles_similar, graph_agent
+        from app.services.graph_store import graph_store
 
         candidates = await graph_agent.generate_extensions(
             node_id=node_id,
@@ -538,7 +539,6 @@ async def graph_extend_node(args: dict[str, Any]) -> dict[str, Any]:
     existing_hit: list[dict[str, Any]] = []
     try:
         existing_nodes = await graph_store.list_nodes(graph_id)
-        existing_titles = [n.get("title", "") for n in existing_nodes if n.get("title")]
         existing_map = {n.get("title", ""): n for n in existing_nodes if n.get("title")}
 
         for cand in candidates:
@@ -1115,11 +1115,9 @@ async def graph_get_recommendations(args: dict[str, Any]) -> dict[str, Any]:
     limit = max(1, min(limit, 100))
 
     try:
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
         from app.models.node_types import (
-            GRAPH_TYPE_STUDY,
-            GRAPH_TYPE_WORK,
             WORK_OBJECT_COMMITMENT,
             WORK_OBJECT_EVENT,
             WORK_OBJECT_RISK,
@@ -1139,7 +1137,7 @@ async def graph_get_recommendations(args: dict[str, Any]) -> dict[str, Any]:
                 "count": 0,
             }
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         recommendations: list[dict[str, Any]] = []
 
         if mode == "study":
@@ -1195,8 +1193,13 @@ async def graph_get_recommendations(args: dict[str, Any]) -> dict[str, Any]:
                     "error_rate": error_score,
                 }
                 top_factor = max(scores, key=scores.get)
+                days_since = (
+                    int((now - _to_aware_utc(last_reviewed)).days)
+                    if last_reviewed
+                    else "∞"
+                )
                 reason_map = {
-                    "forgetting": f"已 {int((now - _to_aware_utc(last_reviewed)).days) if last_reviewed else '∞'} 天未复习",
+                    "forgetting": f"已 {days_since} 天未复习",
                     "heat": f"提及 {mention_count} 次待巩固",
                     "error_rate": f"历史错误率 {int(error_score / 40 * 100)}%",
                 }
@@ -1281,19 +1284,17 @@ async def graph_get_recommendations(args: dict[str, Any]) -> dict[str, Any]:
 
 def _to_aware_utc(dt: Any) -> datetime:
     """把 naive datetime 补 UTC 时区，aware 直接返回。"""
-    from datetime import datetime, timezone
-
     if dt is None:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
     if isinstance(dt, datetime):
         if dt.tzinfo is None:
-            return dt.replace(tzinfo=timezone.utc)
+            return dt.replace(tzinfo=UTC)
         return dt
     # 字符串：尝试解析
     try:
         return datetime.fromisoformat(str(dt))
     except ValueError:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
 
 # ============================================================================
@@ -1370,7 +1371,6 @@ async def graph_confirm_work_objects(args: dict[str, Any]) -> dict[str, Any]:
     try:
         from app.services.graph_agent import _titles_similar
         from app.services.graph_store import graph_store
-        from app.models.node_types import EDGE_RELATED
 
         existing_nodes = await graph_store.list_nodes(graph_id)
         existing_map = {n.get("title", ""): n for n in existing_nodes if n.get("title")}
@@ -1733,7 +1733,8 @@ _GRAPH_TOOL_DEFS: list[tuple[str, dict[str, Any], list[str], Any]] = [
         "graph_extend_node",
         _build_schema(
             "graph_extend_node",
-            "节点延伸：基于源节点生成新节点并落库（与 POST /graphs/{gid}/nodes/{nid}/extend 行为一致）。\n"
+            "节点延伸：基于源节点生成新节点并落库"
+            "（与 POST /graphs/{gid}/nodes/{nid}/extend 行为一致）。\n"
             "仅 build 模式可用（会落库新建节点 / 边，属于图谱修改操作）。\n"
             "mode=all 生成全部延伸方向（6-8 个）；mode=single 仅生成指定方向。\n"
             "已存在相似标题的节点不重复创建，仅记 existing_hit 供前端高亮。",
@@ -1840,14 +1841,19 @@ _GRAPH_TOOL_DEFS: list[tuple[str, dict[str, Any], list[str], Any]] = [
             "graph_answer_quiz",
             "测验作答并判分（选择题本地判分 / 费曼题语义判分），结果落库。\n"
             "仅 build 模式可用（写入作答结果，且同一测验不可重复作答）。\n"
-            "- 选择题：answer 为选项 id 数组（如 [\"A\"] 或 [\"A\",\"C\"]），本地对比 correct_answers 严格集合相等判分。\n"
-            "- 费曼题：answer 为用户解释文本，调 graph_agent.grade_feynman 语义判分，返回 score/understanding_level/feedback。\n"
+            "- 选择题：answer 为选项 id 数组（如 [\"A\"] 或 [\"A\",\"C\"]），"
+            "本地对比 correct_answers 严格集合相等判分。\n"
+            "- 费曼题：answer 为用户解释文本，调 graph_agent.grade_feynman 语义判分，"
+            "返回 score/understanding_level/feedback。\n"
             "返回值含 correct / score / explanation / correct_answers 等字段。",
             {
                 "quiz_id": {"type": "string", "description": "测验 ID"},
                 "answer": {
                     "type": ["string", "array"],
-                    "description": "用户答案：选择题为选项 id 数组（如 [\"A\",\"C\"]）；费曼题为解释文本",
+                    "description": (
+                        "用户答案：选择题为选项 id 数组（如 [\"A\",\"C\"]）；"
+                        "费曼题为解释文本"
+                    ),
                 },
             },
             required=["quiz_id", "answer"],
@@ -1928,8 +1934,10 @@ _GRAPH_TOOL_DEFS: list[tuple[str, dict[str, Any], list[str], Any]] = [
             "graph_get_recommendations",
             "智能推荐：按 study / work 模式返回推荐节点列表（含 reason / score）。\n"
             "plan 与 build 模式均可用。\n"
-            "- study 模式：遗忘分（40）+ 热度分（20）+ 错误率分（40），综合分 0-100 排序，推荐需复习的节点。\n"
-            "- work 模式：到期优先（100）→ 24h 临近（60）→ 星标（20）→ 类型权重（commitment/risk/event 5-20）。",
+            "- study 模式：遗忘分（40）+ 热度分（20）+ 错误率分（40），"
+            "综合分 0-100 排序，推荐需复习的节点。\n"
+            "- work 模式：到期优先（100）→ 24h 临近（60）→ 星标（20）→ "
+            "类型权重（commitment/risk/event 5-20）。",
             {
                 "graph_id": {"type": "string", "description": "图谱 ID"},
                 "mode": {
@@ -1956,7 +1964,8 @@ _GRAPH_TOOL_DEFS: list[tuple[str, dict[str, Any], list[str], Any]] = [
             "graph_extract_work_objects",
             "从用户输入文本抽取工作对象候选（不入图，仅返回候选列表）。\n"
             "plan 与 build 模式均可用（只读，不入图）。\n"
-            "每个候选含 title / summary / type / relations，供 graph_confirm_work_objects 确认入图。",
+            "每个候选含 title / summary / type / relations，"
+            "供 graph_confirm_work_objects 确认入图。",
             {
                 "graph_id": {"type": "string", "description": "work 图谱 ID"},
                 "text": {"type": "string", "description": "用户输入文本（1-6000 字符）"},

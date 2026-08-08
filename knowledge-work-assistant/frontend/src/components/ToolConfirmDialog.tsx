@@ -14,7 +14,9 @@
  * - 显示倒计时（基于 timeout 字段，到 0 时后端视为拒绝）。
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+
+import { useDialogFocus } from '../hooks/useDialogFocus'
 
 import { useAppStore } from '../store/useAppStore'
 import type { ToolConfirmation } from '../lib/types'
@@ -126,41 +128,13 @@ export function ToolConfirmDialog({ confirmation }: ToolConfirmDialogProps) {
   const [reason, setReason] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [remaining, setRemaining] = useState(confirmation.timeout)
-  const dialogRef = useRef<HTMLDivElement>(null)
-  const triggerRef = useRef<HTMLElement | null>(null)
-  // 保存最新的 handleReject，供 ESC 键监听（deps=[]）调用，避免 stale 闭包
-  const rejectRef = useRef<() => Promise<void>>(async () => {})
-
-  useEffect(() => {
-    triggerRef.current = document.activeElement as HTMLElement | null
-    dialogRef.current?.querySelector<HTMLElement>('button, textarea, input')?.focus()
-    return () => triggerRef.current?.focus()
-  }, [confirmation.request_id])
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      // Escape：主动拒绝（不必等后端倒计时超时），行为与点击「拒绝」一致
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        void rejectRef.current()
-        return
-      }
-      if (event.key !== 'Tab' || !dialogRef.current) return
-      const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>('button:not(:disabled), textarea:not(:disabled), input:not(:disabled)'))
-      if (focusable.length < 2) return
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  const dialogRef = useDialogFocus<HTMLDivElement>({
+    initialFocus: '[data-dialog-initial="reject"]',
+    resetKey: confirmation.request_id,
+    onEscape: () => {
+      if (!submitting) void rejectToolCall(reason.trim() || undefined)
+    },
+  })
 
   // 倒计时（每秒递减，到 0 停止）
   useEffect(() => {
@@ -232,7 +206,6 @@ export function ToolConfirmDialog({ confirmation }: ToolConfirmDialogProps) {
     setSubmitting(false)
     setReason('')
   }
-  rejectRef.current = handleReject
 
   const toolLabel = TOOL_NAME_LABEL[confirmation.tool] ?? confirmation.tool
   const riskLabel = TOOL_RISK_LABEL[confirmation.tool]
@@ -253,11 +226,17 @@ export function ToolConfirmDialog({ confirmation }: ToolConfirmDialogProps) {
   return (
     <div
       className="tool-confirm-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="tool-confirm-title"
+      role="presentation"
     >
-      <div className="tool-confirm-dialog" ref={dialogRef}>
+      <div
+        className="tool-confirm-dialog"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tool-confirm-title"
+        aria-describedby="tool-confirm-description"
+        tabIndex={-1}
+      >
         <header className="tool-confirm__header">
           <h3 id="tool-confirm-title" className="tool-confirm__title">
             高风险操作确认
@@ -273,7 +252,7 @@ export function ToolConfirmDialog({ confirmation }: ToolConfirmDialogProps) {
         </header>
 
         <div className="tool-confirm__body">
-          <p className="tool-confirm__desc">
+          <p id="tool-confirm-description" className="tool-confirm__desc">
             Agent 想调用以下工具，该操作可能修改图谱数据，请确认是否允许执行。
           </p>
 
@@ -327,6 +306,7 @@ export function ToolConfirmDialog({ confirmation }: ToolConfirmDialogProps) {
             拒绝原因（可选）
             <textarea
               className="tool-confirm__reason-input"
+              name="rejectReason"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               placeholder="如：暂不希望抽取节点 / 抽取依据不充分…"
@@ -340,6 +320,7 @@ export function ToolConfirmDialog({ confirmation }: ToolConfirmDialogProps) {
           <button
             type="button"
             className="tool-confirm__btn tool-confirm__btn--reject"
+            data-dialog-initial="reject"
             onClick={handleReject}
             disabled={submitting}
             title="拒绝执行，agent 将收到原因并调整后续对话"

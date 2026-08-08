@@ -297,7 +297,15 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
       aria-label="首次使用引导"
     >
       {/* 顶部进度条 */}
-      <div className="onboarding__progress-bar" aria-hidden="true">
+      <div
+        className="onboarding__progress-bar"
+        role="progressbar"
+        aria-label="引导完成进度"
+        aria-valuemin={0}
+        aria-valuemax={total}
+        aria-valuenow={step + 1}
+        aria-valuetext={`第 ${step + 1} 步，共 ${total} 步`}
+      >
         <div className="onboarding__progress-fill" style={{ width: `${progress}%` }} />
       </div>
 
@@ -308,9 +316,12 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
           return (
             <button
               key={s.id}
+              id={`onboarding-tab-${s.id}`}
               type="button"
               role="tab"
               aria-selected={i === step}
+              aria-controls={`onboarding-panel-${s.id}`}
+              tabIndex={i === step ? 0 : -1}
               aria-label={`步骤 ${i + 1}：${s.title}`}
               className={`onboarding__step${state === 'current' ? ' is-current' : ''}${
                 state === 'done' ? ' is-done' : ''
@@ -332,6 +343,9 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
             key={current.id}
+            id={`onboarding-panel-${current.id}`}
+            role="tabpanel"
+            aria-labelledby={`onboarding-tab-${current.id}`}
             className="onboarding__slide"
             initial={{ opacity: 0, x: 24 }}
             animate={{ opacity: 1, x: 0 }}

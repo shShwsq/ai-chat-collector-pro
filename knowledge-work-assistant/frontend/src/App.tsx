@@ -135,11 +135,33 @@ export default function App() {
 
   // 启动时：首次加载当前模式图谱列表 + 健康检查轮询 + LLM 配置
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let stopped = false
+
+    const schedule = () => {
+      if (stopped || document.visibilityState === 'hidden') return
+      timer = setTimeout(async () => {
+        await checkHealth()
+        schedule()
+      }, 5000)
+    }
+    const refresh = () => {
+      if (document.visibilityState !== 'visible') return
+      if (timer) clearTimeout(timer)
+      void checkHealth().finally(schedule)
+    }
+
     void loadGraphs()
-    void checkHealth()
     void loadLlmConfig()
-    const timer = setInterval(() => void checkHealth(), 5000)
-    return () => clearInterval(timer)
+    refresh()
+    document.addEventListener('visibilitychange', refresh)
+    window.addEventListener('online', refresh)
+    return () => {
+      stopped = true
+      if (timer) clearTimeout(timer)
+      document.removeEventListener('visibilitychange', refresh)
+      window.removeEventListener('online', refresh)
+    }
   }, [loadGraphs, checkHealth, loadLlmConfig])
 
   // WebSocket：连接 /ws?session_id=<uuid>，订阅「插件对话已接收」与流式事件。
@@ -167,70 +189,60 @@ export default function App() {
 
     const socket = new TestSocket()
     socketRef.current = socket
-    let off: (() => void) | undefined
-    socket
-      .connect(sessionId)
-      .then(() => {
-        off = socket.onEvent((event) => {
-          const store = useAppStore.getState()
-          switch (event.type) {
-            case 'plugin.conversation_received':
-              store.handlePluginConversationReceived(event.payload)
-              break
-            case 'graph_agent_token':
-              // 按 op 区分：op="chat" 走多轮对话流式；其他走 graph_agent 流式
-              if (event.op === 'chat') {
-                store.handleChatToken(event)
-              } else {
-                store.handleGraphAgentToken(event)
-              }
-              break
-            case 'graph_agent_done':
-              if (event.op === 'chat') {
-                store.handleChatDone(event)
-              } else {
-                store.handleGraphAgentDone(event)
-              }
-              break
-            case 'graph_agent_cancelled':
-              if (event.op === 'chat') {
-                store.handleChatCancelled(event)
-              } else {
-                store.handleGraphAgentCancelled(event)
-              }
-              break
-            case 'graph_agent_error':
-              if (event.op === 'chat') {
-                store.handleChatError(event)
-              } else {
-                store.handleGraphAgentError(event)
-              }
-              break
-            case 'chat_tool_call':
-              store.handleChatToolCall(event)
-              break
-            case 'chat_tool_result':
-              store.handleChatToolResult(event)
-              break
-            case 'chat_tool_call_confirmation':
-              store.handleChatToolConfirmation(event)
-              break
-            case 'chat_thinking':
-              store.handleChatThinking(event)
-              break
-            case 'chat_content_replace':
-              store.handleChatContentReplace(event)
-              break
-            default:
-              // welcome / pong / echo 等不处理
-              break
+    const off = socket.onEvent((event) => {
+      const store = useAppStore.getState()
+      switch (event.type) {
+        case 'plugin.conversation_received':
+          store.handlePluginConversationReceived(event.payload)
+          break
+        case 'graph_agent_token':
+          if (event.op === 'chat') {
+            store.handleChatToken(event)
+          } else {
+            store.handleGraphAgentToken(event)
           }
-        })
-      })
-      .catch(() => {
-        // 连接失败：静默处理（后端可能未启用 WS 或网络不可达）
-        // 流式动作会自动回退到非流式接口（store 内已判断 sessionId）
-      })
+          break
+        case 'graph_agent_done':
+          if (event.op === 'chat') {
+            store.handleChatDone(event)
+          } else {
+            store.handleGraphAgentDone(event)
+          }
+          break
+        case 'graph_agent_cancelled':
+          if (event.op === 'chat') {
+            store.handleChatCancelled(event)
+          } else {
+            store.handleGraphAgentCancelled(event)
+          }
+          break
+        case 'graph_agent_error':
+          if (event.op === 'chat') {
+            store.handleChatError(event)
+          } else {
+            store.handleGraphAgentError(event)
+          }
+          break
+        case 'chat_tool_call':
+          store.handleChatToolCall(event)
+          break
+        case 'chat_tool_result':
+          store.handleChatToolResult(event)
+          break
+        case 'chat_tool_call_confirmation':
+          store.handleChatToolConfirmation(event)
+          break
+        case 'chat_thinking':
+          store.handleChatThinking(event)
+          break
+        case 'chat_content_replace':
+          store.handleChatContentReplace(event)
+          break
+        default:
+          break
+      }
+    })
+    void socket.connect(sessionId).catch(() => undefined)
     return () => {
       off?.()
       socket.close()
@@ -377,12 +389,18 @@ export default function App() {
                   />
                   <div className="content-stage" data-active-view={view}>
                     <div
+                      id="view-panel-graph"
+                      role="tabpanel"
+                      aria-labelledby="view-tab-graph"
                       className={`content-stage__view${view === 'graph' ? ' is-active' : ''}`}
                       aria-hidden={view !== 'graph'}
                     >
                       <GraphView ref={graphViewRef} />
                     </div>
                     <div
+                      id="view-panel-card"
+                      role="tabpanel"
+                      aria-labelledby="view-tab-card"
                       className={`content-stage__view${view === 'card' ? ' is-active' : ''}`}
                       aria-hidden={view !== 'card'}
                     >

@@ -46,10 +46,8 @@ from app.db import AsyncSessionLocal
 from app.models.node_types import (
     GRAPH_TYPE_STUDY,
     GRAPH_TYPE_WORK,
-    NODE_SOURCE_AGENT,
-    NODE_SOURCE_EXTENSION,
-    STUDY_SUBJECTS,
     STUDY_SUBJECT_GENERAL,
+    STUDY_SUBJECTS,
     STUDY_TEMPLATES,
     WORK_OBJECTS,
     WORK_TEMPLATES,
@@ -1805,7 +1803,8 @@ class GraphAgent:
             "或 markdown 代码块。\n\n"
             "输出字段：\n"
             "- question: 题干\n"
-            "- options: 选项数组，每项为 {\"id\": \"A\"|\"B\"|\"C\"|\"D\", \"text\": \"选项内容\"}\n"
+            "- options: 选项数组，每项为 "
+            "{\"id\": \"A\"|\"B\"|\"C\"|\"D\", \"text\": \"选项内容\"}\n"
             "- correct_answers: 正确选项 id 数组（"
             f"{answer_count}）\n"
             "- explanation: 答案解析\n"
@@ -1923,17 +1922,27 @@ class GraphAgent:
         if quiz_type == "feynman":
             return {
                 "type": "feynman",
-                "prompt": f"请用自己的话解释 {title}" if title else "（题目生成服务暂不可用，请稍后重试）",
+                "prompt": (
+                    f"请用自己的话解释 {title}"
+                    if title
+                    else "（题目生成服务暂不可用，请稍后重试）"
+                ),
                 "node_id": primary.get("id", ""),
                 "reference_points": [],
                 "degraded": True,
-                "degrade_reason": "LLM 服务暂不可用，当前为占位题。配置好 LLM 后重新生成即可获得正常题目。",
+                "degrade_reason": (
+                    "LLM 服务暂不可用，当前为占位题。"
+                    "配置好 LLM 后重新生成即可获得正常题目。"
+                ),
             }
         # 选择题降级：提供4个占位选项，正确答案为A（明确告知用户这是占位题）
         node_title = title or "当前知识点"
         return {
             "type": quiz_type,
-            "question": f"【占位题】关于「{node_title}」，以下哪项描述正确？（LLM 服务暂不可用，请配置后重试）",
+            "question": (
+                f"【占位题】关于「{node_title}」，以下哪项描述正确？"
+                "（LLM 服务暂不可用，请配置后重试）"
+            ),
             "options": [
                 {"id": "A", "text": f"这是关于{node_title}的占位选项（服务恢复后可重新生成）"},
                 {"id": "B", "text": "占位选项 B"},
@@ -1941,10 +1950,16 @@ class GraphAgent:
                 {"id": "D", "text": "占位选项 D"},
             ],
             "correct_answers": ["A"],
-            "explanation": "本题为 LLM 服务不可用时的降级占位题，答案固定为 A。请检查 LLM 配置后重新生成测验题。",
+            "explanation": (
+                "本题为 LLM 服务不可用时的降级占位题，答案固定为 A。"
+                "请检查 LLM 配置后重新生成测验题。"
+            ),
             "node_id": primary.get("id", ""),
             "degraded": True,
-            "degrade_reason": "LLM 服务暂不可用，当前为占位题。配置好 LLM 后重新生成即可获得正常题目。",
+            "degrade_reason": (
+                "LLM 服务暂不可用，当前为占位题。"
+                "配置好 LLM 后重新生成即可获得正常题目。"
+            ),
         }
 
     # ------------------------------------------------------------------
@@ -2088,7 +2103,10 @@ class GraphAgent:
         return {
             "score": score,
             "understanding_level": level,
-            "feedback": f"（LLM 不可用，基于关键词覆盖率判分：覆盖 {covered}/{len(reference_points)} 个要点）",
+            "feedback": (
+                "（LLM 不可用，基于关键词覆盖率判分："
+                f"覆盖 {covered}/{len(reference_points)} 个要点）"
+            ),
             "missed_points": missed,
             "degraded": True,
             "degrade_reason": "LLM 不可用",
@@ -2343,7 +2361,8 @@ class GraphAgent:
             "输出严格 JSON，不要解释文字或代码块。\n\n"
             "输出字段：\n"
             "- answer: 回答文本（基于图谱内容，不要编造）\n"
-            "- sources: 引用来源数组，每项为 {\"node_title\", \"relevance\": \"high\"|\"medium\"|\"low\"}\n"
+            "- sources: 引用来源数组，每项为 "
+            "{\"node_title\", \"relevance\": \"high\"|\"medium\"|\"low\"}\n"
             "- confidence: 置信度 0.0-1.0（图谱中无相关信息时给低值）\n"
             "若图谱中无相关信息，answer 应说明无法回答，confidence 给低值。\n"
         )
@@ -2524,6 +2543,34 @@ class GraphAgent:
     # 流式方法
     # ------------------------------------------------------------------
 
+    async def _notify_stream_error(
+        self,
+        *,
+        op: str,
+        graph_id: str,
+        message: str,
+        node_id: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
+        """在流式降级路径推送终态错误事件，避免前端等待 WS 事件超时。
+
+        与 :meth:`_stream_llm` 的错误分支保持一致，推送
+        ``graph_agent_error`` 事件后由调用方 yield 错误。
+        """
+        ws_target = session_id or graph_id
+        event: dict[str, Any] = {
+            "type": "graph_agent_error",
+            "op": op,
+            "graph_id": graph_id,
+            "message": message,
+        }
+        if node_id:
+            event["node_id"] = node_id
+        try:
+            await notify_session(ws_target, event)
+        except Exception:  # noqa: BLE001
+            pass
+
     async def _stream_llm(
         self,
         client: LLMClient,
@@ -2656,6 +2703,13 @@ class GraphAgent:
         """
         client = await self._get_llm_client()
         if client is None:
+            await self._notify_stream_error(
+                op="generate_node_detail",
+                graph_id=graph_id,
+                message="LLM 不可用",
+                node_id=node_id,
+                session_id=session_id,
+            )
             yield {
                 "type": "error",
                 "message": "LLM 不可用",
@@ -2728,12 +2782,24 @@ class GraphAgent:
             ``{"type": "error", "message": "..."}`` 失败
         """
         if not question.strip():
+            await self._notify_stream_error(
+                op="answer_question",
+                graph_id=graph_id,
+                message="问题为空",
+                session_id=session_id,
+            )
             yield {"type": "error", "message": "问题为空"}
             return
 
         context = await self._build_context(graph_id)
         client = await self._get_llm_client()
         if client is None:
+            await self._notify_stream_error(
+                op="answer_question",
+                graph_id=graph_id,
+                message="LLM 不可用",
+                session_id=session_id,
+            )
             yield {"type": "error", "message": "LLM 不可用"}
             return
 
@@ -2785,15 +2851,33 @@ class GraphAgent:
         """
         graph = await self.store.get_graph(graph_id)
         if graph is None:
+            await self._notify_stream_error(
+                op="generate_report",
+                graph_id=graph_id,
+                message="图谱不存在",
+                session_id=session_id,
+            )
             yield {"type": "error", "message": "图谱不存在"}
             return
         if graph.get("type") != GRAPH_TYPE_WORK:
+            await self._notify_stream_error(
+                op="generate_report",
+                graph_id=graph_id,
+                message="仅支持 work 图谱",
+                session_id=session_id,
+            )
             yield {"type": "error", "message": "仅支持 work 图谱"}
             return
 
         context = await self._build_context(graph_id)
         client = await self._get_llm_client()
         if client is None:
+            await self._notify_stream_error(
+                op="generate_report",
+                graph_id=graph_id,
+                message="LLM 不可用",
+                session_id=session_id,
+            )
             yield {"type": "error", "message": "LLM 不可用"}
             return
 

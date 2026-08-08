@@ -781,10 +781,6 @@ export interface LlmCancelResponse {
 
 /** LLM 连接测试请求体（所有字段可选，未传则用后端已保存配置）。 */
 export interface LlmTestConnectionRequest {
-  /** 测试用 base_url，未传则用已保存值。 */
-  base_url?: string
-  /** 测试用 api_key 明文，未传则用已保存值。 */
-  api_key?: string
   /** 测试用 model，未传则用已保存值。 */
   model?: string
 }
@@ -840,6 +836,11 @@ export interface RecommendationsResponse {
 // ============================================================================
 
 /** 插件对接健康检查响应。 */
+export interface PluginPairCodeResponse {
+  code: string
+  expires_in: number
+}
+
 export interface PluginHealthResponse {
   ok: boolean
   version: string

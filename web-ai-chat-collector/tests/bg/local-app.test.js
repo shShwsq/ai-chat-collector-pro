@@ -10,6 +10,8 @@
 // 网络相关函数（testConnection / pushConversation / pushAll）通过 mock window.fetch
 // 测试，不依赖真实后端运行。getConversations / getConversation 由测试按需 mock。
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { loadLocalApp } from '../helpers/load-source.js';
 
@@ -30,6 +32,7 @@ beforeEach(() => {
     baseUrl: 'http://localhost:8788'
   });
   lib.setPushedMap({});
+  lib.setRevisionMap({});
   // 每个测试用全新的 fetch mock
   fetchMock = vi.fn();
   window.fetch = fetchMock;
@@ -68,7 +71,9 @@ describe('_buildRequestBody', () => {
       messages: []
     };
     const body = lib._buildRequestBody(conv);
-    expect(body.metadata.conversation_id).toBe('conv-abc-123');
+    expect(body.metadata.conversation_id).toBe('conv-abc-123@2025-01-01T00:00:00Z');
+    expect(body.metadata.source_conversation_id).toBe('conv-abc-123');
+    expect(body.metadata.conversation_revision).toBe('2025-01-01T00:00:00Z');
     expect(body.metadata.title).toBe('测试标题');
     expect(body.metadata.url).toBe('https://chat.deepseek.com/c/abc');
   });
@@ -78,6 +83,11 @@ describe('_buildRequestBody', () => {
     const conv = { id: 'c1', platform: 'deepseek', updatedAt: ts, messages: [] };
     const body = lib._buildRequestBody(conv);
     expect(body.timestamp).toBe(ts);
+  });
+
+  it('revision 缺失且未初始化时拒绝构造不稳定请求体', () => {
+    const conv = { id: 'c1', platform: 'deepseek', messages: [] };
+    expect(() => lib._buildRequestBody(conv)).toThrow('revision 尚未初始化');
   });
 
   it('conversation_markdown 非空（走 _fallbackMarkdown 路径）', () => {
@@ -160,12 +170,26 @@ describe('_fallbackMarkdown', () => {
   });
 });
 
+describe('LocalApp_pair', () => {
+  it('用一次性配对码换取并保存插件凭据', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ credential: 'paired-secret' })
+    });
+    const result = await lib.LocalApp_pair('123456');
+    expect(result.success).toBe(true);
+    expect(lib.getSettings().credential).toBe('paired-secret');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ code: '123456' });
+  });
+});
+
 // =================================================================
 // LocalApp_testConnection：连通性测试（GET /api/plugin/health）
 // =================================================================
 describe('LocalApp_testConnection', () => {
   beforeEach(() => {
-    lib.setSettings({ enabled: true, baseUrl: 'http://localhost:8788' });
+    lib.setSettings({ enabled: true, baseUrl: 'http://localhost:8788', credential: 'plugin-secret' });
   });
 
   it('成功：返回 success/version/supported_platforms/queue_size/latency', async () => {
@@ -217,6 +241,28 @@ describe('LocalApp_testConnection', () => {
     });
     await lib.LocalApp_testConnection();
     expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:8788/api/plugin/health');
+  });
+
+  it('版本不兼容时返回失败', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, version: '2.0', supported_platforms: [], queue_size: 0 })
+    });
+    const r = await lib.LocalApp_testConnection();
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('版本不兼容');
+  });
+
+  it('健康响应结构不符合契约时返回失败', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, version: '1.0', supported_platforms: 'deepseek', queue_size: 0 })
+    });
+    const r = await lib.LocalApp_testConnection();
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('不符合契约');
   });
 });
 
@@ -288,6 +334,38 @@ describe('LocalApp_pushConversation', () => {
     expect(pushed.updatedAt).toBe(conv.updatedAt);
   });
 
+  it('缺失 updatedAt 时缓存稳定 revision 并跳过重复推送', async () => {
+    lib.setSettings({ enabled: true });
+    const withoutRevision = { id: 'conv-no-revision', platform: 'deepseek', messages: [] };
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ received: true, deduplicated: false, observation_id: 'obs-stable' })
+    });
+    const first = await lib.LocalApp_pushConversation(withoutRevision);
+    const request = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const cachedRevision = lib.getRevisionMap()['conv-no-revision'];
+    expect(first.pushed).toBe(true);
+    expect(cachedRevision).toBeTruthy();
+    expect(request.metadata.conversation_revision).toBe(cachedRevision);
+    expect(lib.getPushedMap()['conv-no-revision'].revision).toBe(cachedRevision);
+
+    const second = await lib.LocalApp_pushConversation(withoutRevision);
+    expect(second.reason).toBe('already_pushed');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('响应缺少必需字段时拒绝写入推送缓存', async () => {
+    lib.setSettings({ enabled: true });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ received: true, observation_id: 'obs-1' })
+    });
+    await expect(lib.LocalApp_pushConversation(conv)).rejects.toThrow('不符合契约');
+    expect(lib.getPushedMap()['conv-1']).toBeUndefined();
+  });
+
   it('网络错误时抛出"连接失败"（交给上层静默处理）', async () => {
     lib.setSettings({ enabled: true });
     fetchMock.mockRejectedValueOnce(new Error('Failed to fetch'));
@@ -309,7 +387,7 @@ describe('LocalApp_pushConversation', () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: async () => ({ received: true, observation_id: 'obs-1' })
+      json: async () => ({ received: true, observation_id: 'obs-1', deduplicated: false })
     });
     await lib.LocalApp_pushConversation(conv);
     expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:8788/api/plugin/conversations');
@@ -322,14 +400,15 @@ describe('LocalApp_pushConversation', () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: async () => ({ received: true, observation_id: 'obs-1' })
+      json: async () => ({ received: true, observation_id: 'obs-1', deduplicated: false })
     });
     await lib.LocalApp_pushConversation(conv);
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.platform).toBe('deepseek');
     expect(body.timestamp).toBe(conv.updatedAt);
     expect(body.conversation_markdown).toContain('hi');
-    expect(body.metadata.conversation_id).toBe('conv-1');
+    expect(body.metadata.conversation_id).toBe(`conv-1@${conv.updatedAt}`);
+    expect(body.metadata.source_conversation_id).toBe('conv-1');
   });
 });
 
@@ -373,7 +452,7 @@ describe('LocalApp_pushAll', () => {
     fetchMock.mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ received: true, observation_id: 'obs-x' })
+      json: async () => ({ received: true, observation_id: 'obs-x', deduplicated: false })
     });
     const r = await lib.LocalApp_pushAll();
     expect(r.total).toBe(2);
@@ -432,7 +511,7 @@ describe('LocalApp_pushByConvId', () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: async () => ({ received: true, observation_id: 'obs-1' })
+      json: async () => ({ received: true, observation_id: 'obs-1', deduplicated: false })
     });
     const r = await lib.LocalApp_pushByConvId('c1');
     expect(r.pushed).toBe(true);
@@ -467,6 +546,27 @@ describe('LocalApp_resetPushedMap', () => {
     lib.setPushedMap({ 'c1': { pushedAt: 'x' }, 'c2': { pushedAt: 'y' } });
     await lib.LocalApp_resetPushedMap();
     expect(Object.keys(lib.getPushedMap())).toHaveLength(0);
+  });
+});
+
+describe('消息权限与设置脱敏', () => {
+  it('限制高权限消息 sender 并为内容脚本提供最小 LLM 设置接口', () => {
+    const router = fs.readFileSync(path.join(process.cwd(), 'bg', 'router.js'), 'utf-8');
+    const content = fs.readFileSync(path.join(process.cwd(), 'content', 'ai-ball.js'), 'utf-8');
+    expect(router).toContain("sender.id === chrome.runtime.id");
+    expect(router).toContain('EXTENSION_PAGE_ONLY_MESSAGES.has');
+    expect(router).toContain("case 'GET_LLM_UI_SETTINGS'");
+    expect(content).toContain("type: 'GET_LLM_UI_SETTINGS'");
+    expect(content).not.toContain("type: 'GET_SETTINGS', category: 'llm'");
+  });
+
+  it('GET_SETTINGS 对常见敏感字段递归脱敏', () => {
+    const settings = fs.readFileSync(path.join(process.cwd(), 'bg', 'settings-handlers.js'), 'utf-8');
+    for (const key of ['apiKey', 'api_key', 'dashscopeKey', 'token', 'password', 'secret']) {
+      expect(settings).toContain(`'${key}'`);
+    }
+    expect(settings).toContain('redactSensitiveSettings(settings)');
+    expect(settings).toContain('settings.config?.apiKey || oldConfig.apiKey');
   });
 });
 

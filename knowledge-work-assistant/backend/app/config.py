@@ -43,6 +43,8 @@ class Settings(BaseSettings):
 
     # ===== 后端监听端口（仅用于 python -m app.main 直接启动；uvicorn 命令用 --port 8788）=====
     backend_port: int = 8788
+    max_request_size_bytes: int = 16 * 1024 * 1024
+    local_api_token: str = "kwa-development-token"
 
     # ===== 加密 key（敏感字段加密存储）=====
     # 留空时由 services.crypto 自动生成并落盘到 data_dir/.encryption_key

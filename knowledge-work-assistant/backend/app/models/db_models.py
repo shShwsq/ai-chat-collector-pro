@@ -149,7 +149,7 @@ class FileMetadata(Base):
         nullable=True,
     )
 
-    tags: Mapped[list["Tag"]] = relationship(
+    tags: Mapped[list[Tag]] = relationship(
         secondary="file_tags",
         back_populates="files",
         lazy="selectin",
@@ -171,7 +171,7 @@ class Tag(Base):
     name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(default=_now, index=True)
 
-    files: Mapped[list["FileMetadata"]] = relationship(
+    files: Mapped[list[FileMetadata]] = relationship(
         secondary="file_tags",
         back_populates="tags",
         lazy="selectin",

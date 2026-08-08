@@ -25,22 +25,26 @@
 
 from __future__ import annotations
 
+import hmac
 import logging
+import secrets
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 
+from app.config import settings
 from app.models.node_types import OBSERVATION_SOURCE_PLUGIN
 from app.models.schemas import (
+    PluginBatchImportRequest,
+    PluginBatchImportResponse,
     PluginConversationRequest,
     PluginConversationResponse,
     PluginHealthResponse,
     PluginRecentConversationItem,
     PluginRecentConversationsResponse,
-    PluginBatchImportRequest,
-    PluginBatchImportResponse,
 )
 from app.services import ws_notify
 from app.services.graph_store import GraphStore, graph_store
@@ -74,6 +78,61 @@ _METADATA_STRING_FIELDS = ("title", "url", "model")
 
 #: 幂等去重时间窗口（小时）。
 _DEDUP_WITHIN_HOURS = 24
+_PLUGIN_CREDENTIAL_HEADER = "X-Plugin-Credential"
+_pairing_codes: dict[str, float] = {}
+_plugin_credentials: set[str] = set()
+
+
+class PluginPairRequest(BaseModel):
+    code: str
+
+
+class PluginPairResponse(BaseModel):
+    credential: str
+
+
+def issue_plugin_pairing_code() -> str:
+    import time
+
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    _pairing_codes.clear()
+    _pairing_codes[code] = time.time() + 300
+    return code
+
+
+def require_plugin_credential(
+    x_plugin_credential: str | None = Header(None),
+    x_local_api_token: str | None = Header(None),
+) -> None:
+    local_authorized = bool(x_local_api_token) and hmac.compare_digest(
+        x_local_api_token, settings.local_api_token
+    )
+    plugin_authorized = bool(x_plugin_credential) and any(
+        hmac.compare_digest(x_plugin_credential, credential)
+        for credential in _plugin_credentials
+    )
+    if not local_authorized and not plugin_authorized:
+        raise HTTPException(status_code=401, detail="invalid plugin credential")
+
+
+@router.get("/pair-code")
+async def create_plugin_pairing_code(
+    _: None = Depends(require_plugin_credential),
+) -> dict[str, str | int]:
+    return {"code": issue_plugin_pairing_code(), "expires_in": 300}
+
+
+@router.post("/pair", response_model=PluginPairResponse)
+async def pair_plugin(body: PluginPairRequest) -> PluginPairResponse:
+    import time
+
+    expires_at = _pairing_codes.pop(body.code, None)
+    if expires_at is None or expires_at <= time.time():
+        raise HTTPException(status_code=401, detail="invalid or expired pairing code")
+    credential = secrets.token_urlsafe(32)
+    _plugin_credentials.add(credential)
+    return PluginPairResponse(credential=credential)
+
 
 #: 批量导入单次请求的对话上限（避免单请求体过大；前端会分块调用）。
 MAX_BATCH_SIZE = 1000
@@ -121,6 +180,28 @@ def _validate_metadata(metadata: dict[str, Any] | None) -> None:
             )
 
 
+async def _broadcast_conversation(
+    *,
+    observation_id: str,
+    platform: str,
+    title: str,
+    occurred_at: datetime | None,
+    updated: bool,
+) -> None:
+    await ws_notify.broadcast(
+        {
+            "type": "plugin.conversation_received",
+            "payload": {
+                "observation_id": observation_id,
+                "platform": platform,
+                "title": title,
+                "timestamp": occurred_at.isoformat() if occurred_at else None,
+                "updated": updated,
+            },
+        }
+    )
+
+
 def _compute_dedup_key(platform: str, metadata: dict[str, Any] | None) -> str | None:
     """根据 ``metadata.conversation_id`` 计算幂等去重键。
 
@@ -155,11 +236,11 @@ async def push_conversation(
     1. 校验 ``platform`` 命中白名单（否则 400）。
     2. 校验 ``metadata`` 中 ``title / url / model`` 类型（否则 422）。
     3. 计算 ``dedup_key``（基于 ``metadata.conversation_id``）。
-    4. 若 ``dedup_key`` 命中最近 24h 已有记录 → 返回
-       ``{received: true, deduplicated: true, observation_id: <existing>}``，
-       不写新记录、不广播。
+    4. 若 ``dedup_key`` 命中已有记录，则原位更新内容并重置处理状态，返回
+       ``{received: true, deduplicated: true, observation_id: <existing>}``，并广播
+       ``plugin.conversation_received``（``payload.updated=true``）。
     5. 否则合并 ``_dedup_key`` 到 metadata → ``create_observation`` 落库 →
-       通过 :func:`ws_notify.broadcast` 广播 ``plugin.conversation_received``。
+       广播 ``plugin.conversation_received``（``payload.updated=false``）。
     6. 返回 ``{received: true, deduplicated: false, observation_id: <new>}``。
 
     当前阶段不触发节点抽取（抽取在后续迭代实现）。
@@ -178,24 +259,6 @@ async def push_conversation(
     dedup_key = _compute_dedup_key(body.platform, body.metadata)
 
     # 4. 幂等去重
-    if dedup_key is not None:
-        existing = await store.find_observation_by_dedup_key(
-            dedup_key, within_hours=_DEDUP_WITHIN_HOURS
-        )
-        if existing is not None:
-            logger.info(
-                "插件推送命中去重: platform=%s dedup_key=%s existing=%s",
-                body.platform,
-                dedup_key,
-                existing["id"],
-            )
-            return PluginConversationResponse(
-                received=True,
-                deduplicated=True,
-                observation_id=existing["id"],
-            )
-
-    # 5. 解析 timestamp + 合并 _dedup_key 到 metadata
     occurred_at = _parse_timestamp(body.timestamp)
     if occurred_at is None:
         logger.warning(
@@ -204,8 +267,28 @@ async def push_conversation(
         )
 
     merged_metadata: dict[str, Any] = dict(body.metadata) if body.metadata else {}
+    title = merged_metadata.get("title", "") or ""
     if dedup_key is not None:
         merged_metadata["_dedup_key"] = dedup_key
+        existing = await store.update_observation_by_dedup_key(
+            dedup_key,
+            conversation_markdown=body.conversation_markdown,
+            occurred_at=occurred_at,
+            metadata=merged_metadata,
+        )
+        if existing is not None:
+            await _broadcast_conversation(
+                observation_id=existing["id"],
+                platform=body.platform,
+                title=title,
+                occurred_at=occurred_at,
+                updated=True,
+            )
+            return PluginConversationResponse(
+                received=True,
+                deduplicated=True,
+                observation_id=existing["id"],
+            )
 
     try:
         obs = await store.create_observation(
@@ -223,13 +306,23 @@ async def push_conversation(
             raise HTTPException(
                 status_code=503, detail="数据库写入冲突，请稍后重试"
             ) from exc
-        existing = await store.find_observation_by_dedup_key(
-            dedup_key, within_hours=_DEDUP_WITHIN_HOURS
+        existing = await store.update_observation_by_dedup_key(
+            dedup_key,
+            conversation_markdown=body.conversation_markdown,
+            occurred_at=occurred_at,
+            metadata=merged_metadata,
         )
         if existing is None:
             raise HTTPException(
                 status_code=503, detail="数据库写入冲突，请稍后重试"
             ) from exc
+        await _broadcast_conversation(
+            observation_id=existing["id"],
+            platform=body.platform,
+            title=title,
+            occurred_at=occurred_at,
+            updated=True,
+        )
         return PluginConversationResponse(
             received=True, deduplicated=True, observation_id=existing["id"]
         )
@@ -244,19 +337,12 @@ async def push_conversation(
     )
 
     # 6. WebSocket 广播
-    title = ""
-    if body.metadata:
-        title = body.metadata.get("title", "") or ""
-    await ws_notify.broadcast(
-        {
-            "type": "plugin.conversation_received",
-            "payload": {
-                "observation_id": obs["id"],
-                "platform": body.platform,
-                "title": title,
-                "timestamp": occurred_at.isoformat() if occurred_at else None,
-            },
-        }
+    await _broadcast_conversation(
+        observation_id=obs["id"],
+        platform=body.platform,
+        title=title,
+        occurred_at=occurred_at,
+        updated=False,
     )
 
     return PluginConversationResponse(
@@ -272,6 +358,7 @@ async def push_conversation(
 async def push_conversations_batch(
     body: PluginBatchImportRequest,
     store: GraphStore = Depends(get_graph_store),
+    _: None = Depends(require_plugin_credential),
 ) -> PluginBatchImportResponse:
     """批量接收对话（手动导入功能）。
 
@@ -357,7 +444,9 @@ async def push_conversations_batch(
 
 
 @router.get("/contract")
-async def get_contract() -> dict[str, Any]:
+async def get_contract(
+    _: None = Depends(require_plugin_credential),
+) -> dict[str, Any]:
     """返回插件对接接口契约说明（供插件方对接参考）。
 
     以结构化 JSON 文档形式返回端点、请求 / 响应字段、错误码、注意事项、
@@ -399,8 +488,10 @@ async def get_contract() -> dict[str, Any]:
                 "required": False,
                 "description": (
                     "可选附加元数据。title / url / model 若提供必须为 string（否则 422）；"
-                    "conversation_id（string）若提供将用于 24h 幂等去重，"
-                    "去重键为 '{platform}:{conversation_id}'"
+                    "conversation_id（string）若提供将用于幂等更新，"
+                    "去重键为 '{platform}:{conversation_id}'。插件可将稳定 source ID 与 revision "
+                    "组合为 conversation_id，并同时提供 source_conversation_id 与 "
+                    "conversation_revision"
                 ),
             },
         },
@@ -418,16 +509,27 @@ async def get_contract() -> dict[str, Any]:
             },
             "deduplicated": {
                 "type": "boolean",
-                "description": "是否命中幂等去重（最近 24h 内同 dedup_key 已存在）",
+                "description": "是否命中已有 dedup_key；命中时原位更新既有 Observation",
             },
         },
         "errors": {
             "400": "平台不在白名单内（unsupported platform: xxx）",
             "422": "请求体不符合契约（字段缺失 / 类型错误 / metadata 字段类型不符）",
         },
+        "websocket_event": {
+            "type": "plugin.conversation_received",
+            "payload": {
+                "observation_id": "string",
+                "platform": "string",
+                "title": "string",
+                "timestamp": "string|null",
+                "updated": "boolean",
+            },
+            "description": "新增或原位更新 Observation 后广播；updated 区分更新与新增",
+        },
         "notes": [
-            "成功落库后通过 WebSocket 广播 plugin.conversation_received 事件给所有前端连接",
-            "同一 conversation_id 在 24h 内重复推送返回 deduplicated: true，不写新记录",
+            "新增或更新后均通过 WebSocket 广播 plugin.conversation_received 事件给所有前端连接",
+            "同一 conversation_id 重复推送会原位更新并返回 deduplicated: true，不新增记录",
             "conversation_markdown 建议参考 web-ai-chat-collector 的导出格式",
             "CORS 已允许 http://localhost:5174 与 file:// 来源，插件直连后端时需自行处理跨域",
             "本轮暂不鉴权，仅本机环境使用；后续迭代可加 token",
@@ -441,7 +543,9 @@ async def get_contract() -> dict[str, Any]:
                     "## 助手\n知识图谱是一种用图结构组织知识的方式……"
                 ),
                 "metadata": {
-                    "conversation_id": "chat-openai-abc123",
+                    "conversation_id": "chat-openai-abc123@2025-01-01T12:00:00+08:00",
+                    "source_conversation_id": "chat-openai-abc123",
+                    "conversation_revision": "2025-01-01T12:00:00+08:00",
                     "title": "什么是知识图谱",
                     "url": "https://chat.openai.com/c/abc123",
                     "model": "gpt-4o-mini",
@@ -455,7 +559,9 @@ async def get_contract() -> dict[str, Any]:
                     "## 助手\nRAG 通过外部知识库检索再交由 LLM 生成……"
                 ),
                 "metadata": {
-                    "conversation_id": "deepseek-chat-def456",
+                    "conversation_id": "deepseek-chat-def456@2025-01-02T09:30:00+08:00",
+                    "source_conversation_id": "deepseek-chat-def456",
+                    "conversation_revision": "2025-01-02T09:30:00+08:00",
                     "title": "RAG 检索增强生成",
                     "url": "https://chat.deepseek.com/c/def456",
                     "model": "deepseek-chat",
@@ -472,6 +578,7 @@ async def get_contract() -> dict[str, Any]:
 async def list_recent_conversations(
     limit: int = Query(20, ge=1, le=100),
     store: GraphStore = Depends(get_graph_store),
+    _: None = Depends(require_plugin_credential),
 ) -> PluginRecentConversationsResponse:
     """返回最近 N 条 ``source='plugin'`` 的 Observation 元数据。
 
@@ -499,7 +606,9 @@ async def list_recent_conversations(
 
 
 @router.get("/health", response_model=PluginHealthResponse)
-async def plugin_health() -> PluginHealthResponse:
+async def plugin_health(
+    _: None = Depends(require_plugin_credential),
+) -> PluginHealthResponse:
     """插件对接联调自检端点。
 
     供插件方在对接前快速验证后端可达、API 版本与支持的平台范围，并观察

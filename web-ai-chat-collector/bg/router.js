@@ -2,7 +2,46 @@
 // 依赖：bg/init.js (ensureInit), bg/conversations.js, bg/export.js,
 //       bg/ai-handlers.js, bg/settings-handlers.js, bg/vector-handlers.js, bg/data-handlers.js
 
+const EXTENSION_PAGE_ONLY_MESSAGES = new Set([
+  'GET_SETTINGS',
+  'SAVE_SETTINGS',
+  'TEST_EMBEDDING',
+  'TEST_LLM',
+  'REBUILD_VECTOR_INDEX',
+  'CLEAR_EMBEDDINGS',
+  'CLEAR_VECTOR_STORE',
+  'GET_VECTOR_STORE_STATS',
+  'TEST_VECTOR_CONNECTION',
+  'CLEAR_ALL_CONVERSATIONS',
+  'RESET_ALL_SETTINGS',
+  'LOCAL_APP_PUSH_ALL',
+  'LOCAL_APP_PUSH_ONE',
+  'LOCAL_APP_PAIR',
+  'LOCAL_APP_TEST',
+  'LOCAL_APP_STATUS',
+  'LOCAL_APP_RESET_PUSHED'
+]);
+
+function _isTrustedSender(sender) {
+  return !!sender && sender.id === chrome.runtime.id;
+}
+
+function _isExtensionPageSender(sender) {
+  if (!_isTrustedSender(sender) || sender.tab) return false;
+  const extensionOrigin = `${chrome.runtime.getURL('')}`;
+  return typeof sender.url === 'string' && sender.url.startsWith(extensionOrigin);
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!_isTrustedSender(sender)) {
+    sendResponse({ error: '无权访问' });
+    return false;
+  }
+  if (EXTENSION_PAGE_ONLY_MESSAGES.has(message?.type) && !_isExtensionPageSender(sender)) {
+    sendResponse({ error: '无权执行此操作' });
+    return false;
+  }
+
   // 所有异步消息处理都等待初始化完成
   ensureInit().then(() => {
     switch (message.type) {
@@ -87,6 +126,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // ===== 设置 =====
     case 'GET_SETTINGS':
       handleGetSettings(message.category).then(sendResponse);
+      break;
+
+    case 'GET_LLM_UI_SETTINGS':
+      handleGetSettings('llm').then((settings) => sendResponse({
+        enableThinking: settings?.config?.enableThinking
+      }));
       break;
 
     case 'SAVE_SETTINGS':

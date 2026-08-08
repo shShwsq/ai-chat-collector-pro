@@ -243,7 +243,14 @@ async def command_exec(args: dict[str, Any]) -> dict[str, Any]:
     command = str(args.get("command") or "")
     cwd = args.get("cwd")
     timeout = int(args.get("timeout") or _DEFAULT_TIMEOUT)
-    require_confirmation = bool(args.get("require_confirmation", True))
+
+    if args.get("_confirmed") is not True:
+        return {
+            "status": "error",
+            "message": "command execution requires explicit user confirmation",
+            "confirmation_required": True,
+            "command": command,
+        }
 
     if not command:
         return {"error": "command is required"}
@@ -315,7 +322,7 @@ async def command_exec(args: dict[str, Any]) -> dict[str, Any]:
             "stderr": f"timeout after {timeout}s",
             "duration_ms": duration_ms,
             "timeout": True,
-            "confirmation_required": require_confirmation,
+            "confirmation_required": False,
         }
     except FileNotFoundError:
         # Windows 上 dir/type/echo/copy 等是 cmd.exe 内建命令,无独立 .exe,
@@ -343,7 +350,7 @@ async def command_exec(args: dict[str, Any]) -> dict[str, Any]:
         "stdout": stdout,
         "stderr": stderr,
         "duration_ms": duration_ms,
-        "confirmation_required": require_confirmation,
+        "confirmation_required": False,
     }
 
 
@@ -652,7 +659,13 @@ async def clipboard_write(args: dict[str, Any]) -> dict[str, Any]:
         if sys.platform == "win32":
             try:
                 rc, _, stderr_bytes = await _run_subprocess(
-                    ["powershell", "-NoProfile", "-NonInteractive", "-Command", _CLIPBOARD_WRITE_PS],
+                    [
+                        "powershell",
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-Command",
+                        _CLIPBOARD_WRITE_PS,
+                    ],
                     stdin_data=data,
                     timeout=10,
                 )

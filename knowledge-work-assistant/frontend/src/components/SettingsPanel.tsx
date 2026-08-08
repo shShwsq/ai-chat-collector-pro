@@ -197,21 +197,11 @@ function ApiConfigSection() {
     return false
   }, [llmConfig, baseUrl, model, apiKey])
 
-  // 测试连接：用当前表单值构造请求（api_key 留空则后端用已保存值）。
-  // 仅当 base_url / model 至少有值时才允许触发。
   const handleTest = async () => {
-    const patch: {
-      base_url?: string
-      api_key?: string
-      model?: string
-    } = {}
-    if (baseUrl.trim()) patch.base_url = baseUrl.trim()
-    if (model.trim()) patch.model = model.trim()
-    if (apiKey.trim()) patch.api_key = apiKey.trim()
-    await testLlmConnection(patch)
+    await testLlmConnection(model.trim() ? { model: model.trim() } : {})
   }
 
-  const canTest = !!llmConfig && (!!baseUrl.trim() || !!model.trim() || !!apiKey.trim())
+  const canTest = !!llmConfig && !!llmConfig.api_key_configured && !apiKey.trim() && baseUrl.trim() === llmConfig.base_url
 
   return (
     <section className="settings-section">
@@ -375,14 +365,30 @@ function RequestQueueSection() {
   const loadLlmRequests = useAppStore((s) => s.loadLlmRequests)
   const cancelLlmRequest = useAppStore((s) => s.cancelLlmRequest)
 
-  // 进入面板时启动 3 秒轮询，卸载时清理
   useEffect(() => {
-    // 立即拉一次，确保进入面板时数据最新
-    void loadLlmRequests()
-    const timer = setInterval(() => {
-      void loadLlmRequests()
-    }, POLL_INTERVAL_MS)
-    return () => clearInterval(timer)
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let stopped = false
+
+    const schedule = () => {
+      if (stopped || document.visibilityState === 'hidden') return
+      timer = setTimeout(async () => {
+        await loadLlmRequests()
+        schedule()
+      }, POLL_INTERVAL_MS)
+    }
+    const refresh = () => {
+      if (document.visibilityState !== 'visible') return
+      if (timer) clearTimeout(timer)
+      void loadLlmRequests().finally(schedule)
+    }
+
+    refresh()
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      stopped = true
+      if (timer) clearTimeout(timer)
+      document.removeEventListener('visibilitychange', refresh)
+    }
   }, [loadLlmRequests])
 
   const activeCount = useMemo(

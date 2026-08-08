@@ -206,5 +206,18 @@ async def async_client(app: FastAPI) -> AsyncIterator[AsyncClient]:
         ``httpx.AsyncClient`` 实例。
     """
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    from app.config import settings
+    from app.routers.plugin import _plugin_credentials
+
+    credential = "test-plugin-credential"
+    _plugin_credentials.add(credential)
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={
+            "X-Local-API-Token": settings.local_api_token,
+            "X-Plugin-Credential": credential,
+        },
+    ) as client:
         yield client
+    _plugin_credentials.discard(credential)

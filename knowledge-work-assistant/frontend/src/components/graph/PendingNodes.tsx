@@ -28,6 +28,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 
 import { Icon } from '../Icon'
+import { useDialogFocus } from '../../hooks/useDialogFocus'
 import type { IconName } from '../Icon'
 import { useAppStore } from '../../store/useAppStore'
 import { api } from '../../lib/api'
@@ -337,6 +338,7 @@ export function PendingNodes() {
   }
 
   const extractingObsId = extracting ? extractingObservationId : null
+  const dialogRef = useDialogFocus<HTMLElement>({ active: open, initialFocus: '.pending-section__batch-btn', onEscape: handleClose })
 
   // 面板关闭时不渲染（避免动画期间的内部状态干扰）
   if (!open) return null
@@ -351,6 +353,7 @@ export function PendingNodes() {
       />
 
       <aside
+        ref={dialogRef}
         className="pending-panel"
         role="dialog"
         aria-label="待抽取对话与候选节点"

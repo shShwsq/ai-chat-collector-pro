@@ -410,12 +410,14 @@ describe('AIAssistant._parseEmbId', () => {
     expect(AIAssistant._parseEmbId('')).toBeNull();
   });
 
-  it('实际项目使用的 chunk ID 格式都能解析', () => {
+  it('实际项目使用的 chunk ID 格式都能解析（convId 含 ::）', () => {
+    // 真实 convId = `${platform}::${platformConversationId}`，如 'deepseek::<uuid>'，
+    // 因此 chunk ID 为 'deepseek::<uuid>::msg::<hash36>::chunk::0'，共 6 段。
     const ids = [
-      'deepseek::msg::a1b2c3::chunk::0',
-      'kimi::msg::d4e5f6::chunk::3',
-      'qianwen::msg::g7h8i9::chunk::10',
-      'doubao::msg::j0k1l2::chunk::0'
+      'deepseek::9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c::msg::a1b2c3::chunk::0',
+      'kimi::550e8400e29b41d4a716446655440000::msg::d4e5f6::chunk::3',
+      'qianwen::user-20240101-001::msg::g7h8i9::chunk::10',
+      'doubao::conv/123/456::msg::j0k1l2::chunk::0'
     ];
     for (const id of ids) {
       const result = AIAssistant._parseEmbId(id);
@@ -424,6 +426,8 @@ describe('AIAssistant._parseEmbId', () => {
       expect(result).toHaveProperty('chunkIdx');
       expect(result.chunkIdx).toBeGreaterThanOrEqual(0);
     }
+    expect(AIAssistant._parseEmbId(ids[0]))
+      .toEqual({ msgHash: 'a1b2c3', chunkIdx: 0 });
   });
 });
 

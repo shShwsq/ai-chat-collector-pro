@@ -38,6 +38,13 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]
+# B008: FastAPI 的 Depends() / Query() 等默认参数是官方推荐写法
+# 参考 https://fastapi.tiangolo.com/tutorial/dependencies/
+ignore = ["B008"]
+
+[tool.ruff.lint.per-file-ignores]
+# onboarding_seed.py 是引导种子文案数据，长行为产品文案内容，不宜硬换行
+"app/services/onboarding_seed.py" = ["E501"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

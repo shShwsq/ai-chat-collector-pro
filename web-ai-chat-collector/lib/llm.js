@@ -459,15 +459,21 @@ JSON 注意事项：
 
   // 从 embId 解析消息定位信息
   // embId 格式：${convId}::msg::${msgHash}::chunk::${chunkIdx}
+  // convId 本身可能包含 '::'（如 deepseek::<platformConversationId>），
+  // 因此按分隔符定位 '::msg::' / '::chunk::'，不能按固定段下标解析。
   // 返回 { msgHash, chunkIdx } 或 null（格式不匹配时）
   _parseEmbId(id) {
     if (!id || typeof id !== 'string') return null;
-    const parts = id.split('::');
-    if (parts.length < 5) return null;
-    // parts: [convId, 'msg', msgHash, 'chunk', chunkIdx]
-    if (parts[1] !== 'msg' || parts[3] !== 'chunk') return null;
-    const chunkIdx = parseInt(parts[4], 10);
-    return { msgHash: parts[2], chunkIdx: isNaN(chunkIdx) ? -1 : chunkIdx };
+    const MSG_SEP = '::msg::';
+    const CHUNK_SEP = '::chunk::';
+    const msgIdx = id.indexOf(MSG_SEP);
+    if (msgIdx < 0) return null;
+    const chunkIdxPos = id.indexOf(CHUNK_SEP, msgIdx + MSG_SEP.length);
+    if (chunkIdxPos < 0) return null;
+    const msgHash = id.slice(msgIdx + MSG_SEP.length, chunkIdxPos);
+    if (!msgHash) return null;
+    const chunkIdx = parseInt(id.slice(chunkIdxPos + CHUNK_SEP.length), 10);
+    return { msgHash, chunkIdx: isNaN(chunkIdx) ? -1 : chunkIdx };
   },
 
   // 构建上下文文本：父子文档检索

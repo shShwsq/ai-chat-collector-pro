@@ -1898,7 +1898,7 @@ class AIBall {
 
     // 用 marked 渲染 Markdown
     let html = '';
-    if (typeof marked !== 'undefined') {
+    if (typeof marked !== 'undefined' && typeof HtmlSanitizer !== 'undefined') {
       html = HtmlSanitizer.sanitize(marked.parse(processed, { breaks: true, gfm: true }));
     } else {
       html = this._escapeHtml(processed).replace(/\n/g, '<br>');
@@ -1918,7 +1918,7 @@ class AIBall {
 
       // think / search 块内内容也用 marked 渲染
       let inner = '';
-      if (typeof marked !== 'undefined') {
+      if (typeof marked !== 'undefined' && typeof HtmlSanitizer !== 'undefined') {
         inner = HtmlSanitizer.sanitize(marked.parse(block.content, { breaks: true, gfm: true }));
       } else {
         inner = this._escapeHtml(block.content).replace(/\n/g, '<br>');
@@ -2422,11 +2422,10 @@ class AIBall {
     const toggle = this.panelShadow.querySelector('#ai-qa-thinking-toggle');
     if (!toggle) return;
     try {
-      chrome.runtime.sendMessage({ type: 'GET_SETTINGS', category: 'llm' }, (resp) => {
+      chrome.runtime.sendMessage({ type: 'GET_LLM_UI_SETTINGS' }, (resp) => {
         if (chrome.runtime.lastError || !resp || resp.error) return;
-        const config = resp.config || {};
         // enableThinking 默认 true（仅显式 false 时关闭）
-        const enabled = config.enableThinking !== false;
+        const enabled = resp.enableThinking !== false;
         if (enabled) {
           toggle.classList.add('active');
           toggle.setAttribute('aria-pressed', 'true');

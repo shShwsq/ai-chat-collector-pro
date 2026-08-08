@@ -61,9 +61,10 @@ async def ws_test(websocket: WebSocket) -> None:
         session_id: 可选。前端生成的唯一会话 ID，用于接收流式 LLM token。
                     未提供时注册到 "default" 会话，仅接收全局广播。
     """
-    # ① 鉴权：校验 token
+    # ① 鉴权：校验 token（token 与 session_id 绑定）
     token = websocket.query_params.get("token") or ""
-    if not verify_ws_token(token):
+    session_id = websocket.query_params.get("session_id") or _DEFAULT_SESSION_ID
+    if not verify_ws_token(token, session_id):
         logger.warning("WebSocket 鉴权失败，拒绝连接 (token 缺失或无效)")
         # accept 后才能 close（Starlette 要求先 accept 才能发关闭帧）
         await websocket.accept()
@@ -71,9 +72,6 @@ async def ws_test(websocket: WebSocket) -> None:
             code=_WS_CLOSE_UNAUTHORIZED, reason="未授权：token 缺失或无效"
         )
         return
-
-    # ② 从查询参数获取 session_id（前端生成 UUID，用于精确推送流式 token）
-    session_id = websocket.query_params.get("session_id") or _DEFAULT_SESSION_ID
 
     await websocket.accept()
     # 注册到 ws_notify，使 broadcast/notify_session 能找到此连接
