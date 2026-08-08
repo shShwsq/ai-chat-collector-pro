@@ -684,8 +684,6 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
         ev.stopPropagation()
         setSelectedNode(node.id)
         onNodeClick?.(node)
-        // eslint-disable-next-line no-console
-        console.log('[GraphView] node click', node.id, node.title)
       },
       [onNodeClick, setSelectedNode],
     )
@@ -698,8 +696,6 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
         if (extending) return
         void extendNodeAction(node.id, 'all')
         onNodeDoubleClick?.(node)
-        // eslint-disable-next-line no-console
-        console.log('[GraphView] node double click → extend all', node.id, node.title)
       },
       [onNodeDoubleClick, extendNodeAction, extending],
     )

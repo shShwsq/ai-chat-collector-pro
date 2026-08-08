@@ -23,8 +23,13 @@ import { Icon } from './Icon'
 import { useAppStore } from '../store/useAppStore'
 import type { ToastType } from '../store/useAppStore'
 
-/** 自动消失时长（ms）。 */
-const AUTO_DISMISS_MS = 3200
+/** 按类型区分自动消失时长（ms）：错误/警告更久，便于阅读完整信息。 */
+const AUTO_DISMISS_MS: Record<ToastType, number> = {
+  success: 3200,
+  info: 3200,
+  warning: 4500,
+  error: 6000,
+}
 
 /** 类型 → 图标（SVG，避免使用 emoji）。 */
 const TYPE_ICON: Record<ToastType, ReactNode> = {
@@ -49,7 +54,7 @@ export function Toast() {
     timerRef.current = setTimeout(() => {
       timerRef.current = null
       clearToast()
-    }, AUTO_DISMISS_MS)
+    }, AUTO_DISMISS_MS[toast.type])
     return () => {
       if (timerRef.current) {
         clearTimeout(timerRef.current)
@@ -76,6 +81,18 @@ export function Toast() {
         {icon}
       </span>
       <span className="toast__msg">{toast.message}</span>
+      {toast.action && (
+        <button
+          type="button"
+          className="toast__action"
+          onClick={() => {
+            toast.action?.onClick()
+            clearToast()
+          }}
+        >
+          {toast.action.label}
+        </button>
+      )}
       <button
         type="button"
         className="toast__close"

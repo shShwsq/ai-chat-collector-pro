@@ -343,6 +343,11 @@ function ChatSessionSidebar() {
       searchInputRef.current?.focus()
     } else {
       setSearchInput('')
+      // 收起时清理待执行的防抖 timer，避免 350ms 后触发无效搜索
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current)
+        searchDebounceRef.current = null
+      }
       if (chatSearchQuery) clearChatSearch()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -24,7 +24,7 @@
  * - 完成时写入 localStorage 标记并触发 onFinish 回调
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 
@@ -63,17 +63,14 @@ export function resetOnboarding(): void {
 
 /** 单个步骤的元数据定义。 */
 interface StepDef {
-  /** 步骤标识（用于 key 与调试）。 */
   id: string
-  /** 步骤主标题。 */
+  navLabel: string
   title: string
-  /** 步骤副标题（一句话概括）。 */
   subtitle: string
-  /** 详细说明文本（支持换行）。 */
   description: string
-  /** 图示类型，对应 OnboardingGraphic 的枚举。 */
+  points: Array<{ title: string; detail: string }>
+  outcome: string
   graphic: 'welcome' | 'modes' | 'graph' | 'extract' | 'quiz-report' | 'llm'
-  /** 主操作按钮文本（最后一步显示「开始使用」，其他步骤显示「下一步」）。 */
   primaryLabel?: string
 }
 
@@ -81,52 +78,94 @@ interface StepDef {
 const STEPS: StepDef[] = [
   {
     id: 'welcome',
-    title: '欢迎使用知识工作助手',
-    subtitle: '双模式知识图谱 · 让学习与工作并轨',
+    navLabel: '开始',
+    title: '把聊过的内容，变成以后用得上的知识',
+    subtitle: '欢迎使用知识工作助手',
     description:
-      '这是一个把「散落的对话」沉淀为「结构化知识」的本地工具。\n\n学习模式帮你把 AI 对话整理成可复习的学科图谱；\n工作模式帮你把零散线索沉淀为可跟进的工作对象图谱，并自动生成报告。',
+      '你不需要先学会一套复杂方法。只要把已有对话交给它，再确认哪些内容值得保留，就能逐步建立自己的知识与工作脉络。',
+    points: [
+      { title: '对话不再沉底', detail: '把零散聊天整理为可查找、可继续补充的节点。' },
+      { title: '知识看得见', detail: '用图谱看清主题之间的联系，而不是翻找长聊天记录。' },
+      { title: '结果能继续用', detail: '基于图谱复习、提问、延伸思路或生成工作报告。' },
+    ],
+    outcome: '完成这段引导后，你会知道第一份图谱该从哪里开始。',
     graphic: 'welcome',
   },
   {
     id: 'modes',
-    title: '双模式切换',
-    subtitle: '右上角胶囊开关：学习 / 工作',
+    navLabel: '选模式',
+    title: '先选一个最符合你当下目标的模式',
+    subtitle: '学习与工作互不混杂，随时可以切换',
     description:
-      '点击右上角「学习 / 工作」胶囊切换器，可一键切换数据模式。\n\n两个模式的数据完全隔离：学习模式聚焦学科知识点与测验；\n工作模式聚焦工作对象（线索 / 承诺 / 风险）与报告。\n\n切换时会保留各自状态，往返不丢失上下文。',
+      '不用纠结选错。两个模式只是帮你整理不同类型的内容，数据会分别保存，之后可以随时从右上角切换。',
+    points: [
+      { title: '学习模式', detail: '适合课程、论文、技术学习和长期知识积累。' },
+      { title: '工作模式', detail: '适合项目线索、任务承诺、风险和阶段性报告。' },
+      { title: '切换不丢进度', detail: '回到原模式时，图谱和当前上下文仍会保留。' },
+    ],
+    outcome: '建议第一次先选与你今天最想整理的内容一致的模式。',
     graphic: 'modes',
   },
   {
     id: 'graph',
-    title: '知识图谱与节点延伸',
-    subtitle: '双击节点一键延伸，单击方向单点延伸',
+    navLabel: '建图谱',
+    title: '你的第一份图谱，只需要一个主题',
+    subtitle: '先建立中心，再慢慢补全关系',
     description:
-      '在左侧选中或新建一个图谱后，内容区会展示可视化图谱。\n\n• 双击节点：Agent 一键生成多个延伸方向（灰色新节点），可撤销\n• 单击延伸方向：仅生成指定方向的单个节点\n• 选中节点：右侧浮出详情卡，可补充疑问 / 联想 / 考点等留白\n\n图谱视图与卡片视图可在顶部切换，数据双向同步。',
+      '创建图谱时，用一个具体主题命名，例如“React 性能优化”或“复赛产品方案”。进入图谱后，从中心节点开始整理即可。',
+    points: [
+      { title: '单击节点', detail: '查看详情，并补充自己的疑问、联想和结论。' },
+      { title: '双击节点', detail: '让 Agent 给出多个可继续探索的方向。' },
+      { title: '不满意可撤销', detail: 'AI 延伸不会强迫你保留，始终由你决定图谱结构。' },
+    ],
+    outcome: '记住最短路径：新建图谱 → 选中节点 → 查看或延伸。',
     graphic: 'graph',
   },
   {
     id: 'extract',
-    title: 'AI 抽取候选节点',
-    subtitle: '浏览器插件采集 → Agent 抽取 → 你确认入图',
+    navLabel: '导对话',
+    title: '已有 AI 对话，不需要重新整理一遍',
+    subtitle: '让 Agent 先提炼，你只负责确认',
     description:
-      '安装浏览器插件后，AI 对话（豆包 / ChatGPT / Claude 等）会自动推送到本工具。\n\n点击侧栏「待抽取」入口：\n• 单条抽取：Agent 分析对话，返回候选节点卡片\n• 批量抽取：自动依次抽取并全部入图\n\n抽取过程支持 30s 超时自动取消，亦可手动取消。Agent 给出的候选节点需你勾选确认才会真正入图，保留对 AI 结果的掌控。',
+      '浏览器插件会把支持平台的对话送到“待抽取”。你可以先从一条对话开始，让 Agent 给出候选节点，再决定哪些内容值得进入图谱。',
+    points: [
+      { title: '先试单条抽取', detail: '确认提炼效果符合预期后，再使用批量抽取。' },
+      { title: '候选不会自动入图', detail: '单条抽取需要你勾选确认，避免图谱被无关内容污染。' },
+      { title: '等待可以停止', detail: '超过 30 秒会停止等待；服务端请求仍可能继续完成。' },
+    ],
+    outcome: '推荐第一次选择一段主题明确、长度适中的对话进行尝试。',
     graphic: 'extract',
   },
   {
     id: 'quiz-report',
-    title: '测验与工作报告',
-    subtitle: '学习模式测验 · 工作模式报告',
+    navLabel: '用起来',
+    title: '图谱的价值，在于帮助你继续行动',
+    subtitle: '学习用来巩固，工作用来推进',
     description:
-      '学习模式：点「开始测验」生成单选 / 多选 / 费曼题，作答后给出解析与得分。\n\n工作模式：\n• 风口推荐：基于图谱推荐可加入的风口\n• 工作报告：流式生成周报 / 月报，可导出 Word 或打印为 PDF\n• 提问：基于图谱节点回答你的问题，附引用来源\n\n所有 AI 操作均可取消，LLM 不可用时走降级路径。',
+      '当图谱里已经有一些节点后，再使用测验、提问或报告。内容越完整，AI 得到的上下文越清楚，结果也会更有用。',
+    points: [
+      { title: '学习：开始测验', detail: '用选择题或费曼题检查自己是否真的理解。' },
+      { title: '工作：生成报告', detail: '把节点整理为周报或月报，并导出为 Word。' },
+      { title: '随时基于图谱提问', detail: '回答会附带来源，方便回到对应节点核对。' },
+    ],
+    outcome: '先积累 5～10 个有效节点，再体验这些功能会更直观。',
     graphic: 'quiz-report',
   },
   {
     id: 'llm',
-    title: '配置 LLM 凭据',
-    subtitle: '前往设置页填入 API Key 即可启用全部 AI 功能',
+    navLabel: '准备完成',
+    title: '最后一步：确认 AI 能力是否已就绪',
+    subtitle: '未配置也能浏览和手工整理图谱',
     description:
-      '本工具的 AI 能力（节点延伸 / 抽取 / 测验 / 报告）依赖外部 LLM 服务。\n\n若顶部出现黄色提示条，表示 LLM 未配置，AI 功能将走降级路径或不可用。\n\n点击「前往配置」按钮进入设置页，填入 base_url / model / api_key 即可。\n支持 OpenAI 兼容接口（如豆包 / DeepSeek / 智谱 / OpenAI 官方等）。',
+      '节点延伸、对话抽取、测验和报告需要连接兼容 OpenAI 接口的模型服务。密钥只保存在本地设置中，不会在页面中明文回显。',
+    points: [
+      { title: '需要填写三项', detail: 'Base URL、Model 和 API Key，缺一项都无法调用模型。' },
+      { title: '先测试连接', detail: '保存前可以验证地址、模型和密钥是否可用。' },
+      { title: '暂时没有也没关系', detail: '可以先创建图谱、手工添加内容，之后再配置。' },
+    ],
+    outcome: '准备好了就进入应用；你也可以直接前往设置完成配置。',
     graphic: 'llm',
-    primaryLabel: '开始使用',
+    primaryLabel: '进入应用',
   },
 ]
 
@@ -137,11 +176,44 @@ interface OnboardingWizardProps {
 
 export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
   const [step, setStep] = useState(0)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const titleRef = useRef<HTMLHeadingElement>(null)
   const total = STEPS.length
   const current = STEPS[step]
   const isLast = step === total - 1
 
+  const mode = useAppStore((s) => s.mode)
+  const setMode = useAppStore((s) => s.setMode)
+  const llmReady = useAppStore((s) => s.llmConfig?.ready === true)
   const setActiveNav = useAppStore((s) => s.setActiveNav)
+
+  // LLM 步骤根据实际配置状态切换文案
+  const llmDisplay = useMemo(() => {
+    if (!llmReady) {
+      return {
+        subtitle: '未配置也能浏览和手工整理图谱',
+        description:
+          '节点延伸、对话抽取、测验和报告需要连接兼容 OpenAI 接口的模型服务。密钥只保存在本地设置中，不会在页面中明文回显。',
+        points: [
+          { title: '需要填写三项', detail: 'Base URL、Model 和 API Key，缺一项都无法调用模型。' },
+          { title: '先测试连接', detail: '保存前可以验证地址、模型和密钥是否可用。' },
+          { title: '暂时没有也没关系', detail: '可以先创建图谱、手工添加内容，之后再配置。' },
+        ],
+        outcome: '准备好了就进入应用；你也可以直接前往设置完成配置。',
+      }
+    }
+    return {
+      subtitle: 'AI 能力已就绪，可以直接使用',
+      description:
+        '节点延伸、对话抽取、测验和报告都可以直接使用，密钥仅保存在本地，不会在页面中明文回显。',
+      points: [
+        { title: '模型服务已连接', detail: '可以直接使用抽取、延伸、测验和报告等 AI 功能。' },
+        { title: '密钥安全存储', detail: 'API Key 仅保存在本地设置中，页面不会回显完整密钥。' },
+        { title: '随时可调整', detail: '如需更换模型或修改配置，可随时前往设置页。' },
+      ],
+      outcome: 'AI 已准备好，进入应用即可开始使用。',
+    }
+  }, [llmReady])
 
   const goNext = useCallback(() => {
     if (isLast) {
@@ -168,16 +240,40 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
     setActiveNav('settings')
   }, [onFinish, setActiveNav])
 
-  // 键盘快捷键：ESC 跳过，Enter/Space 下一步，← 上一步
+  // 步骤切换后将焦点移回标题，方便屏幕阅读器感知内容变化
+  useEffect(() => {
+    titleRef.current?.focus()
+  }, [step])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
         handleSkip()
-      } else if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault()
-        goNext()
-      } else if (e.key === 'ArrowLeft') {
+        return
+      }
+
+      if (e.key === 'Tab') {
+        const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+        )
+        if (!focusable?.length) return
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault()
+          first.focus()
+        }
+        return
+      }
+
+      if ((e.target as HTMLElement | null)?.closest('button, input, textarea, select, a')) {
+        return
+      }
+      if (e.key === 'ArrowLeft') {
         e.preventDefault()
         goPrev()
       } else if (e.key === 'ArrowRight') {
@@ -193,7 +289,13 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
   const progress = useMemo(() => ((step + 1) / total) * 100, [step, total])
 
   return (
-    <div className="onboarding" role="dialog" aria-modal="true" aria-label="首次使用引导">
+    <div
+      ref={dialogRef}
+      className="onboarding"
+      role="dialog"
+      aria-modal="true"
+      aria-label="首次使用引导"
+    >
       {/* 顶部进度条 */}
       <div className="onboarding__progress-bar" aria-hidden="true">
         <div className="onboarding__progress-fill" style={{ width: `${progress}%` }} />
@@ -210,14 +312,16 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
               role="tab"
               aria-selected={i === step}
               aria-label={`步骤 ${i + 1}：${s.title}`}
-              className={`onboarding__step-dot${state === 'current' ? ' is-current' : ''}${
+              className={`onboarding__step${state === 'current' ? ' is-current' : ''}${
                 state === 'done' ? ' is-done' : ''
               }`}
               onClick={() => setStep(i)}
-              disabled={i > step + 1}
               title={s.title}
             >
-              <span className="onboarding__step-num">{i + 1}</span>
+              <span className="onboarding__step-dot" aria-hidden="true">
+                <span className="onboarding__step-num">{i + 1}</span>
+              </span>
+              <span className="onboarding__step-label">{s.navLabel}</span>
             </button>
           )
         })}
@@ -235,18 +339,73 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
             transition={{ duration: 0.28, ease: [0.4, 0, 0.2, 1] }}
           >
             <div className="onboarding__graphic">
-              <OnboardingGraphic kind={current.graphic} />
+              <OnboardingGraphic kind={current.graphic} mode={mode} />
             </div>
             <div className="onboarding__text">
-              <p className="onboarding__subtitle">{current.subtitle}</p>
-              <h2 className="onboarding__title">{current.title}</h2>
-              <p className="onboarding__desc">
-                {current.description.split('\n').map((line, i) => (
-                  <span key={i} className="onboarding__desc-line">
-                    {line || '\u00A0'}
-                  </span>
-                ))}
+              <p className="onboarding__eyebrow">
+                第 {step + 1} 步，共 {total} 步
               </p>
+              <p className="onboarding__subtitle">
+                {current.id === 'llm' ? llmDisplay.subtitle : current.subtitle}
+              </p>
+              <h2 ref={titleRef} className="onboarding__title" tabIndex={-1}>
+                {current.title}
+              </h2>
+              <p className="onboarding__desc">
+                {current.id === 'llm' ? llmDisplay.description : current.description}
+              </p>
+              {current.id === 'modes' && (
+                <div className="onboarding__mode-picker" aria-label="选择开始使用的模式">
+                  <button
+                    type="button"
+                    className={`onboarding__mode-option${mode === 'study' ? ' is-selected' : ''}`}
+                    onClick={() => setMode('study')}
+                    aria-pressed={mode === 'study'}
+                  >
+                    <span className="onboarding__mode-name">学习模式</span>
+                    <span>整理知识、复习与测验</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`onboarding__mode-option${mode === 'work' ? ' is-selected' : ''}`}
+                    onClick={() => setMode('work')}
+                    aria-pressed={mode === 'work'}
+                  >
+                    <span className="onboarding__mode-name">工作模式</span>
+                    <span>跟进事项、风险与报告</span>
+                  </button>
+                </div>
+              )}
+              {current.id === 'llm' && (
+                <div className={`onboarding__readiness${llmReady ? ' is-ready' : ''}`} role="status">
+                  <span className="onboarding__readiness-dot" aria-hidden="true" />
+                  <span>
+                    <strong>{llmReady ? 'AI 能力已就绪' : 'AI 能力尚未配置完整'}</strong>
+                    <span>
+                      {llmReady
+                        ? '可以直接使用抽取、延伸、测验和报告。'
+                        : '可先进入应用手工整理，或现在前往设置完成配置。'}
+                    </span>
+                  </span>
+                </div>
+              )}
+              <div className="onboarding__points">
+                {(current.id === 'llm' ? llmDisplay.points : current.points).map((point, index) => (
+                  <div key={point.title} className="onboarding__point">
+                    <span className="onboarding__point-index" aria-hidden="true">
+                      {index + 1}
+                    </span>
+                    <span className="onboarding__point-copy">
+                      <strong>{point.title}</strong>
+                      <span>{point.detail}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div className="onboarding__outcome">
+                <span className="onboarding__outcome-label">记住这一点</span>
+                <span>{current.id === 'llm' ? llmDisplay.outcome : current.outcome}</span>
+              </div>
             </div>
           </motion.div>
         </AnimatePresence>
@@ -288,7 +447,6 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
             className="onboarding__btn onboarding__btn--primary"
             onClick={goNext}
             title={isLast ? '开始使用（Enter）' : '下一步（Enter / →）'}
-            autoFocus
           >
             {current.primaryLabel ?? (isLast ? '开始使用' : '下一步')}
           </button>
@@ -309,12 +467,12 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
 
 type GraphicKind = StepDef['graphic']
 
-function OnboardingGraphic({ kind }: { kind: GraphicKind }) {
+function OnboardingGraphic({ kind, mode }: { kind: GraphicKind; mode: 'study' | 'work' }) {
   switch (kind) {
     case 'welcome':
       return <WelcomeGraphic />
     case 'modes':
-      return <ModesGraphic />
+      return <ModesGraphic mode={mode} />
     case 'graph':
       return <GraphGraphic />
     case 'extract':
@@ -357,20 +515,31 @@ function WelcomeGraphic() {
   )
 }
 
-function ModesGraphic() {
+function ModesGraphic({ mode }: { mode: 'study' | 'work' }) {
+  const isStudy = mode === 'study'
   return (
     <BadgeBase>
       <svg width="140" height="80" viewBox="0 0 140 80" fill="none" aria-hidden="true">
-        {/* 胶囊开关 */}
+        {/* 胶囊开关背景 */}
         <rect x="10" y="20" width="120" height="40" rx="20" fill="var(--kwa-paper-200)" stroke="var(--kwa-border-200)" />
+        {/* 指示器滑块：先绘制，文字与圆点在其上方 */}
+        <rect
+          className={`ob-mode-slider${isStudy ? ' is-study' : ' is-work'}`}
+          x="18"
+          y="24"
+          width="48"
+          height="32"
+          rx="16"
+          fill="var(--kwa-paper-50)"
+          stroke="var(--kwa-border-300)"
+          strokeWidth="1.5"
+        />
         {/* 学习侧 */}
-        <circle cx="30" cy="40" r="6" fill="var(--kwa-cyan-500)" />
-        <text x="44" y="44" fontSize="11" fill="var(--kwa-ink-700)" fontFamily="var(--font-mono)">学习</text>
+        <circle cx="30" cy="40" r="6" fill={isStudy ? 'var(--kwa-cyan-500)' : 'var(--kwa-text-400)'} />
+        <text x="44" y="44" fontSize="11" fill={isStudy ? 'var(--kwa-ink-700)' : 'var(--kwa-text-400)'} fontFamily="var(--font-mono)">学习</text>
         {/* 工作侧 */}
-        <text x="78" y="44" fontSize="11" fill="var(--kwa-text-400)" fontFamily="var(--font-mono)">工作</text>
-        <circle cx="115" cy="40" r="6" fill="var(--kwa-amber-500)" />
-        {/* 指示器滑块 */}
-        <rect x="18" y="24" width="48" height="32" rx="16" fill="var(--kwa-paper-50)" stroke="var(--kwa-border-300)" strokeWidth="1.5" />
+        <text x="78" y="44" fontSize="11" fill={isStudy ? 'var(--kwa-text-400)' : 'var(--kwa-ink-700)'} fontFamily="var(--font-mono)">工作</text>
+        <circle cx="115" cy="40" r="6" fill={isStudy ? 'var(--kwa-text-400)' : 'var(--kwa-amber-500)'} />
       </svg>
     </BadgeBase>
   )

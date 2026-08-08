@@ -49,7 +49,6 @@ import type {
   LlmCancelResponse,
   LlmConfig,
   LlmConfigUpdate,
-  LlmConfigUpdateResponse,
   LlmRequestInfo,
   LlmTestConnectionRequest,
   LlmTestConnectionResponse,
@@ -566,13 +565,9 @@ export const api = {
     }),
   /** 读取当前 LLM 配置（api_key 已掩码，仅展示用）。 */
   getLlmConfig: () => request<LlmConfig>('/llm/config'),
-  /**
-   * 更新 LLM 配置（仅传需更新字段）。
-   * 后端会持久化到 .env / DB settings，但生效通常需重启或热重载。
-   * 返回更新后的配置快照 + 提示消息。
-   */
+  /** 更新 LLM 配置（仅传需更新字段），返回更新后的配置快照。 */
   updateLlmConfig: (body: LlmConfigUpdate) =>
-    request<LlmConfigUpdateResponse>('/llm/config', {
+    request<LlmConfig>('/llm/config', {
       method: 'PUT',
       body: JSON.stringify(body),
     }),
