@@ -83,10 +83,11 @@ jobs:
         run: |
           npm install -g acorn
           errors=0
-          # 检查所有自研 JS：排除 node_modules / tests（ES module 语法）/ 第三方 *.min.js
+          # 检查所有自研 JS：排除 node_modules / tests / *.config.js（ES module 语法）/ 第三方 *.min.js
           for f in $(find . -name '*.js' \
                        -not -path './node_modules/*' \
                        -not -path './tests/*' \
+                       -not -name '*.config.js' \
                        -not -name '*.min.js'); do
             if ! acorn --ecma2020 "$f" > /dev/null 2>&1; then
               echo "Syntax error in $f"
