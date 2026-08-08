@@ -1,0 +1,125 @@
+# 自动打包：浏览器插件（zip）+ 桌面应用（Windows NSIS 安装包）
+#
+# 产物：
+#   - ai-chat-collector-extension-v<版本>.zip   未打包扩展，Chrome「加载已解压」或分发
+#   - knowledge-work-assistant-windows           Electron NSIS 安装包（含 backend 源码）
+#
+# 触发：推送到 main / 推送 v* 标签 / 手动运行。打 v* 标签时会额外发布 GitHub Release。
+name: Build & Package
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # 1. 浏览器插件：无构建步骤，直接把运行时文件打成 zip
+  # ──────────────────────────────────────────────────────────────────────────
+  build-plugin:
+    name: Package browser extension
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web-ai-chat-collector
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web-ai-chat-collector/package-lock.json
+
+      - run: npm ci
+
+      # 跑测试套件（407 用例）作为打包前置门禁
+      - run: npm test
+
+      - name: 读取扩展版本号
+        id: ver
+        run: echo "version=$(node -p "require('./manifest.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: 打包扩展为 zip
+        run: |
+          mkdir -p staging
+          # 仅保留运行时文件，剔除测试 / 文档 / 构建配置（保留 THIRD_PARTY_LICENSES.md）
+          rsync -a \
+            --exclude='.git/' --exclude='staging/' \
+            --exclude='tests/' --exclude='docs/' --exclude='node_modules/' --exclude='.github/' \
+            --exclude='package.json' --exclude='package-lock.json' \
+            --exclude='vitest.config.js' --exclude='.gitignore' \
+            --exclude='DEVELOPMENT.md' --exclude='README*.md' \
+            ./ staging/
+          (cd staging && zip -r "../ai-chat-collector-v${{ steps.ver.outputs.version }}.zip" .)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-chat-collector-extension-v${{ steps.ver.outputs.version }}
+          path: web-ai-chat-collector/ai-chat-collector-v${{ steps.ver.outputs.version }}.zip
+          if-no-files-found: error
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 2. 桌面应用：pnpm dist → electron-builder 产出 Windows NSIS 安装包
+  #    electron-builder 的 extraResources 会把 ../backend 源码打进安装包
+  # ──────────────────────────────────────────────────────────────────────────
+  build-app:
+    name: Package desktop app (Windows)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: knowledge-work-assistant/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: knowledge-work-assistant/frontend/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      # build:frontend（tsc + vite build）→ build:electron（tsc）→ electron-builder --win
+      - run: pnpm dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: knowledge-work-assistant-windows
+          path: knowledge-work-assistant/frontend/release/*
+          if-no-files-found: error
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 3. 打 v* 标签时：把两个产物发布到 GitHub Release
+  # ──────────────────────────────────────────────────────────────────────────
+  release:
+    name: Publish GitHub Release
+    needs: [build-plugin, build-app]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/**/*.zip
+            artifacts/**/*.exe
+            artifacts/**/*.yml
