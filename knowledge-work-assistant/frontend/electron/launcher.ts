@@ -31,7 +31,45 @@ const HEALTH_CHECK_TIMEOUT_MS = 30_000
 
 /** 后端进程引用（null 表示未启动 / 已停止）。 */
 let backendProcess: ChildProcess | null = null
-const backendApiToken = process.env.LOCAL_API_TOKEN ?? randomBytes(32).toString('base64url')
+
+/**
+ * dev 环境后端默认 API token。
+ * 必须与 backend/app/config.py 中 local_api_token 默认值保持一致：
+ * 开发者手动启动后端（未设 LOCAL_API_TOKEN）时即使用该默认值。
+ */
+const DEV_LOCAL_API_TOKEN = 'kwa-development-token'
+
+/** 缓存解析后的 token（同一次进程运行内稳定，prod 随机值不重复生成）。 */
+let _backendApiToken: string | null = null
+
+/**
+ * 解析后端本地 API token。
+ *
+ * 优先级：
+ * 1. LOCAL_API_TOKEN 环境变量（显式指定，前后端共享同一来源）；
+ * 2. dev 环境：DEV_LOCAL_API_TOKEN（与手动启动的后端默认值一致）；
+ * 3. 生产环境：随机生成 32 字节 token（每次启动不同，前后端通过 spawn env 一致）。
+ *
+ * 生产随机 token 之所以可行：startBackend 在 spawn 后端时会把本值通过
+ * LOCAL_API_TOKEN 环境变量注入子进程，使后端 settings.local_api_token 与
+ * preload 桥下发给前端的值保持一致。
+ */
+function resolveBackendApiToken(): string {
+  if (_backendApiToken !== null) return _backendApiToken
+  if (process.env.LOCAL_API_TOKEN) {
+    _backendApiToken = process.env.LOCAL_API_TOKEN
+  } else if (isDev()) {
+    _backendApiToken = DEV_LOCAL_API_TOKEN
+  } else {
+    _backendApiToken = randomBytes(32).toString('base64url')
+  }
+  return _backendApiToken
+}
+
+/** 获取后端本地 API token（供 preload 桥经 IPC 下发给渲染进程）。 */
+export function getBackendApiToken(): string {
+  return resolveBackendApiToken()
+}
 
 /**
  * 判断是否为开发环境。
@@ -149,6 +187,9 @@ export function startBackend(): boolean {
         DATABASE_URL: `sqlite+aiosqlite:///${dbPath.replace(/\\/g, '/')}`,
         APP_ENV: 'production',
         BACKEND_PORT: String(DEFAULT_BACKEND_PORT),
+        // 注入与 preload 桥下发值一致的 token，使后端 settings.local_api_token
+        // 与前端 x-local-api-token 头匹配（prod 随机值 / 显式 env 值均生效）。
+        LOCAL_API_TOKEN: getBackendApiToken(),
       },
       windowsHide: false,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -200,7 +241,7 @@ export async function waitForBackend(): Promise<boolean> {
       const res = await fetch(healthUrl, {
         signal: controller.signal,
         method: 'GET',
-        headers: { 'X-Local-API-Token': backendApiToken },
+        headers: { 'x-local-api-token': getBackendApiToken() },
       })
       clearTimeout(timer)
 
