@@ -95,7 +95,9 @@ export function loadDb() {
     _stripAugmentBlocks: window._stripAugmentBlocks.bind(window),
     _reorderByDomOrder: window._reorderByDomOrder.bind(window),
     tokenize: window.tokenize.bind(window),
-    highlightSearchResult: window.highlightSearchResult.bind(window)
+    highlightSearchResult: window.highlightSearchResult.bind(window),
+    saveConversation: window.saveConversation.bind(window),
+    getConversation: window.getConversation.bind(window)
   };
 }
 
@@ -104,7 +106,9 @@ export function loadEmbedding() {
   runInWindow(path.join(ROOT, 'lib', 'embedding.js'));
   return {
     EmbeddingService: window.EmbeddingService,
-    cosineSimilarity: window.cosineSimilarity
+    cosineSimilarity: window.cosineSimilarity,
+    saveEmbedding: window.saveEmbedding.bind(window),
+    localVectorSearch: window.localVectorSearch.bind(window)
   };
 }
 
@@ -209,6 +213,7 @@ export function loadLocalApp() {
     LocalApp_pushConversation: window.LocalApp_pushConversation.bind(window),
     LocalApp_pushAll: window.LocalApp_pushAll.bind(window),
     LocalApp_pushByConvId: window.LocalApp_pushByConvId.bind(window),
+    LocalApp_pair: window.LocalApp_pair.bind(window),
     LocalApp_testConnection: window.LocalApp_testConnection.bind(window),
     LocalApp_getStatus: window.LocalApp_getStatus.bind(window),
     LocalApp_applySettings: window.LocalApp_applySettings.bind(window),
@@ -218,6 +223,11 @@ export function loadLocalApp() {
     setSettings: (s) => { window._settings = { ...window._settings, ...s }; },
     getPushedMap: () => window._pushedMap,
     setPushedMap: (m) => { window._pushedMap = m; },
+    getRevisionMap: () => window._revisionMap,
+    setRevisionMap: (m) => {
+      window._revisionMap = m;
+      window._revisionLoadPromise = Promise.resolve(m);
+    },
     PLATFORM_MAP: window.PLATFORM_MAP,
     DEFAULT_LOCAL_APP_SETTINGS: window.DEFAULT_LOCAL_APP_SETTINGS
   };

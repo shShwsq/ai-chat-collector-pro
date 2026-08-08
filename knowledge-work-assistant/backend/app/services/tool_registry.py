@@ -506,13 +506,6 @@ _DEFAULT_TOOL_DEFS: list[tuple[str, dict[str, Any], list[str]]] = [
                     "type": "integer",
                     "description": "超时秒数（可选，默认 30）",
                 },
-                "require_confirmation": {
-                    "type": "boolean",
-                    "description": (
-                        "是否需要用户确认（可选，默认 true）。"
-                        "当前实现自动确认直接执行，真正的确认 UI 由前端实现。"
-                    ),
-                },
             },
             required=["command"],
         ),
@@ -622,7 +615,10 @@ _DEFAULT_TOOL_DEFS: list[tuple[str, dict[str, Any], list[str]]] = [
             {
                 "query": {
                     "type": "string",
-                    "description": "检索查询（当未提供 tags/keywords/description 时作为关键词检索）",
+                    "description": (
+                        "检索查询"
+                        "（当未提供 tags/keywords/description 时作为关键词检索）"
+                    ),
                 },
                 "tags": {
                     "type": "array",

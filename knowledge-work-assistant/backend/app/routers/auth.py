@@ -31,14 +31,17 @@
 from __future__ import annotations
 
 import base64
-import hmac
 import hashlib
+import hmac
+import json
 import logging
 import secrets
 import time
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel
+
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -66,23 +69,26 @@ def _sign(payload_b64: str) -> str:
     return base64.urlsafe_b64encode(mac.digest()).rstrip(b"=").decode("ascii")
 
 
-def issue_ws_token() -> str:
-    """签发一个短期 WS token。
+def require_local_api_token(
+    x_local_api_token: str | None = Header(None),
+) -> None:
+    if not x_local_api_token or not hmac.compare_digest(
+        x_local_api_token, settings.local_api_token
+    ):
+        raise HTTPException(status_code=401, detail="invalid local API token")
 
-    格式:``{base64url(payload)}.{base64url(signature)}``
-    payload = ``{"exp": <unix_ts>}`` (JSON)
 
-    Returns:
-        token 字符串。
-    """
+def issue_ws_token(session_id: str) -> str:
     exp = int(time.time()) + _TOKEN_TTL
-    payload_json = f'{{"exp":{exp}}}'.encode("utf-8")
+    payload_json = json.dumps(
+        {"exp": exp, "session_id": session_id}, separators=(",", ":")
+    ).encode("utf-8")
     payload_b64 = base64.urlsafe_b64encode(payload_json).rstrip(b"=").decode("ascii")
     sig_b64 = _sign(payload_b64)
     return f"{payload_b64}.{sig_b64}"
 
 
-def verify_ws_token(token: str) -> bool:
+def verify_ws_token(token: str, session_id: str) -> bool:
     """校验 WS token 的签名与有效期。
 
     Args:
@@ -108,18 +114,19 @@ def verify_ws_token(token: str) -> bool:
         # 补齐 base64 padding
         padded = payload_b64 + "=" * (-len(payload_b64) % 4)
         payload_bytes = base64.urlsafe_b64decode(padded)
-        import json
-
         payload = json.loads(payload_bytes)
         exp = int(payload["exp"])
+        token_session_id = str(payload["session_id"])
     except (ValueError, KeyError, TypeError):
         return False
 
-    return exp > time.time()
+    return exp > time.time() and hmac.compare_digest(token_session_id, session_id)
 
 
 @router.get("/auth/ws-token", response_model=WsTokenResponse)
-async def get_ws_token() -> WsTokenResponse:
+async def get_ws_token(
+    session_id: str = Query(..., min_length=16, max_length=128),
+) -> WsTokenResponse:
     """签发一个短期 WebSocket 连接 token。
 
     前端在建立 WS 连接前调用此接口获取 token,通过 query param ``token``
@@ -128,6 +135,6 @@ async def get_ws_token() -> WsTokenResponse:
     **安全说明**:本端点当前不要求其他认证(本地应用)。未来接入全局认证后,
     给此端点加 ``Depends(get_current_user)`` 即可收窄到已登录用户。
     """
-    token = issue_ws_token()
+    token = issue_ws_token(session_id)
     exp = int(time.time()) + _TOKEN_TTL
     return WsTokenResponse(token=token, expires_at=exp)

@@ -148,6 +148,7 @@
       "matches": ["https://chat.baidu.com/*", "https://wenxin.baidu.com/*"],
       "js": [
         "lib/marked.min.js",
+        "lib/sanitize-html.js",
         "lib/katex.min.js",
         "lib/turndown.min.js",
         "lib/turndown-plugin-gfm.js",

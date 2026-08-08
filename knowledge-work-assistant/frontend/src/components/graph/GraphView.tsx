@@ -619,7 +619,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(
         if (isCardHoveredRef.current) return
         setHoveredNode(null)
       }, 250)
-    }, [clearHoverTimer, clearLeaveTimer])
+    }, [clearHoverTimer])
 
     useEffect(() => {
       if (graphHandoffPhase === 'idle') return

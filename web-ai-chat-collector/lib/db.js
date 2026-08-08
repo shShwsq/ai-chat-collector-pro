@@ -122,7 +122,25 @@ function _reorderByDomOrder(existingMsgs, domOrder) {
 }
 
 // 保存对话（支持追加和覆盖）
-async function saveConversation(data) {
+const _conversationSaveQueues = new Map();
+
+function _enqueueConversationSave(convId, operation) {
+  const previous = _conversationSaveQueues.get(convId) || Promise.resolve();
+  const current = previous.catch(() => {}).then(operation);
+  _conversationSaveQueues.set(convId, current);
+  return current.finally(() => {
+    if (_conversationSaveQueues.get(convId) === current) {
+      _conversationSaveQueues.delete(convId);
+    }
+  });
+}
+
+function saveConversation(data) {
+  const convId = `${data.platform}::${data.platformConversationId}`;
+  return _enqueueConversationSave(convId, () => _saveConversation(data));
+}
+
+async function _saveConversation(data) {
   const db = await openDB();
   const { platform, platformConversationId, title, url, messages, mode, domOrder } = data;
   const convId = `${platform}::${platformConversationId}`;

@@ -46,3 +46,32 @@ async def test_llm_error_followed_by_done_keeps_request_failed(monkeypatch) -> N
     ]
 
     await llm_request_registry.clear()
+
+
+async def test_command_exec_requires_confirmation(monkeypatch, tmp_path) -> None:
+    from app.services.main_agent import HIGH_RISK_TOOLS
+    from app.services.tools import system_tools
+
+    called = False
+
+    def fake_run(*args, **kwargs):
+        nonlocal called
+        called = True
+        return SimpleNamespace(returncode=0, stdout=b"ok", stderr=b"")
+
+    monkeypatch.setattr(system_tools.subprocess, "run", fake_run)
+
+    blocked = await system_tools.command_exec(
+        {"command": "python -V", "cwd": str(tmp_path)}
+    )
+    assert blocked["confirmation_required"] is True
+    assert called is False
+
+    approved = await system_tools.command_exec(
+        {"command": "python -V", "cwd": str(tmp_path), "_confirmed": True}
+    )
+
+    assert "command_exec" in HIGH_RISK_TOOLS
+    assert called is True
+    assert approved["exit_code"] == 0
+    assert approved["confirmation_required"] is False

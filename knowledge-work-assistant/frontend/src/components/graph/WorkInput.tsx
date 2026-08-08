@@ -30,6 +30,7 @@
 import { useEffect, useState } from 'react'
 
 import { Icon } from '../Icon'
+import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { useAppStore } from '../../store/useAppStore'
 import {
   WORK_OBJECTS,
@@ -88,8 +89,6 @@ export function WorkInput() {
     setSelectedIdx(new Set(candidateWorkObjects.map((_, i) => i)))
     setEdits({})
   }, [candidateWorkObjects])
-
-  if (!open) return null
 
   const allSelected =
     candidateWorkObjects.length > 0 &&
@@ -165,6 +164,12 @@ export function WorkInput() {
     }
   }
 
+  const dialogRef = useDialogFocus<HTMLElement>({
+    active: open,
+    initialFocus: '.work-textarea',
+    onEscape: handleClose,
+  })
+
   // Ctrl/Cmd + Enter 触发抽取
   const handleTextKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -172,6 +177,8 @@ export function WorkInput() {
       void handleExtract()
     }
   }
+
+  if (!open) return null
 
   return (
     <>
@@ -183,6 +190,7 @@ export function WorkInput() {
       />
 
       <aside
+        ref={dialogRef}
         className="work-panel work-input-panel"
         role="dialog"
         aria-label="工作对象抽取与入图"
@@ -225,7 +233,7 @@ export function WorkInput() {
               placeholder={SAMPLE_PLACEHOLDER}
               rows={10}
               disabled={workExtracting || workConfirming}
-              autoFocus
+              aria-label="工作信息文本"
             />
 
             <div className="work-actions">

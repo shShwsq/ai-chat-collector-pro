@@ -17,6 +17,8 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import { useAppStore } from '../store/useAppStore'
+import { useDialogFocus } from '../hooks/useDialogFocus'
+import { api } from '../lib/api'
 import { formatShortTime } from '../lib/date'
 
 /** 兜底平台列表（与后端 SUPPORTED_PLATFORMS 白名单对齐）。 */
@@ -64,8 +66,11 @@ export function PluginIntegrationSection() {
   const [contractOpen, setContractOpen] = useState(false)
   const [contractCopied, setContractCopied] = useState(false)
   const [contractLoading, setContractLoading] = useState(false)
+  const [pairCode, setPairCode] = useState('')
+  const [pairing, setPairing] = useState(false)
 
   const webhookUrl = `${resolveBackendOrigin()}/api/plugin/conversations`
+  const contractDialogRef = useDialogFocus<HTMLDivElement>({ active: contractOpen, initialFocus: '.plugin-contract-modal__actions button', onEscape: () => setContractOpen(false) })
 
   // 进入分区时立即拉取一次最近记录 + 契约（懒加载）
   useEffect(() => {
@@ -90,6 +95,16 @@ export function PluginIntegrationSection() {
 
   const handleRefresh = () => {
     void loadPluginRecent()
+  }
+
+  const handleCreatePairCode = async () => {
+    setPairing(true)
+    try {
+      const result = await api.getPluginPairCode()
+      setPairCode(result.code)
+    } finally {
+      setPairing(false)
+    }
   }
 
   const handleCopyUrl = async () => {
@@ -144,6 +159,18 @@ export function PluginIntegrationSection() {
           {pluginRecentLoading ? '刷新中…' : '刷新'}
         </button>
       </header>
+
+      <div className="plugin-url-box">
+        <code>{pairCode || '点击生成一次性 6 位配对码'}</code>
+        <button
+          type="button"
+          className="plugin-url-box__copy-btn"
+          onClick={() => void handleCreatePairCode()}
+          disabled={pairing}
+        >
+          {pairing ? '生成中…' : '生成配对码'}
+        </button>
+      </div>
 
       {/* 1. Webhook URL */}
       <div className="plugin-url-box">
@@ -244,6 +271,7 @@ export function PluginIntegrationSection() {
       {/* 5. 契约弹窗 */}
       {contractOpen && (
         <div
+          ref={contractDialogRef}
           className="plugin-contract-modal"
           role="dialog"
           aria-modal="true"

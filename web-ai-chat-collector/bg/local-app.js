@@ -25,6 +25,8 @@ const PUSHED_KEY = 'localAppPushedConvIds';
 
 // chrome.storage.local 中存储设置的 key
 const SETTINGS_KEY = 'localAppSettings';
+const REVISION_KEY = 'localAppConversationRevisions';
+const LOCAL_APP_API_VERSION = '1.0';
 
 // 默认设置
 const DEFAULT_LOCAL_APP_SETTINGS = {
@@ -32,7 +34,8 @@ const DEFAULT_LOCAL_APP_SETTINGS = {
   autoPush: false,           // 是否启用定时自动推送
   pushOnSave: true,           // 保存新对话时立即推送（不影响定时器）
   intervalMinutes: 1,        // 定时推送间隔（chrome.alarms 最小 1 分钟）
-  baseUrl: LOCAL_APP_DEFAULT_URL
+  baseUrl: LOCAL_APP_DEFAULT_URL,
+  credential: ''
 };
 
 // 插件 platform → 后端 SUPPORTED_PLATFORMS 白名单映射
@@ -53,7 +56,15 @@ const PLATFORM_MAP = {
 
 let _settings = { ...DEFAULT_LOCAL_APP_SETTINGS };
 let _pushedMap = {};  // { [convId]: { pushedAt, observationId, deduplicated, updatedAt } }
+let _revisionMap = {};
+let _revisionLoadPromise = null;
 let _initialized = false;
+
+function _authHeaders(headers = {}) {
+  return _settings.credential
+    ? { ...headers, 'X-Plugin-Credential': _settings.credential }
+    : headers;
+}
 
 // ===== 设置读写 =====
 
@@ -88,12 +99,64 @@ function savePushedMap() {
   });
 }
 
+function loadRevisionMap() {
+  if (_revisionLoadPromise) return _revisionLoadPromise;
+  _revisionLoadPromise = new Promise((resolve) => {
+    chrome.storage.local.get(REVISION_KEY, (result) => {
+      _revisionMap = result[REVISION_KEY] || {};
+      resolve(_revisionMap);
+    });
+  });
+  return _revisionLoadPromise;
+}
+
+function saveRevisionMap() {
+  return new Promise((resolve) => {
+    chrome.storage.local.set({ [REVISION_KEY]: _revisionMap }, resolve);
+  });
+}
+
+function _conversationRevision(conv) {
+  return conv.updatedAt || _revisionMap[conv.id] || null;
+}
+
+async function _ensureConversationRevision(conv) {
+  await loadRevisionMap();
+  const existing = _conversationRevision(conv);
+  if (existing) return existing;
+  const revision = new Date().toISOString();
+  _revisionMap[conv.id] = revision;
+  await saveRevisionMap();
+  return revision;
+}
+
+function _validateHealthResponse(data) {
+  if (!data || data.ok !== true || typeof data.version !== 'string' ||
+      !Array.isArray(data.supported_platforms) ||
+      !data.supported_platforms.every(item => typeof item === 'string') ||
+      !Number.isInteger(data.queue_size) || data.queue_size < 0) {
+    throw new Error('后端健康检查响应不符合契约');
+  }
+  if (data.version !== LOCAL_APP_API_VERSION) {
+    throw new Error(`API 版本不兼容：插件 ${LOCAL_APP_API_VERSION}，后端 ${data.version}`);
+  }
+  return data;
+}
+
+function _validatePushResponse(data) {
+  if (!data || data.received !== true || typeof data.observation_id !== 'string' ||
+      data.observation_id.length === 0 || typeof data.deduplicated !== 'boolean') {
+    throw new Error('后端推送响应不符合契约');
+  }
+  return data;
+}
+
 // ===== 初始化 =====
 
 async function LocalApp_init() {
   if (_initialized) return;
   _settings = await getLocalAppSettings();
-  await loadPushedMap();
+  await Promise.all([loadPushedMap(), loadRevisionMap()]);
   await _syncAlarm();
   chrome.alarms.onAlarm.addListener(_onAlarm);
   _initialized = true;
@@ -127,18 +190,27 @@ async function _onAlarm(alarm) {
 
 // ===== 推送逻辑 =====
 
+function _authHeaders(headers = {}) {
+  return _settings.credential
+    ? { ...headers, 'X-Plugin-Credential': _settings.credential }
+    : { ...headers };
+}
+
 // 把单条对话转换为后端 POST /api/plugin/conversations 的请求体
-function _buildRequestBody(conv) {
+function _buildRequestBody(conv, revision = _conversationRevision(conv)) {
+  if (!revision) throw new Error('对话 revision 尚未初始化');
   const platform = PLATFORM_MAP[conv.platform] || 'custom';
   const markdown = (typeof formatConversation === 'function')
     ? formatConversation(conv, 'markdown')
     : _fallbackMarkdown(conv);
   return {
     platform,
-    timestamp: conv.updatedAt || new Date().toISOString(),
+    timestamp: revision,
     conversation_markdown: markdown,
     metadata: {
-      conversation_id: conv.id,  // 用于后端 24h 幂等去重
+      conversation_id: `${conv.id}@${revision}`,
+      source_conversation_id: conv.id,
+      conversation_revision: revision,
       title: conv.title || '',
       url: conv.url || ''
     }
@@ -164,20 +236,20 @@ async function LocalApp_pushConversation(conv) {
     return { skipped: true, reason: 'disabled' };
   }
 
-  // 增量优化：已推送且对话未变更则跳过
+  const revision = await _ensureConversationRevision(conv);
   const pushed = _pushedMap[conv.id];
-  if (pushed && pushed.updatedAt === conv.updatedAt) {
+  if (pushed && (pushed.revision || pushed.updatedAt) === revision) {
     return { skipped: true, reason: 'already_pushed', data: pushed };
   }
 
-  const body = _buildRequestBody(conv);
+  const body = _buildRequestBody(conv, revision);
   const url = `${_settings.baseUrl.replace(/\/+$/, '')}/api/plugin/conversations`;
 
   let resp;
   try {
     resp = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: _authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(body)
     });
   } catch (e) {
@@ -189,13 +261,14 @@ async function LocalApp_pushConversation(conv) {
     throw new Error(`HTTP ${resp.status}`);
   }
 
-  const data = await resp.json();
+  const data = _validatePushResponse(await resp.json());
 
   // 记录已推送状态
   _pushedMap[conv.id] = {
     pushedAt: new Date().toISOString(),
-    observationId: data.observation_id || null,
-    deduplicated: !!data.deduplicated,
+    observationId: data.observation_id,
+    deduplicated: data.deduplicated,
+    revision,
     updatedAt: conv.updatedAt
   };
   await savePushedMap();
@@ -292,12 +365,25 @@ async function LocalApp_pushByConvId(convId) {
 // ===== 连通性测试 =====
 
 // 调用 GET /api/plugin/health，返回后端版本和支持平台
+async function LocalApp_pair(code) {
+  const url = `${_settings.baseUrl.replace(/\/+$/, '')}/api/plugin/pair`;
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: String(code || '').trim() })
+  });
+  if (!resp.ok) return { success: false, error: `HTTP ${resp.status}` };
+  const data = await resp.json();
+  await LocalApp_applySettings({ ..._settings, credential: data.credential });
+  return { success: true };
+}
+
 async function LocalApp_testConnection() {
   const url = `${_settings.baseUrl.replace(/\/+$/, '')}/api/plugin/health`;
   const start = Date.now();
   let resp;
   try {
-    resp = await fetch(url, { method: 'GET' });
+    resp = await fetch(url, { method: 'GET', headers: _authHeaders() });
   } catch (e) {
     return { success: false, error: `连接失败：${e.message}` };
   }
@@ -305,7 +391,12 @@ async function LocalApp_testConnection() {
   if (!resp.ok) {
     return { success: false, error: `HTTP ${resp.status}` };
   }
-  const data = await resp.json();
+  let data;
+  try {
+    data = _validateHealthResponse(await resp.json());
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
   return {
     success: true,
     latency,
@@ -327,6 +418,7 @@ async function LocalApp_getStatus() {
     pushOnSave: _settings.pushOnSave,
     intervalMinutes: _settings.intervalMinutes,
     baseUrl: _settings.baseUrl,
+    paired: !!_settings.credential,
     pushedCount: ids.length,
     pushedItems: ids.map(id => ({
       convId: id,

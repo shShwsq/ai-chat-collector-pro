@@ -55,6 +55,17 @@
     transition-duration: 0.01ms !important;
   }
 
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+
+  .mode-switch__indicator,
+  .onboarding__progress-fill {
+    transition: none !important;
+  }
+
   .rec-card--entering,
   .chat-streaming-cursor,
   .chat-typing__dot,

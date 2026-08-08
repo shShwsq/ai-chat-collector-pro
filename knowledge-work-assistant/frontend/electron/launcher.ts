@@ -15,6 +15,7 @@
  */
 
 import { spawn, type ChildProcess } from 'child_process'
+import { randomBytes } from 'crypto'
 import * as fs from 'fs'
 import * as path from 'path'
 import { app } from 'electron'
@@ -30,6 +31,7 @@ const HEALTH_CHECK_TIMEOUT_MS = 30_000
 
 /** 后端进程引用（null 表示未启动 / 已停止）。 */
 let backendProcess: ChildProcess | null = null
+const backendApiToken = process.env.LOCAL_API_TOKEN ?? randomBytes(32).toString('base64url')
 
 /**
  * 判断是否为开发环境。
@@ -198,6 +200,7 @@ export async function waitForBackend(): Promise<boolean> {
       const res = await fetch(healthUrl, {
         signal: controller.signal,
         method: 'GET',
+        headers: { 'X-Local-API-Token': backendApiToken },
       })
       clearTimeout(timer)
 

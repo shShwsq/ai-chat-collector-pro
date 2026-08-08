@@ -294,16 +294,16 @@ def _parse_checkpoint_json(raw: str) -> dict[str, Any]:
 def _checkpoint_to_markdown(cycle: int, data: dict[str, Any], created_at: str) -> str:
     """将结构化 checkpoint dict 渲染为 Markdown。"""
     lines = [
-        f"# Session checkpoint",
-        f"",
+        "# Session checkpoint",
+        "",
         f"> cycle {cycle} · {created_at}",
-        f"",
-        f"## current_intent",
+        "",
+        "## current_intent",
         data.get("current_intent") or "(none)",
-        f"",
-        f"## next_action",
+        "",
+        "## next_action",
         data.get("next_action") or "(none)",
-        f"",
+        "",
     ]
     for field in CHECKPOINT_FIELDS:
         if field in ("current_intent", "next_action", "progress_summary"):

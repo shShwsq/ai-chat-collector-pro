@@ -158,8 +158,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     div.innerHTML = `
       <div class="conv-header">
-        <div class="conv-title" title="${conv.title}">${conv.title}</div>
-        <span class="conv-platform">${platformLabel}</span>
+        <div class="conv-title" title="${escapeHtml(conv.title || '')}">${escapeHtml(conv.title || '')}</div>
+        <span class="conv-platform">${escapeHtml(platformLabel || '')}</span>
         ${simBadge}
       </div>
       <div class="conv-meta">
@@ -169,7 +169,7 @@ document.addEventListener('DOMContentLoaded', () => {
       ${snippetHTML}
       <div class="conv-messages-preview">
         ${conv.messages.slice(0, 6).map(m => `
-          <div class="msg-preview ${m.role}">
+          <div class="msg-preview ${m.role === 'user' ? 'user' : 'assistant'}">
             <div class="msg-role">${m.role === 'user' ? '用户' : '助手'}</div>
             <div class="msg-text">${escapeHtml(m.content)}</div>
           </div>
@@ -177,10 +177,10 @@ document.addEventListener('DOMContentLoaded', () => {
         ${conv.messages.length > 6 ? `<div class="conv-more">还有 ${conv.messages.length - 6} 条消息...</div>` : ''}
       </div>
       <div class="conv-actions">
-        <button class="btn btn-view" data-id="${conv.id}">查看</button>
-        <button class="btn btn-primary export-btn" data-id="${conv.id}">导出 Markdown</button>
-        <button class="btn export-json-btn" data-id="${conv.id}">导出 JSON</button>
-        <button class="btn btn-danger delete-btn" data-id="${conv.id}">删除</button>
+        <button class="btn btn-view">查看</button>
+        <button class="btn btn-primary export-btn">导出 Markdown</button>
+        <button class="btn export-json-btn">导出 JSON</button>
+        <button class="btn btn-danger delete-btn">删除</button>
       </div>
     `;
 

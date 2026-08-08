@@ -15,7 +15,8 @@
                                                   工具调用（聚合 deltas 后产出完整 tool_call）
     {"type": "finish", "reason": "stop"|"tool_calls"|"length"|...}
                                                   完成原因
-    {"type": "cancelled"}                        请求被外部取消（仅当 request_id 传入且被 cancel 时）
+    {"type": "cancelled"}                        请求被外部取消
+                                                 （仅当 request_id 传入且被 cancel 时）
 
 请求注册表集成（可选）：
     调用方可在 ``chat`` / ``chat_stream`` / ``embed`` 传入 ``request_id`` 关联

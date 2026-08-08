@@ -123,7 +123,11 @@ def _render_messages_for_summary(
     受 token 预算控制，超出时保留开头 2 条（常含初始请求/关键约束）和最近若干条，
     中间消息按整条丢弃，避免破坏单条消息完整性；单条超长消息使用头尾保留。
     """
-    per_msg_cap = (int(budget_tokens * _CHARS_PER_TOKEN) // max(1, len(messages))) if messages else 0
+    per_msg_cap = (
+        (int(budget_tokens * _CHARS_PER_TOKEN) // max(1, len(messages)))
+        if messages
+        else 0
+    )
     per_msg_cap = max(per_msg_cap, 600)  # 最低约 400 tokens（/1.5）
 
     lines: list[str] = []

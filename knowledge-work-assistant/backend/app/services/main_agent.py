@@ -57,15 +57,18 @@ from app.models.db_models import FileMetadata as FileMetadataRow
 from app.models.db_models import Message as MessageRow
 from app.models.db_models import Session as SessionRow
 from app.services.context_manager import ContextManager
-from app.services.llm_client import LLMClient
-from app.services.model_config import get_model_config
-from app.services.multimodal.image_handler import encode_image_for_llm
-# MCP 工具管理器（Task 2）：全局单例，提供 MCP 工具 schema 与调用入口
-from app.services.mcp_manager import mcp_manager
-from app.services.tool_registry import MCP_PREFIX, ToolRegistry, register_default_tools
-from app.services.tools.task_tools import TaskStore
+
 # 图谱 Agent（KWA 已有）：用于 _build_context 注入图谱上下文
 from app.services.graph_agent import graph_agent
+from app.services.llm_client import LLMClient
+
+# MCP 工具管理器（Task 2）：全局单例，提供 MCP 工具 schema 与调用入口
+from app.services.mcp_manager import mcp_manager
+from app.services.model_config import get_model_config
+from app.services.multimodal.image_handler import encode_image_for_llm
+from app.services.tool_registry import MCP_PREFIX, ToolRegistry, register_default_tools
+from app.services.tools.task_tools import TaskStore
+
 # WS 推送：用于高风险工具确认请求
 from app.services.ws_notify import notify_session
 
@@ -87,7 +90,7 @@ except ImportError:  # Task 7 未完成时 graph_tools 不存在
 # 对外暴露 HIGH_RISK_TOOLS（供 main.py / chat 路由 import）
 HIGH_RISK_TOOLS: set[str] = set(_GRAPH_HIGH_RISK_TOOLS)
 # 确保 graph_extract_from_observation 始终在高风险集合（即使 Task 7 未完成）
-HIGH_RISK_TOOLS.add("graph_extract_from_observation")
+HIGH_RISK_TOOLS.update({"graph_extract_from_observation", "command_exec"})
 
 # Qwen 等模型在不支持原生 function calling 时，会在文本中生成 <tool_call> XML。
 # 正则匹配 <tool_call>...</tool_call> 块（DOTALL 跨行）。
@@ -165,7 +168,7 @@ async def request_tool_confirmation(
     try:
         result = await asyncio.wait_for(future, timeout=timeout)
         return result
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.info(
             "工具确认超时 session=%s tool=%s request_id=%s",
             session_id,
@@ -480,7 +483,7 @@ class MainAgent:
         self._cancel_event.set()
         try:
             await asyncio.wait_for(self._chat_done.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "cancel_and_wait 超时 session=%s timeout=%.1f",
                 self.session_id,
@@ -1039,7 +1042,6 @@ class MainAgent:
         """
         eff_graph_id = self.graph_id if graph_id is None else graph_id
         eff_scenario = self.scenario_mode if scenario_mode is None else scenario_mode
-        eff_plan_mode = self.plan_mode if plan_mode is None else plan_mode
         eff_tool_mode = self.mode if tool_mode is None else tool_mode
 
         # 模式描述
@@ -1070,16 +1072,11 @@ class MainAgent:
         )
 
         # 图谱上下文注入（SubTask 5.3）
-        graph_context_block = ""
+        # graph_agent._build_context 是 async，但本方法是 sync（在 chat_stream
+        # 同步段调用）。实际注入在 chat_stream 中通过 _inject_graph_context 异步完成。
+        # eff_graph_id 在此仅作为是否启用图谱上下文注入的标志，由 chat_stream 读取。
         if eff_graph_id:
-            try:
-                # graph_agent._build_context 是 async，但本方法是 sync（在 chat_stream
-                # 同步段调用）。改为在 chat_stream 中预先 await 后传入，或用
-                # asyncio.run 风险大。此处保留接口：若已预取则用预取值。
-                # 实际注入在 chat_stream 中通过 _inject_graph_context 异步完成。
-                pass
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("图谱上下文注入失败 graph_id=%s: %s", eff_graph_id, exc)
+            logger.debug("system_message 启用图谱上下文注入 graph_id=%s", eff_graph_id)
 
         content = (
             f"{self._system_prompt}\n\n---\n\n## 运行环境\n\n{env_info}"
@@ -1164,7 +1161,6 @@ class MainAgent:
             iteration_tokens: list[str] = []
             iteration_thinking_parts: list[str] = []
             pending_tool_calls: list[dict[str, Any]] = []
-            finish_reason: str | None = None
 
             # ---- 流式调用 LLM ----
             gen = self.llm_client.chat_stream(messages, tools=tools)
@@ -1193,7 +1189,8 @@ class MainAgent:
                     elif etype == "tool_call":
                         pending_tool_calls.append(event)
                     elif etype == "finish":
-                        finish_reason = event.get("reason")
+                        # finish 事件仅标志本轮 LLM 调用结束，reason 字段当前未使用
+                        pass
             except Exception as exc:  # noqa: BLE001
                 partial = "".join(iteration_tokens)
                 assistant_content_parts.append(partial)
@@ -1418,6 +1415,8 @@ class MainAgent:
                 self.session_id,
             )
             effective_args = modified_args
+        if tool_name == "command_exec":
+            effective_args = {**effective_args, "_confirmed": True}
 
         logger.info(
             "高风险工具 %s 用户已同意，开始执行 session=%s",
@@ -1665,7 +1664,8 @@ class MainAgent:
 #: 全局 MainAgent 单例（延迟初始化，``init_main_agent`` 时创建）
 _main_agent: MainAgent | None = None
 
-#: 模块级 ``main_agent`` 引用（为 None 时表示未初始化；供 ``from app.services.main_agent import main_agent`` 导入）
+#: 模块级 ``main_agent`` 引用（为 None 时表示未初始化；供
+#: ``from app.services.main_agent import main_agent`` 导入）
 main_agent: MainAgent | None = None
 
 

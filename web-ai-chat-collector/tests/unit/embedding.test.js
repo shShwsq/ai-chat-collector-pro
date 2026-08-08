@@ -1,15 +1,18 @@
 // tests/unit/embedding.test.js
 // lib/embedding.js 纯函数测试：chunkText / filterContentForEmbedding / cosineSimilarity
 
-import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
+import { IDBFactory } from 'fake-indexeddb';
 import { loadEmbedding } from '../helpers/load-source.js';
 
-let EmbeddingService, cosineSimilarity;
+let EmbeddingService, cosineSimilarity, saveEmbedding, localVectorSearch;
 
 beforeAll(() => {
   const lib = loadEmbedding();
   EmbeddingService = lib.EmbeddingService;
   cosineSimilarity = lib.cosineSimilarity;
+  saveEmbedding = lib.saveEmbedding;
+  localVectorSearch = lib.localVectorSearch;
 });
 
 // EmbeddingService 是单例对象，跨测试用例状态会保留，每个 it 前重置
@@ -18,6 +21,8 @@ beforeEach(() => {
   EmbeddingService._chunkOverlap = 50;
   EmbeddingService._includeThinking = false;
   EmbeddingService._includeSearch = false;
+  EmbeddingService._expectedDimension = 3;
+  EmbeddingService._apiKey = 'test-key';
 });
 
 // think 块标签用拼接构造
@@ -130,6 +135,8 @@ describe('filterContentForEmbedding', () => {
   it('无 think/search 块时原样返回（trim）', () => {
     EmbeddingService._includeThinking = false;
     EmbeddingService._includeSearch = false;
+  EmbeddingService._expectedDimension = 3;
+  EmbeddingService._apiKey = 'test-key';
     expect(EmbeddingService.filterContentForEmbedding('  Hello  ')).toBe('Hello');
   });
 
@@ -147,6 +154,8 @@ describe('filterContentForEmbedding', () => {
 
   it('_includeSearch=false 剥离 search_result 块', () => {
     EmbeddingService._includeSearch = false;
+  EmbeddingService._expectedDimension = 3;
+  EmbeddingService._apiKey = 'test-key';
     const input = '回答<search_result>来源</search_result>后续';
     expect(EmbeddingService.filterContentForEmbedding(input)).toBe('回答后续');
   });
@@ -160,6 +169,8 @@ describe('filterContentForEmbedding', () => {
   it('同时剥离 think 和 search_result（默认行为）', () => {
     EmbeddingService._includeThinking = false;
     EmbeddingService._includeSearch = false;
+  EmbeddingService._expectedDimension = 3;
+  EmbeddingService._apiKey = 'test-key';
     const input = THINK_OPEN + '思考' + THINK_CLOSE +
                   '回答<search_result>来源</search_result>后续';
     expect(EmbeddingService.filterContentForEmbedding(input)).toBe('回答后续');
@@ -242,5 +253,38 @@ describe('cosineSimilarity', () => {
     const b = Array.from({ length: 1024 }, (_, i) => i * 0.01 + 0.001);
     // 微小扰动，相似度应接近 1
     expect(cosineSimilarity(a, b)).toBeGreaterThan(0.999);
+  });
+});
+
+
+describe('??????', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('DashScope ???????????', async () => {
+    window.fetch = vi.fn().mockResolvedValue({
+      json: async () => ({ output: { embeddings: [{ embedding: [1, 2] }] } })
+    });
+    await expect(EmbeddingService._embedDashscopeText('test')).resolves.toBeNull();
+  });
+
+  it('???????????', async () => {
+    window.indexedDB = new IDBFactory();
+    await expect(saveEmbedding('id-1', 'conv-1', [1, 2])).rejects.toThrow('Embedding dimension mismatch');
+  });
+
+  it('??????????????', async () => {
+    window.indexedDB = new IDBFactory();
+    const db = await window.openEmbeddingDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('embeddings', 'readwrite');
+      tx.objectStore('embeddings').put({ id: 'bad', convId: 'c1', vector: [1, 2] });
+      tx.objectStore('embeddings').put({ id: 'good', convId: 'c2', vector: [1, 0, 0] });
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    const result = await localVectorSearch([1, 0, 0], 10);
+    expect(result.map(item => item.id)).toEqual(['good']);
   });
 });

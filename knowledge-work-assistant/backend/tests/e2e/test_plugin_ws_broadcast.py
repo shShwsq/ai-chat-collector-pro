@@ -40,21 +40,25 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
-import pytest
 from httpx import ASGITransport, AsyncClient
 from httpx_ws import aconnect_ws
 from httpx_ws.transport import ASGIWebSocketTransport
+from sqlalchemy import select
 
 import app.db as db_module
+from app.config import settings
 from app.models.db_models import Observation
+from app.routers.plugin import _plugin_credentials
 from app.services.graph_store import graph_store
-from sqlalchemy import select
 
 # 32 位十六进制字符串（uuid4().hex 风格）
 _HEX32_RE = re.compile(r"^[0-9a-f]{32}$")
+_TEST_PLUGIN_CREDENTIAL = "test-ws-plugin-credential"
+_PLUGIN_HEADERS = {"X-Plugin-Credential": _TEST_PLUGIN_CREDENTIAL}
+_LOCAL_HEADERS = {"X-Local-API-Token": settings.local_api_token}
 
 
 def _make_full_conversation_payload(
@@ -129,12 +133,16 @@ class TestPluginWsBroadcast:
         - payload 中 platform / title 与请求体一致
         - payload 中 timestamp 与请求体 timestamp 解析后一致
         """
+        _plugin_credentials.add(_TEST_PLUGIN_CREDENTIAL)
+        _ws_session = "test-ws-broadcast-session"
         # 1. 建立 WS 连接（用 ASGIWebSocketTransport，禁用 keepalive ping）
-        #    先获取 WS 鉴权 token（/ws 端点要求 ?token=xxx）
+        #    先获取 WS 鉴权 token（/ws 端点要求 ?token=xxx&session_id=xxx）
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
+            transport=ASGITransport(app=app), base_url="http://test", headers=_LOCAL_HEADERS
         ) as auth_client:
-            token_resp = await auth_client.get("/api/auth/ws-token")
+            token_resp = await auth_client.get(
+                f"/api/auth/ws-token?session_id={_ws_session}"
+            )
         assert token_resp.status_code == 200, token_resp.text
         ws_token = token_resp.json()["token"]
 
@@ -143,7 +151,7 @@ class TestPluginWsBroadcast:
             transport=ws_transport, base_url="http://test"
         ) as ws_client:
             async with aconnect_ws(
-                f"ws://test/ws?token={ws_token}",
+                f"ws://test/ws?token={ws_token}&session_id={_ws_session}",
                 ws_client,
                 keepalive_ping_interval_seconds=None,
                 keepalive_ping_timeout_seconds=None,
@@ -161,7 +169,9 @@ class TestPluginWsBroadcast:
                     timestamp="2025-01-01T12:00:00+08:00",
                 )
                 async with AsyncClient(
-                    transport=ASGITransport(app=app), base_url="http://test"
+                    transport=ASGITransport(app=app),
+                    base_url="http://test",
+                    headers={"X-Local-API-Token": settings.local_api_token},
                 ) as http_client:
                     resp = await http_client.post(
                         "/api/plugin/conversations", json=payload
@@ -190,6 +200,7 @@ class TestPluginWsBroadcast:
                 )
                 assert broadcast_payload["platform"] == "chatgpt"
                 assert broadcast_payload["title"] == "WS 广播测试对话"
+                assert broadcast_payload["updated"] is False
                 # timestamp 为 ISO8601 字符串
                 assert broadcast_payload["timestamp"] is not None
                 # 验证 timestamp 可解析为 datetime
@@ -200,8 +211,59 @@ class TestPluginWsBroadcast:
                     f"广播 timestamp 应为 {expected_ts}，实际: {parsed_ts}"
                 )
 
+    async def test_ws_broadcast_on_deduplicated_update(self, app) -> None:
+        _plugin_credentials.add(_TEST_PLUGIN_CREDENTIAL)
+        _ws_session = "test-ws-update-session"
+        payload = _make_full_conversation_payload(
+            conversation_id="conv-ws-update-001",
+            title="更新前标题",
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", headers=_LOCAL_HEADERS
+        ) as auth_client:
+            token_resp = await auth_client.get(
+                f"/api/auth/ws-token?session_id={_ws_session}"
+            )
+        token = token_resp.json()["token"]
+
+        async with AsyncClient(
+            transport=ASGIWebSocketTransport(app=app), base_url="http://test"
+        ) as ws_client:
+            async with aconnect_ws(
+                f"/ws?token={token}&session_id={_ws_session}",
+                ws_client,
+                keepalive_ping_interval_seconds=None,
+            ) as ws:
+                await ws.receive_json()
+                async with AsyncClient(
+                    transport=ASGITransport(app=app),
+                    base_url="http://test",
+                    headers={**_LOCAL_HEADERS, **_PLUGIN_HEADERS},
+                ) as http_client:
+                    first = await http_client.post("/api/plugin/conversations", json=payload)
+                    first_event = await asyncio.wait_for(ws.receive_json(), timeout=5.0)
+                    updated_payload = {
+                        **payload,
+                        "conversation_markdown": "## 用户\n更新后问题\n\n## 助手\n更新后回答",
+                        "metadata": {**payload["metadata"], "title": "更新后标题"},
+                    }
+                    second = await http_client.post(
+                        "/api/plugin/conversations", json=updated_payload
+                    )
+                second_event = await asyncio.wait_for(ws.receive_json(), timeout=5.0)
+
+        assert first.status_code == 200
+        assert first_event["payload"]["updated"] is False
+        assert second.status_code == 200
+        assert second.json()["deduplicated"] is True
+        assert second_event["type"] == "plugin.conversation_received"
+        assert second_event["payload"]["updated"] is True
+        assert second_event["payload"]["observation_id"] == first.json()["observation_id"]
+        assert second_event["payload"]["title"] == "更新后标题"
+
     async def test_e2e_full_pipeline(self, app) -> None:
-        """模拟 collector patch 数据 → 调用 webhook → 验证落库 → 验证 WS 广播 → 验证 payload 一致性。
+        """模拟 collector patch 数据 → 调用 webhook → 验证落库 →
+        验证 WS 广播 → 验证 payload 一致性。
 
         端到端验证：
         1. 构造完整的 conversationMarkdown（模拟 collector patch 采集）
@@ -222,12 +284,16 @@ class TestPluginWsBroadcast:
             timestamp="2025-01-02T09:30:00+08:00",
         )
 
+        _plugin_credentials.add(_TEST_PLUGIN_CREDENTIAL)
+        _ws_session = "test-e2e-full-pipeline-session"
         # 2. 建立 WS 连接
-        #    先获取 WS 鉴权 token（/ws 端点要求 ?token=xxx）
+        #    先获取 WS 鉴权 token（/ws 端点要求 ?token=xxx&session_id=xxx）
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
+            transport=ASGITransport(app=app), base_url="http://test", headers=_LOCAL_HEADERS
         ) as auth_client:
-            token_resp = await auth_client.get("/api/auth/ws-token")
+            token_resp = await auth_client.get(
+                f"/api/auth/ws-token?session_id={_ws_session}"
+            )
         assert token_resp.status_code == 200, token_resp.text
         ws_token = token_resp.json()["token"]
 
@@ -236,7 +302,7 @@ class TestPluginWsBroadcast:
             transport=ws_transport, base_url="http://test"
         ) as ws_client:
             async with aconnect_ws(
-                f"ws://test/ws?token={ws_token}",
+                f"ws://test/ws?token={ws_token}&session_id={_ws_session}",
                 ws_client,
                 keepalive_ping_interval_seconds=None,
                 keepalive_ping_timeout_seconds=None,
@@ -247,7 +313,9 @@ class TestPluginWsBroadcast:
 
                 # 3. POST 推送
                 async with AsyncClient(
-                    transport=ASGITransport(app=app), base_url="http://test"
+                    transport=ASGITransport(app=app),
+                    base_url="http://test",
+                    headers={**_LOCAL_HEADERS, **_PLUGIN_HEADERS},
                 ) as http_client:
                     resp = await http_client.post(
                         "/api/plugin/conversations", json=payload
@@ -341,10 +409,10 @@ class TestPluginWsBroadcast:
         expected_ts = datetime.fromisoformat("2025-01-02T09:30:00+08:00")
         # 两者都带时区，直接比较（转 UTC 后比较绝对时刻）
         if parsed_broadcast_ts.tzinfo is None:
-            parsed_cmp = parsed_broadcast_ts.replace(tzinfo=timezone.utc)
+            parsed_cmp = parsed_broadcast_ts.replace(tzinfo=UTC)
         else:
-            parsed_cmp = parsed_broadcast_ts.astimezone(timezone.utc)
-        expected_cmp = expected_ts.astimezone(timezone.utc)
+            parsed_cmp = parsed_broadcast_ts.astimezone(UTC)
+        expected_cmp = expected_ts.astimezone(UTC)
         diff = abs((parsed_cmp - expected_cmp).total_seconds())
         assert diff < 1.0, (
             f"广播 timestamp 应为 {expected_cmp}，实际: {parsed_cmp}，差异: {diff}s"

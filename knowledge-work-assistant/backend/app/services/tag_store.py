@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, delete, func, or_, select, text
@@ -60,7 +60,7 @@ _MAX_PAGE_SIZE = 50
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class TagStore:
@@ -168,7 +168,7 @@ class TagStore:
                 existing_links = {r[0] for r in link_result.all()}
 
             # 5. 插入新关联
-            for n, tid in tag_id_by_name.items():
+            for _n, tid in tag_id_by_name.items():
                 if tid not in existing_links:
                     db.add(FileTag(file_id=file_id, tag_id=tid))
 
@@ -424,7 +424,7 @@ class TagStore:
                     except ValueError:
                         continue
                 if idx.tzinfo is None:
-                    idx = idx.replace(tzinfo=timezone.utc)
+                    idx = idx.replace(tzinfo=UTC)
                 ts = idx.timestamp() if hasattr(idx, "timestamp") else 0
                 entry["_indexed_at"] = ts
                 if idx >= week_ago:

@@ -66,6 +66,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // ---- 本地软件对接 ----
   const localAppEnabled = document.getElementById('localAppEnabled');
   const localAppBaseUrl = document.getElementById('localAppBaseUrl');
+  const localAppPairCode = document.getElementById('localAppPairCode');
+  const pairLocalAppBtn = document.getElementById('pairLocalAppBtn');
   const localAppPushOnSave = document.getElementById('localAppPushOnSave');
   const localAppAutoPush = document.getElementById('localAppAutoPush');
   const localAppInterval = document.getElementById('localAppInterval');
@@ -505,6 +507,7 @@ document.addEventListener('DOMContentLoaded', () => {
   testLlmBtn.addEventListener('click', testLLM);
   testVectorConnectionBtn.addEventListener('click', testVectorConnection);
   rebuildIndexBtn.addEventListener('click', rebuildIndex);
+  pairLocalAppBtn.addEventListener('click', pairLocalApp);
   testLocalAppBtn.addEventListener('click', testLocalApp);
   refreshLocalAppStatsBtn.addEventListener('click', loadLocalAppStats);
   resetLocalAppPushedBtn.addEventListener('click', resetLocalAppPushed);

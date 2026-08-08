@@ -28,5 +28,26 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    chunkSizeWarningLimit: 650,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          if (id.includes('react-force-graph') || id.includes('force-graph') || id.includes('d3-')) {
+            return 'graph-vendor'
+          }
+          if (id.includes('react-markdown') || id.includes('remark-') || id.includes('micromark') || id.includes('mdast') || id.includes('hast')) {
+            return 'markdown-vendor'
+          }
+          if (id.includes('/motion/') || id.includes('framer-motion')) {
+            return 'motion-vendor'
+          }
+          if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/')) {
+            return 'react-vendor'
+          }
+          return 'vendor'
+        },
+      },
+    },
   },
 })

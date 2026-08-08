@@ -552,7 +552,6 @@ async def export_report_docx(
         }
 
     markdown = result.get("markdown", "") or ""
-    period_label = "周报" if body.period == "weekly" else "月报"
 
     doc = Document()
     # 解析 Markdown 写入 docx（支持 # / ## / ### 标题、- 列表、空行分段）

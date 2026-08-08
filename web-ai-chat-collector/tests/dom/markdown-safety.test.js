@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { loadHtmlSanitizer } from '../helpers/load-source.js';
 
@@ -46,5 +48,19 @@ describe('Markdown HTML 安全清理', () => {
     );
     expect(output).not.toContain('data:text/html');
     expect(output).not.toContain('javascript:');
+  });
+});
+
+
+
+describe('Popup list injection safety', () => {
+  it('escapes dynamic labels and whitelists message roles', () => {
+    const source = fs.readFileSync(path.join(process.cwd(), 'popup', 'popup.js'), 'utf-8');
+    expect(source).toContain("title=\"${escapeHtml(conv.title || '')}\"");
+    expect(source).toContain("${escapeHtml(platformLabel || '')}");
+    expect(source).toContain("m.role === 'user' ? 'user' : 'assistant'");
+    expect(source).not.toContain('title="${conv.title}">${conv.title}');
+    expect(source).not.toContain('msg-preview ${m.role}');
+    expect(source).not.toContain('data-id="${conv.id}"');
   });
 });

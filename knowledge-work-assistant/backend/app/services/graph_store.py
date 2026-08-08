@@ -928,6 +928,33 @@ class GraphStore:
         # 批量为单事务、单写者，锁冲突极少；仍保留重试以应对极端情况
         return await with_sqlite_lock_retry(_bulk)
 
+    async def update_observation_by_dedup_key(
+        self,
+        dedup_key: str,
+        *,
+        conversation_markdown: str,
+        occurred_at: datetime | None,
+        metadata: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        async def _update() -> dict[str, Any] | None:
+            async with AsyncSessionLocal() as db:
+                stmt = select(ObservationRow).where(ObservationRow.dedup_key == dedup_key)
+                row = (await db.execute(stmt)).scalar_one_or_none()
+                if row is None:
+                    return None
+                row.conversation_markdown = conversation_markdown
+                row.occurred_at = occurred_at
+                row.metadata_json = _safe_json_dumps(metadata or {})
+                row.processed = False
+                try:
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    raise
+                return _observation_to_dict(row)
+
+        return await with_sqlite_lock_retry(_update)
+
     async def get_observation(self, observation_id: str) -> dict[str, Any] | None:
         """获取观察记录。不存在返回 None。"""
         async with AsyncSessionLocal() as db:
@@ -1062,9 +1089,7 @@ class GraphStore:
         async with AsyncSessionLocal() as db:
             stmt = (
                 select(ObservationRow)
-                .where(
-                    ObservationRow.dedup_key == dedup_key
-                )
+                .where(ObservationRow.dedup_key == dedup_key)
                 .where(ObservationRow.created_at >= cutoff)
                 .order_by(ObservationRow.created_at.desc())
                 .limit(1)

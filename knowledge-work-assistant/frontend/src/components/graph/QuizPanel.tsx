@@ -40,6 +40,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import { Icon } from '../Icon'
+import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { useAppStore } from '../../store/useAppStore'
 import type {
   ChoiceGradeResult,
@@ -152,9 +153,15 @@ export function QuizPanel() {
 
   const graphNodes: Node[] = useMemo(() => fullGraph?.nodes ?? [], [fullGraph])
 
-  if (!open) return null
-
   const handleClose = () => setQuizPanelOpen(false)
+  const dialogRef = useDialogFocus<HTMLElement>({
+    active: open,
+    initialFocus: '.quiz-panel__close',
+    resetKey: stage,
+    onEscape: handleClose,
+  })
+
+  if (!open) return null
 
   const handleGenerate = async () => {
     if (generatingQuiz) return
@@ -224,6 +231,7 @@ export function QuizPanel() {
       <div className="quiz-overlay" onClick={handleClose} aria-hidden="true" />
 
       <aside
+        ref={dialogRef}
         className="quiz-panel"
         role="dialog"
         aria-label="Study 测验"

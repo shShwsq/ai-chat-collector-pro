@@ -198,15 +198,17 @@ export function NodeDetailCard({
   // 若外部传入的 node prop 自带 detail_payload 缓存（如推荐列表中的节点），
   // 而 fullGraph 中尚未同步，则合并 prop 中的缓存，避免切换视图后详情丢失。
   const storeNode = useAppStore((s) => s.fullGraph?.nodes.find((n) => n.id === node.id))
-  const latestNode: Node = storeNode
-    ? {
-        ...storeNode,
-        detail_payload:
-          storeNode.detail_payload && Object.keys(storeNode.detail_payload).length > 0
-            ? storeNode.detail_payload
-            : node.detail_payload,
-      }
-    : node
+  // 用 useMemo 稳定 latestNode 引用，避免每次渲染新建对象导致下游 useMemo 依赖失效
+  const latestNode: Node = useMemo(() => {
+    if (!storeNode) return node
+    return {
+      ...storeNode,
+      detail_payload:
+        storeNode.detail_payload && Object.keys(storeNode.detail_payload).length > 0
+          ? storeNode.detail_payload
+          : node.detail_payload,
+    }
+  }, [storeNode, node])
   const generateNodeDetail = useAppStore((s) => s.generateNodeDetail)
   const generateNodeDetailStream = useAppStore((s) => s.generateNodeDetailStream)
   const clearNodeDetailStreaming = useAppStore((s) => s.clearNodeDetailStreaming)

@@ -18,9 +18,10 @@
  *    关闭已完成结果会清除任务记录，下次打开回到 drop。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 
 import { useAppStore } from '../store/useAppStore'
+import { useDialogFocus } from '../hooks/useDialogFocus'
 import { formatDateTime } from '../lib/date'
 import {
   detectAndParse,
@@ -175,33 +176,33 @@ export function ImportConversationsModal({ onClose }: ImportConversationsModalPr
     if (importJob?.status === 'done') clearImportJob()
     onClose()
   }, [importJob, clearImportJob, onClose])
-
-  // ===== ESC 关闭（始终安全：运行中关闭不中断任务）=====
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') handleClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [handleClose])
+  const dialogRef = useDialogFocus<HTMLDivElement>({
+    initialFocus: '[data-dialog-initial="close"]',
+    onEscape: handleClose,
+  })
 
   return (
     <div
       className="import-modal"
-      role="dialog"
-      aria-modal="true"
-      aria-label="导入对话"
-      onClick={handleClose}
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) handleClose()
+      }}
     >
       <div
+        ref={dialogRef}
         className="import-modal__box"
-        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="import-modal-title"
+        tabIndex={-1}
       >
         {/* 头部 */}
         <div className="import-modal__header">
-          <h3 className="import-modal__title">导入对话</h3>
+          <h3 id="import-modal-title" className="import-modal__title">导入对话</h3>
           <button
             type="button"
+            data-dialog-initial="close"
             className="import-modal__close"
             onClick={handleClose}
             aria-label="关闭"
@@ -379,7 +380,14 @@ export function ImportConversationsModal({ onClose }: ImportConversationsModalPr
                   <div className="import-progress__text">
                     正在导入 {importJob.done} / {importJob.total} …
                   </div>
-                  <div className="import-progress__bar">
+                  <div
+                    className="import-progress__bar"
+                    role="progressbar"
+                    aria-label="对话导入进度"
+                    aria-valuemin={0}
+                    aria-valuemax={importJob.total}
+                    aria-valuenow={importJob.done}
+                  >
                     <div
                       className="import-progress__fill"
                       style={{

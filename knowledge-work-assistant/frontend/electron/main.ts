@@ -2,7 +2,7 @@ import { app, BrowserWindow, shell, ipcMain } from 'electron'
 import * as path from 'path'
 
 // 后端进程启动器：生产环境 spawn 后端并健康检查；开发环境跳过（开发者手动启动）
-import { startBackendAndWait, stopBackend, getBackendBaseUrl, getBackendWsUrl } from './launcher'
+import { startBackendAndWait, stopBackend, getBackendBaseUrl, getBackendWsUrl, getBackendApiToken } from './launcher'
 
 // 开发环境由 Vite 提供 dev server；生产环境加载打包后的 dist/index.html。
 const isDev = !app.isPackaged
@@ -70,6 +70,9 @@ function registerIpcHandlers(): void {
   })
   ipcMain.on('backend:get-ws-url', (event) => {
     event.returnValue = getBackendWsUrl()
+  })
+  ipcMain.on('backend:get-api-token', (event) => {
+    event.returnValue = getBackendApiToken()
   })
 }
 

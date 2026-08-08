@@ -39,6 +39,11 @@ function wsBase(): string {
 
 type Unsubscribe = () => void
 
+export function getReconnectDelay(attempt: number): number {
+  const cappedAttempt = Math.max(0, Math.min(attempt, 6))
+  return Math.min(30_000, 500 * 2 ** cappedAttempt)
+}
+
 function safeParse(raw: unknown): unknown | null {
   if (typeof raw !== 'string') return null
   try {
@@ -64,8 +69,11 @@ export class TestSocket {
   private readonly handlers = new Set<(event: WsEvent) => void>()
   /** 当前连接注册到的 session_id（连接成功后由后端 welcome 事件回填）。 */
   private currentSessionId: string | null = null
-  /** 连接时传入的 session_id（用于 URL 查询参数）。 */
   private requestedSessionId: string | null = null
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private reconnectAttempt = 0
+  private intentionallyClosed = false
+  private connectingPromise: Promise<void> | null = null
 
   /**
    * 建立连接，resolve 后即可发送消息。
@@ -79,30 +87,40 @@ export class TestSocket {
    *   仅接收全局广播（如插件对话已接收事件）。
    */
   async connect(sessionId?: string): Promise<void> {
-    this.requestedSessionId = sessionId ?? null
+    this.requestedSessionId = sessionId ?? this.requestedSessionId
+    this.intentionallyClosed = false
+    if (this.isOpen) return
+    if (this.connectingPromise) return this.connectingPromise
 
-    // ① 获取短期 WS token(15 分钟有效)
+    this.connectingPromise = this.openSocket().finally(() => {
+      this.connectingPromise = null
+    })
+    return this.connectingPromise
+  }
+
+  private async openSocket(): Promise<void> {
     let token: string
     try {
-      const resp = await api.getWsToken()
+      if (!this.requestedSessionId) throw new Error('缺少 WebSocket session_id')
+      const resp = await api.getWsToken(this.requestedSessionId)
       token = resp.token
     } catch (e) {
+      this.scheduleReconnect()
       throw new Error(`WebSocket 鉴权 token 获取失败: ${(e as Error).message}`)
     }
 
-    // ② 拼接 token + session_id 查询参数
     const params = new URLSearchParams()
     params.set('token', token)
-    if (sessionId) params.set('session_id', sessionId)
+    if (this.requestedSessionId) params.set('session_id', this.requestedSessionId)
     const url = `${wsBase()}/ws?${params.toString()}`
 
-    // ③ 建立连接
     return new Promise<void>((resolve, reject) => {
       const socket = new WebSocket(url)
       this.socket = socket
 
       let settled = false
       socket.onopen = () => {
+        this.reconnectAttempt = 0
         if (!settled) {
           settled = true
           resolve()
@@ -111,13 +129,12 @@ export class TestSocket {
       socket.onerror = () => {
         if (!settled) {
           settled = true
-          reject(new Error(`WebSocket 连接失败: ${url}`))
+          reject(new Error('WebSocket 连接失败，正在后台重试'))
         }
       }
       socket.onmessage = (ev: MessageEvent) => {
         const data = safeParse(ev.data)
         if (data === null) return
-        // 捕获 welcome 事件中的 session_id（后端回填，便于调试）
         const maybeWelcome = data as { type?: string; session_id?: string }
         if (maybeWelcome.type === 'welcome' && maybeWelcome.session_id) {
           this.currentSessionId = maybeWelcome.session_id
@@ -127,10 +144,29 @@ export class TestSocket {
         }
       }
       socket.onclose = () => {
-        this.socket = null
+        if (this.socket === socket) this.socket = null
         this.currentSessionId = null
+        if (!settled) {
+          settled = true
+          reject(new Error('WebSocket 连接已关闭，正在后台重试'))
+        }
+        this.scheduleReconnect()
       }
     })
+  }
+
+  private scheduleReconnect(): void {
+    if (this.intentionallyClosed || this.reconnectTimer) return
+    const delay = getReconnectDelay(this.reconnectAttempt)
+    this.reconnectAttempt += 1
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        this.scheduleReconnect()
+        return
+      }
+      void this.connect().catch(() => undefined)
+    }, delay)
   }
 
   /** 订阅任意事件，返回取消订阅函数。 */
@@ -160,11 +196,18 @@ export class TestSocket {
 
   /** 关闭连接并清理订阅。 */
   close(): void {
+    this.intentionallyClosed = true
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
     this.handlers.clear()
     this.socket?.close()
     this.socket = null
     this.currentSessionId = null
     this.requestedSessionId = null
+    this.reconnectAttempt = 0
+    this.connectingPromise = null
   }
 
   /** 当前是否处于连接打开状态。 */

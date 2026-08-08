@@ -167,6 +167,15 @@ const EmbeddingService = {
   },
 
   // 获取当前切片参数（供 background 生成 chunk ID 等场景使用）
+  _validateVector(vector, source) {
+    if (!Array.isArray(vector) || vector.length !== this._expectedDimension) {
+      const actual = Array.isArray(vector) ? vector.length : typeof vector;
+      console.error(`[Embedding/${source}] invalid dimension: expected ${this._expectedDimension}, actual ${actual}, model ${this._model}`);
+      return null;
+    }
+    return vector;
+  },
+
   getChunkConfig() {
     return { chunkSize: this._chunkSize, chunkOverlap: this._chunkOverlap };
   },
@@ -263,7 +272,7 @@ const EmbeddingService = {
       });
       const data = await resp.json();
       if (data.output && data.output.embeddings && data.output.embeddings[0]) {
-        return data.output.embeddings[0].embedding;
+        return this._validateVector(data.output.embeddings[0].embedding, 'DashScope-Text');
       }
       console.error('[Embedding/DashScope-Text] 返回异常:', data);
       return null;
@@ -295,7 +304,7 @@ const EmbeddingService = {
       });
       const data = await resp.json();
       if (data.output && data.output.embeddings && data.output.embeddings[0]) {
-        return data.output.embeddings[0].embedding;
+        return this._validateVector(data.output.embeddings[0].embedding, 'DashScope-Multimodal');
       }
       console.error('[Embedding/DashScope-Multimodal] 返回异常:', data);
       return null;
@@ -423,6 +432,9 @@ async function openEmbeddingDB() {
 
 // 保存消息的 embedding
 async function saveEmbedding(id, convId, vector) {
+  if (!Array.isArray(vector) || vector.length !== EmbeddingService._expectedDimension) {
+    throw new Error(`Embedding dimension mismatch: expected ${EmbeddingService._expectedDimension}, actual ${Array.isArray(vector) ? vector.length : typeof vector}`);
+  }
   const db = await openEmbeddingDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(EMBEDDING_STORE, 'readwrite');
@@ -509,11 +521,16 @@ function cosineSimilarity(a, b) {
 // 注意：不校验 queryVector 与存储向量的维度一致性，混合维度会产生 NaN 结果
 //       （切换模型导致维度变化时的处理见 EmbeddingService._expectedDimension 注释）
 async function localVectorSearch(queryVector, topK = 10) {
+  if (!Array.isArray(queryVector) || queryVector.length !== EmbeddingService._expectedDimension) {
+    return [];
+  }
   const all = await getAllEmbeddings();
-  const scored = all.map(item => ({
-    ...item,
-    score: cosineSimilarity(queryVector, item.vector)
-  }));
+  const scored = all
+    .filter(item => Array.isArray(item.vector) && item.vector.length === queryVector.length)
+    .map(item => ({
+      ...item,
+      score: cosineSimilarity(queryVector, item.vector)
+    }));
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, topK);
 }
