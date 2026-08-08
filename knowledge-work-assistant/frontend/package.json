@@ -79,13 +79,10 @@
     },
     "extraResources": [
       {
-        "from": "../backend",
+        "from": "../backend/dist/backend",
         "to": "backend",
         "filter": [
-          "**/*",
-          "!__pycache__/**",
-          "!.venv/**",
-          "!data/**"
+          "**/*"
         ]
       }
     ]

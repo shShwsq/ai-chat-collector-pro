@@ -158,13 +158,11 @@ export function getBackendWsUrl(): string {
 /**
  * 定位后端入口（仅生产环境）。
  *
- * 当前实现：尝试两种方式（按优先级）：
- *   1. 打包产物 backend 子目录下的 ``python`` 可执行文件 + ``app`` 包
- *      （PyInstaller onedir 产物，结构 resources/backend/...）
- *   2. 兜底：调用系统 ``python -m uvicorn app.main:app``（要求目标机器已装 Python + 依赖）
- *
- * 由于本项目当前未配置 PyInstaller 打包，生产环境下默认走 uvicorn 方式。
- * 后续若引入 PyInstaller，可在此扩展可执行文件探测逻辑。
+ * 按优先级尝试两种方式：
+ *   1. PyInstaller onedir 产物 resources/backend/backend.exe
+ *      （含完整 Python 运行时与依赖，目标机器无需安装 Python）
+ *   2. 兜底：系统 python -m uvicorn app.main:app
+ *      （开发/未打包场景，要求目标机器已装 Python 3.12+ 与依赖）
  */
 interface ResolvedBackend {
   command: string
@@ -173,13 +171,19 @@ interface ResolvedBackend {
 }
 
 function resolveBackend(): ResolvedBackend | null {
-  // 兜底方案：调用系统 python + uvicorn 启动后端
-  // 要求目标机器已安装 Python 3.12+ 与项目依赖（uv sync 安装）
-  // 生产打包时建议改用 PyInstaller 单文件，避免依赖系统 Python
-  const backendDir = path.join(
-    process.resourcesPath,
-    'backend',
-  )
+  const backendDir = path.join(process.resourcesPath, 'backend')
+
+  // 优先：PyInstaller onedir 产物（含 Python 运行时 + 依赖，零额外依赖）
+  const pyiExe = path.join(backendDir, 'backend.exe')
+  if (fs.existsSync(pyiExe)) {
+    return {
+      command: pyiExe,
+      args: [],
+      cwd: backendDir,
+    }
+  }
+
+  // 兜底：系统 python + uvicorn（开发/未打包场景）
   const cwd = fs.existsSync(backendDir) ? backendDir : process.cwd()
   return {
     command: 'python',
