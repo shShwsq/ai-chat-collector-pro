@@ -1,4 +1,4 @@
-# ai-chat-collector
+# 对话回声 · 浏览器扩展（echolog extension）
 
 [中文](README-zh.md) | **English**
 

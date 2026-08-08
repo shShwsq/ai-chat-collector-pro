@@ -1,10 +1,7 @@
 """API 请求 / 响应 Pydantic schema 定义。
 
-当前为联调骨架，仅定义健康检查等最小模型；后续业务路由（会话、知识库、
-图谱等）上线时在此扩展，并与 frontend/src/lib/types.ts 一一对应。
-
-Task 2 新增图谱相关 schema：Graph / Node / Edge / Observation / Quiz 的请求与
-响应模型，供后续 Task 4（图谱管理路由）等使用。
+定义全部业务路由的请求与响应模型（健康检查、图谱、节点、延伸、测验、
+Work、插件对接、LLM 配置、数据管理等），与 frontend/src/lib/types.ts 一一对应。
 """
 
 from __future__ import annotations

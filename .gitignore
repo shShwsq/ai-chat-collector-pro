@@ -48,3 +48,6 @@ chroma/
 步影/
 
 references/
+
+# ===== TRAE IDE 项目级规划 / specs（仅本地保留，不推送）=====
+.trae/

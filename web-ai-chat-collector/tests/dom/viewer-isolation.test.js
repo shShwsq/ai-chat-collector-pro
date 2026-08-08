@@ -6,7 +6,9 @@ import path from 'node:path';
 import { loadDomAdapter, setBody } from '../helpers/load-source.js';
 
 const ROOT = process.cwd();
-const kimiHtml = fs.readFileSync(path.join(ROOT, 'references', 'improve', 'kimi_int.txt'), 'utf-8');
+// 样本已随仓库提交（tests/dom/fixtures/），不再依赖本地 gitignored 的 references/ 目录，
+// 确保 clean checkout 后测试可直接运行
+const kimiHtml = fs.readFileSync(path.join(ROOT, 'tests', 'dom', 'fixtures', 'kimi_int.txt'), 'utf-8');
 
 describe('插件 UI 预览区隔离验证', () => {
   it('Kimi 适配器不扫描 viewer 内的 KaTeX（kimi_int.txt 样本）', () => {

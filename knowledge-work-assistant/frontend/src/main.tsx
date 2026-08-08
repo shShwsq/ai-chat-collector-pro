@@ -1,13 +1,13 @@
 /**
  * 前端入口文件。
  *
- * 知识工作助手（双模式 Study/Work 知识图谱软件）的渲染进程入口。
- * 当前为联调骨架，仅挂载根组件 App；后续随业务模块（图谱视图、
- * 节点详情卡、模式切换开关等）落地，在此注入全局状态、路由、主题等。
+ * 对话回声（双模式 Study/Work 知识图谱软件）的渲染进程入口。
+ * 挂载根组件 App，注入主题与 Motion Provider（图谱视图、节点详情卡、
+ * 模式切换开关等业务模块已在 App 中装配）。
  *
  * 通信层：
  *   - lib/api.ts    — HTTP 请求（/api/* 前缀，dev 环境经 Vite 代理）
- *   - lib/ws.ts     — WebSocket（/ws 测试通道；后续扩展为流式对话等业务 WS）
+ *   - lib/ws.ts     — WebSocket（/ws：业务事件与 Agent 流式输出）
  *   - lib/types.ts  — 与后端 schemas.py 对齐的类型契约
  *   - lib/electron.d.ts — Electron preload 桥的全局类型声明
  */

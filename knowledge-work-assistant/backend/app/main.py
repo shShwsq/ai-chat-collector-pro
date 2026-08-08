@@ -1,14 +1,16 @@
 """FastAPI 应用入口。
 
-注册业务路由（health / ws）到对应前缀，配置 CORS（允许前端 Vite dev server 5174
-与 file:// 来源），启动时初始化 SQLite 数据库（含目录创建与表结构）。
+注册全部业务路由（health / auth / graphs / nodes / extensions / extraction /
+quiz / work / recommendations / stream / chat / llm_admin / data_management /
+plugin / ws）到对应前缀，配置 CORS（允许前端 Vite dev server 5174 与 file:// 来源），
+启用本地 API 鉴权中间件，启动时初始化 SQLite 数据库（含目录创建与表结构）与全局单例。
 
-端口约定：后端监听 **8788**（避免和步影 8787 冲突）。
+端口约定：后端监听 **8788**。
 - 推荐：``uv run uvicorn app.main:app --reload --port 8788``
 - 也可直接运行：``uv run python -m app.main``（使用 settings.backend_port）
 
-services 层（main_agent / knowledge_store / llm_client 等）已从步影适配拷贝，
-但当前**未接入业务路由**，仅作为后续 Study/Work 双模式与知识图谱功能的实现基础。
+services 层（main_agent / graph_agent / graph_store / llm_client 等）由前期项目骨架
+适配而来，已全部接入业务路由，承载 Study/Work 双模式与知识图谱功能。
 """
 
 import hmac
@@ -104,7 +106,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
-    title="知识工作助手后端",
+    title="对话回声 后端",
     description="双模式（Study/Work）知识图谱软件后端 - Agent + 知识库 + 图谱服务",
     version=__version__,
     lifespan=lifespan,

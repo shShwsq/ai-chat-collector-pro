@@ -7,8 +7,8 @@
  * 在非 Electron 环境（纯浏览器 dev 模式）下 window.electronAPI 为 undefined，
  * 调用方需通过可选链（window.electronAPI?.xxx）进行防御。
  *
- * 当前为联调骨架，仅暴露后端基地址查询接口；后续随业务扩展
- * （模式切换 / 图谱操作 / 文件上传等）在此补充对应 API。
+ * 暴露后端基地址查询、本地 API token 等接口；业务扩展
+ * （模式切换 / 图谱操作 / 文件上传等）所需 API 按需在此补充。
  */
 
 export {}
