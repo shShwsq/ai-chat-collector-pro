@@ -177,6 +177,7 @@ interface OnboardingWizardProps {
 export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
   const [step, setStep] = useState(0)
   const dialogRef = useRef<HTMLDivElement>(null)
+  const titleRef = useRef<HTMLHeadingElement>(null)
   const total = STEPS.length
   const current = STEPS[step]
   const isLast = step === total - 1
@@ -185,6 +186,34 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
   const setMode = useAppStore((s) => s.setMode)
   const llmReady = useAppStore((s) => s.llmConfig?.ready === true)
   const setActiveNav = useAppStore((s) => s.setActiveNav)
+
+  // LLM 步骤根据实际配置状态切换文案
+  const llmDisplay = useMemo(() => {
+    if (!llmReady) {
+      return {
+        subtitle: '未配置也能浏览和手工整理图谱',
+        description:
+          '节点延伸、对话抽取、测验和报告需要连接兼容 OpenAI 接口的模型服务。密钥只保存在本地设置中，不会在页面中明文回显。',
+        points: [
+          { title: '需要填写三项', detail: 'Base URL、Model 和 API Key，缺一项都无法调用模型。' },
+          { title: '先测试连接', detail: '保存前可以验证地址、模型和密钥是否可用。' },
+          { title: '暂时没有也没关系', detail: '可以先创建图谱、手工添加内容，之后再配置。' },
+        ],
+        outcome: '准备好了就进入应用；你也可以直接前往设置完成配置。',
+      }
+    }
+    return {
+      subtitle: 'AI 能力已就绪，可以直接使用',
+      description:
+        '节点延伸、对话抽取、测验和报告都可以直接使用，密钥仅保存在本地，不会在页面中明文回显。',
+      points: [
+        { title: '模型服务已连接', detail: '可以直接使用抽取、延伸、测验和报告等 AI 功能。' },
+        { title: '密钥安全存储', detail: 'API Key 仅保存在本地设置中，页面不会回显完整密钥。' },
+        { title: '随时可调整', detail: '如需更换模型或修改配置，可随时前往设置页。' },
+      ],
+      outcome: 'AI 已准备好，进入应用即可开始使用。',
+    }
+  }, [llmReady])
 
   const goNext = useCallback(() => {
     if (isLast) {
@@ -210,6 +239,11 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
     onFinish()
     setActiveNav('settings')
   }, [onFinish, setActiveNav])
+
+  // 步骤切换后将焦点移回标题，方便屏幕阅读器感知内容变化
+  useEffect(() => {
+    titleRef.current?.focus()
+  }, [step])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -305,15 +339,21 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
             transition={{ duration: 0.28, ease: [0.4, 0, 0.2, 1] }}
           >
             <div className="onboarding__graphic">
-              <OnboardingGraphic kind={current.graphic} />
+              <OnboardingGraphic kind={current.graphic} mode={mode} />
             </div>
             <div className="onboarding__text">
               <p className="onboarding__eyebrow">
                 第 {step + 1} 步，共 {total} 步
               </p>
-              <p className="onboarding__subtitle">{current.subtitle}</p>
-              <h2 className="onboarding__title">{current.title}</h2>
-              <p className="onboarding__desc">{current.description}</p>
+              <p className="onboarding__subtitle">
+                {current.id === 'llm' ? llmDisplay.subtitle : current.subtitle}
+              </p>
+              <h2 ref={titleRef} className="onboarding__title" tabIndex={-1}>
+                {current.title}
+              </h2>
+              <p className="onboarding__desc">
+                {current.id === 'llm' ? llmDisplay.description : current.description}
+              </p>
               {current.id === 'modes' && (
                 <div className="onboarding__mode-picker" aria-label="选择开始使用的模式">
                   <button
@@ -350,7 +390,7 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
                 </div>
               )}
               <div className="onboarding__points">
-                {current.points.map((point, index) => (
+                {(current.id === 'llm' ? llmDisplay.points : current.points).map((point, index) => (
                   <div key={point.title} className="onboarding__point">
                     <span className="onboarding__point-index" aria-hidden="true">
                       {index + 1}
@@ -364,7 +404,7 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
               </div>
               <div className="onboarding__outcome">
                 <span className="onboarding__outcome-label">记住这一点</span>
-                <span>{current.outcome}</span>
+                <span>{current.id === 'llm' ? llmDisplay.outcome : current.outcome}</span>
               </div>
             </div>
           </motion.div>
@@ -407,7 +447,6 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
             className="onboarding__btn onboarding__btn--primary"
             onClick={goNext}
             title={isLast ? '开始使用（Enter）' : '下一步（Enter / →）'}
-            autoFocus
           >
             {current.primaryLabel ?? (isLast ? '开始使用' : '下一步')}
           </button>
@@ -428,12 +467,12 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
 
 type GraphicKind = StepDef['graphic']
 
-function OnboardingGraphic({ kind }: { kind: GraphicKind }) {
+function OnboardingGraphic({ kind, mode }: { kind: GraphicKind; mode: 'study' | 'work' }) {
   switch (kind) {
     case 'welcome':
       return <WelcomeGraphic />
     case 'modes':
-      return <ModesGraphic />
+      return <ModesGraphic mode={mode} />
     case 'graph':
       return <GraphGraphic />
     case 'extract':
@@ -476,20 +515,31 @@ function WelcomeGraphic() {
   )
 }
 
-function ModesGraphic() {
+function ModesGraphic({ mode }: { mode: 'study' | 'work' }) {
+  const isStudy = mode === 'study'
   return (
     <BadgeBase>
       <svg width="140" height="80" viewBox="0 0 140 80" fill="none" aria-hidden="true">
-        {/* 胶囊开关 */}
+        {/* 胶囊开关背景 */}
         <rect x="10" y="20" width="120" height="40" rx="20" fill="var(--kwa-paper-200)" stroke="var(--kwa-border-200)" />
+        {/* 指示器滑块：先绘制，文字与圆点在其上方 */}
+        <rect
+          className={`ob-mode-slider${isStudy ? ' is-study' : ' is-work'}`}
+          x="18"
+          y="24"
+          width="48"
+          height="32"
+          rx="16"
+          fill="var(--kwa-paper-50)"
+          stroke="var(--kwa-border-300)"
+          strokeWidth="1.5"
+        />
         {/* 学习侧 */}
-        <circle cx="30" cy="40" r="6" fill="var(--kwa-cyan-500)" />
-        <text x="44" y="44" fontSize="11" fill="var(--kwa-ink-700)" fontFamily="var(--font-mono)">学习</text>
+        <circle cx="30" cy="40" r="6" fill={isStudy ? 'var(--kwa-cyan-500)' : 'var(--kwa-text-400)'} />
+        <text x="44" y="44" fontSize="11" fill={isStudy ? 'var(--kwa-ink-700)' : 'var(--kwa-text-400)'} fontFamily="var(--font-mono)">学习</text>
         {/* 工作侧 */}
-        <text x="78" y="44" fontSize="11" fill="var(--kwa-text-400)" fontFamily="var(--font-mono)">工作</text>
-        <circle cx="115" cy="40" r="6" fill="var(--kwa-amber-500)" />
-        {/* 指示器滑块 */}
-        <rect x="18" y="24" width="48" height="32" rx="16" fill="var(--kwa-paper-50)" stroke="var(--kwa-border-300)" strokeWidth="1.5" />
+        <text x="78" y="44" fontSize="11" fill={isStudy ? 'var(--kwa-text-400)' : 'var(--kwa-ink-700)'} fontFamily="var(--font-mono)">工作</text>
+        <circle cx="115" cy="40" r="6" fill={isStudy ? 'var(--kwa-text-400)' : 'var(--kwa-amber-500)'} />
       </svg>
     </BadgeBase>
   )

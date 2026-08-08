@@ -10424,6 +10424,10 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
   letter-spacing: -0.035em;
 }
 
+.onboarding__title:focus {
+  outline: none;
+}
+
 .onboarding__desc {
   max-width: 610px;
   margin: 0;
@@ -10625,6 +10629,14 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
   align-items: center;
   justify-content: center;
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.ob-mode-slider {
+  transition: transform 320ms var(--ease, ease);
+}
+
+.ob-mode-slider.is-work {
+  transform: translateX(46px);
 }
 
 .onboarding__footer {
