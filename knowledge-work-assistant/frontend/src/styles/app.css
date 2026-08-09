@@ -1727,10 +1727,11 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-secondary);
-  /* 改为 button 后需要重置按钮默认样式 */
-  padding: 4px 10px;
+  /* 改为 button 后需要重置按钮默认样式；纵向 padding/font-size 与
+     .app-header__btn 对齐，保证两者在 header 中等高 */
+  padding: 6px 10px;
   font-family: inherit;
   background: var(--surface);
   border: 1px solid var(--border);
