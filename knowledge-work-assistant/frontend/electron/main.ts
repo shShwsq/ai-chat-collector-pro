@@ -1,6 +1,11 @@
-import { app, BrowserWindow, shell, ipcMain } from 'electron'
+import { app, BrowserWindow, shell, ipcMain, Menu, dialog } from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
+
+// 帮助文档 / 问题反馈 / 版本更新对应的在线地址。
+const HELP_DOC_URL = 'https://github.com/shShwsq/ai-chat-collector-pro/blob/main/knowledge-work-assistant/README.md'
+const REPORT_ISSUE_URL = 'https://github.com/shShwsq/ai-chat-collector-pro/issues'
+const RELEASES_URL = 'https://github.com/shShwsq/ai-chat-collector-pro/releases'
 
 // 后端进程启动器：生产环境 spawn 后端并健康检查；开发环境跳过（开发者手动启动）
 import { startBackendAndWait, stopBackend, getBackendBaseUrl, getBackendWsUrl, getBackendApiToken } from './launcher'
@@ -13,6 +18,110 @@ const WINDOW_WIDTH = 1280
 const WINDOW_HEIGHT = 820
 
 let mainWindow: BrowserWindow | null = null
+
+/**
+ * 构建极简中文应用菜单。
+ *
+ * 仅保留「文件 / 帮助」两个顶层菜单：
+ * - 文件：退出
+ * - 帮助：帮助文档（在线 README）、报告问题、检查更新、关于 对话回声
+ *
+ * 不再暴露 Reload / Force Reload / Toggle Developer Tools / New Window 等
+ * 开发者向选项，避免最终用户误触并降低安全暴露面。开发环境仍可使用快捷键
+ * 打开 DevTools（见 blockDevShortcuts 中的 isDev 分支）。
+ */
+function buildApplicationMenu(): void {
+  const isMac = process.platform === 'darwin'
+
+  const template: Electron.MenuItemConstructorOptions[] = [
+    {
+      label: '文件',
+      submenu: [
+        isMac
+          ? { role: 'close', label: '关闭窗口' }
+          : { role: 'quit', label: '退出', accelerator: 'Ctrl+Q' },
+      ],
+    },
+    {
+      label: '帮助',
+      submenu: [
+        {
+          label: '帮助文档',
+          click: () => shell.openExternal(HELP_DOC_URL),
+        },
+        {
+          label: '报告问题',
+          click: () => shell.openExternal(REPORT_ISSUE_URL),
+        },
+        {
+          label: '检查更新',
+          click: () => shell.openExternal(RELEASES_URL),
+        },
+        { type: 'separator' },
+        {
+          label: `关于 ${app.getName()}`,
+          click: () => showAboutDialog(),
+        },
+      ],
+    },
+  ]
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
+
+/**
+ * 弹出原生「关于」对话框，显示应用名 / 版本 / 简介 / 仓库链接。
+ */
+function showAboutDialog(): void {
+  void dialog.showMessageBox({
+    type: 'info',
+    title: `关于 ${app.getName()}`,
+    message: app.getName(),
+    detail: [
+      `版本：${app.getVersion()}`,
+      '',
+      '双模式（Study / Work）知识图谱桌面软件。',
+      '接收浏览器插件采集的 AI 对话，由 Agent 自动抽取知识点并沉淀为可问答、可测验、可辅助工作的知识图谱。',
+      '',
+      `仓库：${RELEASES_URL.replace('/releases', '')}`,
+    ].join('\n'),
+    buttons: ['确定'],
+    noLink: true,
+  })
+}
+
+/**
+ * 屏蔽渲染进程中的开发者向快捷键（生产环境）。
+ *
+ * 通过 webContents 的 before-input-event 拦截：F12、Ctrl+Shift+I/J/C、
+ * Ctrl+R / Ctrl+Shift+R（刷新 / 强制刷新）。开发环境保留全部快捷键以便调试。
+ */
+function blockDevShortcuts(window: BrowserWindow): void {
+  if (isDev) return
+
+  window.webContents.on('before-input-event', (_event, input) => {
+    if (input.type !== 'keyDown') return
+    const { key, control, shift, alt } = input
+
+    // F12：切换 DevTools
+    if (key === 'F12') {
+      _event.preventDefault()
+      return
+    }
+
+    // Ctrl+Shift+I / Ctrl+Shift+J / Ctrl+Shift+C：DevTools / 控制台 / 检查元素
+    if (control && shift && ['I', 'J', 'C'].includes(key.toUpperCase())) {
+      _event.preventDefault()
+      return
+    }
+
+    // Ctrl+R / Ctrl+Shift+R：刷新 / 强制刷新（避免误触清空会话状态）
+    if (control && !alt && (key === 'r' || key === 'R')) {
+      _event.preventDefault()
+      return
+    }
+  })
+}
 
 /**
  * 创建主窗口。
@@ -51,6 +160,9 @@ function createWindow(): void {
   mainWindow.webContents.on('did-finish-load', () => {
     console.log('[main] 页面加载完成')
   })
+
+  // 生产环境屏蔽开发者向快捷键（F12 / Ctrl+Shift+I / Ctrl+R 等）。
+  blockDevShortcuts(mainWindow)
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show()
@@ -100,6 +212,9 @@ function registerIpcHandlers(): void {
 
 app.whenReady().then(async () => {
   registerIpcHandlers()
+
+  // 设置极简中文应用菜单（文件 / 帮助），覆盖 Electron 默认菜单。
+  buildApplicationMenu()
 
   // 启动后端进程（生产环境 spawn uvicorn 子进程 + 健康检查；开发环境跳过）。
   // 异步执行不阻塞窗口创建：窗口立即显示，后端就绪后前端自动连接。
