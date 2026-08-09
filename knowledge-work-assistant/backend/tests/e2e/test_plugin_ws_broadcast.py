@@ -63,11 +63,11 @@ _LOCAL_HEADERS = {"X-Local-API-Token": settings.local_api_token}
 
 def _make_full_conversation_payload(
     *,
-    platform: str = "chatgpt",
+    platform: str = "deepseek",
     conversation_id: str = "conv-ws-full-001",
     title: str = "知识图谱与 RAG 检索增强生成",
-    model: str = "gpt-4o-mini",
-    url: str = "https://chat.openai.com/c/abc123",
+    model: str = "deepseek-chat",
+    url: str = "https://chat.deepseek.com/c/abc123",
     timestamp: str = "2025-01-01T12:00:00+08:00",
     conversation_markdown: str | None = None,
 ) -> dict[str, Any]:
@@ -77,7 +77,7 @@ def _make_full_conversation_payload(
     助手回答，覆盖知识图谱与 RAG 主题，作为 Agent 抽取知识点的源材料。
 
     Args:
-        platform: 来源平台，默认 chatgpt。
+        platform: 来源平台，默认 deepseek。
         conversation_id: 对话唯一 ID（用于幂等去重）。
         title: 对话标题。
         model: 模型名。
@@ -198,7 +198,7 @@ class TestPluginWsBroadcast:
                 assert broadcast_payload["observation_id"] == obs_id, (
                     "广播 payload.observation_id 应与 HTTP 响应一致"
                 )
-                assert broadcast_payload["platform"] == "chatgpt"
+                assert broadcast_payload["platform"] == "deepseek"
                 assert broadcast_payload["title"] == "WS 广播测试对话"
                 assert broadcast_payload["updated"] is False
                 # timestamp 为 ISO8601 字符串

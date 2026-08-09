@@ -404,7 +404,7 @@ class Observation(Base):
     __tablename__ = "observations"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    # 来源平台：chatgpt / claude / gemini / manual / import 等
+    # 来源平台：deepseek / qwen / doubao / kimi / yuanbao / wenxin（插件）或 manual / import
     platform: Mapped[str] = mapped_column(String(32), default="manual", index=True)
     # 对话发生时间（来自插件推送，可空）
     occurred_at: Mapped[datetime | None] = mapped_column(nullable=True, index=True)

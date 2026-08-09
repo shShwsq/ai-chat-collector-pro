@@ -1547,7 +1547,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const resp = await sendMessage({ type: 'LOCAL_APP_TEST' });
       if (resp && resp.success) {
-        const platforms = (resp.supported_platforms || []).join(', ');
+        // 后端返回的是原始平台 ID，转成中文友好名称展示
+        // 与后端 SUPPORTED_PLATFORMS 白名单（插件实际采集的 6 家）对齐
+        const PLATFORM_LABELS = {
+          deepseek: 'DeepSeek',
+          qwen: '通义千问',
+          doubao: '豆包',
+          kimi: 'Kimi',
+          yuanbao: '腾讯元宝',
+          wenxin: '百度文心'
+        };
+        const platforms = (resp.supported_platforms || [])
+          .map(id => PLATFORM_LABELS[id] || id)
+          .join('、');
         showToast(`连通性测试成功！耗时 ${resp.latency}ms；版本 ${resp.version}；支持平台: ${platforms}；队列 ${resp.queue_size}`);
       } else {
         showToast(`连通性测试失败: ${resp?.error || '未知错误'}（请确认本地软件已启动）`, true);
