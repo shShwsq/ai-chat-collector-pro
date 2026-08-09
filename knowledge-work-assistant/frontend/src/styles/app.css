@@ -1729,6 +1729,34 @@
   gap: 6px;
   font-size: 12px;
   color: var(--text-secondary);
+  /* 改为 button 后需要重置按钮默认样式 */
+  padding: 4px 10px;
+  font-family: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.health-badge:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--text-tertiary);
+  color: var(--text);
+}
+
+.health-badge:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.health-badge--refreshing .health-badge__dot {
+  animation: health-badge-pulse 0.9s var(--ease, ease-in-out) infinite;
+}
+
+@keyframes health-badge-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(0.6); opacity: 0.5; }
 }
 
 .health-badge__dot {
@@ -1747,6 +1775,56 @@
 .health-badge--error .health-badge__dot {
   background: var(--kwa-magenta-500);
   box-shadow: 0 0 0 3px rgba(255, 45, 111, 0.16);
+}
+
+/* --- 后端未连接提示条（与 llm-warning-bar 同构，色调用 magenta 区分） --- */
+.backend-warning-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 24px;
+  background: linear-gradient(90deg, rgba(255, 45, 111, 0.08), rgba(255, 45, 111, 0.14));
+  border-bottom: 1px solid rgba(255, 45, 111, 0.3);
+  color: var(--kwa-magenta-500, #ff2d6f);
+  font-size: 13px;
+  line-height: 1.4;
+  z-index: 9;
+}
+
+.backend-warning-bar__icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.backend-warning-bar__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.backend-warning-bar__btn {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-body);
+  color: var(--kwa-magenta-500, #ff2d6f);
+  background: rgba(255, 45, 111, 0.16);
+  border: 1px solid rgba(255, 45, 111, 0.4);
+  border-radius: var(--radius-sm, 6px);
+  cursor: pointer;
+  transition: all var(--transition-fast, 150ms ease);
+  white-space: nowrap;
+}
+
+.backend-warning-bar__btn:hover:not(:disabled) {
+  background: rgba(255, 45, 111, 0.28);
+  border-color: rgba(255, 45, 111, 0.6);
+}
+
+.backend-warning-bar__btn:disabled {
+  cursor: progress;
+  opacity: 0.6;
 }
 
 /* ============================================================================
