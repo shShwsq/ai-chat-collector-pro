@@ -36,6 +36,7 @@ import type {
 } from '../lib/types'
 import { ChatHome } from './ChatHome'
 import { ConfirmDialog } from './graph/ConfirmDialog'
+import { GraphSelector } from './GraphSelector'
 import { ToolConfirmDialog } from './ToolConfirmDialog'
 
 export function ChatPanel() {
@@ -242,6 +243,7 @@ function ChatConversationView() {
 
       {/* 底部输入区：长方形输入框 + 左下角+按钮 + 右下角发送 + Plan/Go 切换 */}
       <footer className="chat-input-bar">
+        <GraphSelector />
         <div className="chat-input-bar__inner">
           <textarea
             ref={textareaRef}

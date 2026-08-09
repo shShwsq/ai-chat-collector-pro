@@ -28,6 +28,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import { useAutoGrowTextarea } from '../hooks/useAutoGrowTextarea'
 import type { RecommendationItem } from '../lib/types'
+import { GraphSelector } from './GraphSelector'
 import { RecommendationCard } from './RecommendationCard'
 import { ReminderBanner } from './ReminderBanner'
 
@@ -215,6 +216,7 @@ export function ChatHome({ mode, onAsk }: ChatHomeProps) {
 
       {/* 对话输入框（sticky 固定在视口中央偏下，瀑布流卡片从下方滑上覆盖） */}
       <div className="chat-home__input-wrap" ref={inputWrapRef}>
+        <GraphSelector />
         <div className="chat-home__input-row">
           <textarea
             ref={textareaRef}
