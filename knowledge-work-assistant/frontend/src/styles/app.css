@@ -8536,7 +8536,7 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
 }
 
 /* ============================================================================
- * 图谱选择下拉框（ChatHome / ChatConversationView 输入框正上方共享组件）
+ * 图谱选择 combobox（ChatHome / ChatConversationView 输入框正上方共享组件）
  * ============================================================================ */
 .graph-selector {
   display: flex;
@@ -8554,11 +8554,16 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
   letter-spacing: 0.02em;
 }
 
-.graph-selector__select {
+.graph-selector__combobox {
+  position: relative;
   flex: 1;
   min-width: 0;
   max-width: 320px;
-  padding: 6px 10px;
+}
+
+.graph-selector__input {
+  width: 100%;
+  padding: 6px 28px 6px 10px;
   font-size: 13px;
   font-family: inherit;
   color: var(--text);
@@ -8566,22 +8571,140 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   outline: none;
-  cursor: pointer;
-  transition: border-color var(--transition-fast);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  box-sizing: border-box;
 }
 
-.graph-selector__select:hover:not(:disabled) {
+.graph-selector__input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.graph-selector__input:hover:not(:disabled) {
   border-color: var(--accent);
 }
 
-.graph-selector__select:focus {
+.graph-selector__input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
 }
 
-.graph-selector__select:disabled {
+.graph-selector__input:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.graph-selector__toggle {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.graph-selector__toggle:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--border);
+}
+
+.graph-selector__toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.graph-selector__toggle-icon {
+  display: inline-block;
+  font-size: 12px;
+  line-height: 1;
+  transition: transform var(--transition-fast);
+}
+
+.graph-selector__toggle-icon.is-open {
+  transform: rotate(180deg);
+}
+
+.graph-selector--open {
+  /* 展开态可在此叠加容器级样式（如提升 z-index 层级） */
+  position: relative;
+  z-index: 5;
+}
+
+.graph-selector__list {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  width: 100%;
+  max-width: 320px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: 10;
+  /* 避免 ChatHome 输入框 blur 滤镜影响下拉列表可见性 */
+  backdrop-filter: none;
+}
+
+.graph-selector__option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
+  user-select: none;
+}
+
+.graph-selector__option:hover,
+.graph-selector__option.is-active {
+  background: var(--border);
+}
+
+.graph-selector__option.is-active {
+  color: var(--accent);
+}
+
+.graph-selector__option-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graph-selector__option-mark {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.graph-selector__option.is-selected {
+  font-weight: 500;
+}
+
+.graph-selector__empty-item {
+  padding: 8px 10px;
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+  text-align: center;
+  user-select: none;
 }
 
 .graph-selector--empty {
