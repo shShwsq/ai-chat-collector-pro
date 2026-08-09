@@ -27,7 +27,13 @@ function _isTrustedSender(sender) {
 }
 
 function _isExtensionPageSender(sender) {
-  if (!_isTrustedSender(sender) || sender.tab) return false;
+  // 只校验来源 URL 属于本扩展 origin：
+  //   - 扩展页面（popup 弹窗 / 通过 tabs.create 打开的标签页）sender.url 均为 chrome-extension://<id>/popup/...，通过
+  //   - content script 的 sender.url 是其注入的第三方网页 URL，不以 extensionOrigin 开头，被拒绝
+  //   - 其他扩展的 sender.id 不匹配 _isTrustedSender，已被排除
+  // 注意：不能用 sender.tab 排除——通过 tabs.create 打开的扩展页面同样有 sender.tab，
+  //       否则会导致悬浮球「设置」打开的新标签页无法读取/保存配置（GET_SETTINGS 等被误拒）。
+  if (!_isTrustedSender(sender)) return false;
   const extensionOrigin = `${chrome.runtime.getURL('')}`;
   return typeof sender.url === 'string' && sender.url.startsWith(extensionOrigin);
 }
