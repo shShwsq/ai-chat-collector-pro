@@ -156,12 +156,20 @@ jobs:
 
   # ──────────────────────────────────────────────────────────────────────────
   # 2. 桌面应用：PyInstaller 打包 backend → pnpm dist → electron-builder 产出
-  #    Windows NSIS 安装包。extraResources 把 PyInstaller onedir 产物（含 Python
-  #    运行时与依赖）带入安装包，目标机器无需安装 Python。
+  #    Windows NSIS 安装包 / macOS dmg。extraResources 把 PyInstaller onedir 产物
+  #    （含 Python 运行时与依赖）带入安装包，目标机器无需安装 Python。
   # ──────────────────────────────────────────────────────────────────────────
   build-app:
-    name: Package desktop app (Windows)
-    runs-on: windows-latest
+    name: Package desktop app (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: echolog-desktop-windows
+          - os: macos-latest
+            artifact: echolog-desktop-macos
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: knowledge-work-assistant/frontend
@@ -195,20 +203,27 @@ jobs:
         working-directory: knowledge-work-assistant/backend
         run: uv run --with pyinstaller pyinstaller backend.spec --noconfirm --clean
 
-      - name: Verify backend.exe built
+      - name: Verify backend binary built
         working-directory: knowledge-work-assistant/backend
         shell: bash
-        run: test -f dist/backend/backend.exe && echo "backend.exe OK"
+        run: |
+          # Windows: backend.exe；macOS: backend（console=True 产出普通可执行文件，非 .app）
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            test -f dist/backend/backend.exe && echo "backend.exe OK"
+          else
+            test -f dist/backend/backend && echo "backend OK"
+          fi
 
       # ===== 前端打包（electron-builder，extraResources 指向 ../backend/dist/backend）=====
       - run: pnpm install --frozen-lockfile
 
-      # build:frontend（tsc + vite build）→ build:electron（tsc）→ electron-builder --win
+      # build:frontend（tsc + vite build）→ build:electron（tsc）→ electron-builder
+      # 不带 --win/--mac：按宿主平台构建（Windows→NSIS，macOS→dmg）
       - run: pnpm dist
 
       - uses: actions/upload-artifact@v4
         with:
-          name: echolog-desktop-windows
+          name: ${{ matrix.artifact }}
           path: knowledge-work-assistant/frontend/release/*
           if-no-files-found: error
 
@@ -233,4 +248,5 @@ jobs:
           files: |
             artifacts/**/*.zip
             artifacts/**/*.exe
+            artifacts/**/*.dmg
             artifacts/**/*.yml

@@ -158,7 +158,8 @@ export function getBackendWsUrl(): string {
  * 定位后端入口（仅生产环境）。
  *
  * 按优先级尝试两种方式：
- *   1. PyInstaller onedir 产物 resources/backend/backend.exe
+ *   1. PyInstaller onedir 产物 resources/backend/backend.exe（Windows）
+ *      或 resources/backend/backend（macOS/Linux）
  *      （含完整 Python 运行时与依赖，目标机器无需安装 Python）
  *   2. 兜底：系统 python -m uvicorn app.main:app
  *      （开发/未打包场景，要求目标机器已装 Python 3.12+ 与依赖）
@@ -173,7 +174,9 @@ function resolveBackend(): ResolvedBackend | null {
   const backendDir = path.join(process.resourcesPath, 'backend')
 
   // 优先：PyInstaller onedir 产物（含 Python 运行时 + 依赖，零额外依赖）
-  const pyiExe = path.join(backendDir, 'backend.exe')
+  // Windows: backend.exe；macOS/Linux: backend（PyInstaller console=True 产出普通可执行文件）
+  const backendExeName = process.platform === 'win32' ? 'backend.exe' : 'backend'
+  const pyiExe = path.join(backendDir, backendExeName)
   if (fs.existsSync(pyiExe)) {
     return {
       command: pyiExe,
@@ -183,9 +186,10 @@ function resolveBackend(): ResolvedBackend | null {
   }
 
   // 兜底：系统 python + uvicorn（开发/未打包场景）
+  // Windows 用 python（python launcher）；macOS/Linux 用 python3（系统自带 / Homebrew）
   const cwd = fs.existsSync(backendDir) ? backendDir : process.cwd()
   return {
-    command: 'python',
+    command: process.platform === 'win32' ? 'python' : 'python3',
     args: ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(DEFAULT_BACKEND_PORT)],
     cwd,
   }

@@ -11,7 +11,7 @@
     "build": "tsc && vite build",
     "build:frontend": "tsc && vite build",
     "build:electron": "tsc -p electron/tsconfig.json",
-    "dist": "npm run build:frontend && npm run build:electron && electron-builder --win",
+    "dist": "npm run build:frontend && npm run build:electron && electron-builder",
     "lint": "eslint . --ext .ts,.tsx",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -64,6 +64,15 @@
       "target": [
         "nsis"
       ]
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64"]
+        }
+      ],
+      "category": "public.app-category.productivity"
     },
     "nsis": {
       "oneClick": false,

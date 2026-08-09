@@ -19,8 +19,14 @@ electron-builder extraResources 带入安装包，launcher.ts 探测 ``backend.e
   collect_all 的结果须作为 Analysis 的 datas/binaries 参数传入（让 Analysis 规范化
   2元组→3元组、展开目录），切勿在 Analysis 之后 a.datas += 绕过规范化。
 - excludes：剔除测试/dev 依赖与无关标准库，减小体积。
-- console=False：windowed 模式，不弹控制台黑窗；launcher 以 stdio pipe 捕获日志。
+- console：Windows 用 False（windowed 模式，不弹控制台黑窗）；macOS 用 True，
+  产出普通 Unix 可执行文件 ``backend`` 而非 ``backend.app`` bundle——保持与
+  Windows 相同的 onedir 目录结构（``backend`` + ``_internal/``），launcher 可
+  统一以「目录 + 平台文件名」定位。macOS 下 Electron spawn 子进程不分配终端，
+  console=True 不会弹出终端窗口。
 """
+import sys
+
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 # 含编译型扩展 / 动态加载资源的包：collect_submodules 只收 .py 模块名，必须再用
@@ -80,7 +86,8 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=False,
+    # Windows: windowed 模式不弹黑窗；macOS: True 产出普通可执行文件（非 .app）。
+    console=(sys.platform == 'darwin'),
     disable_windowed_traceback=False,
     target_arch=None,
     codesign_identity=None,
