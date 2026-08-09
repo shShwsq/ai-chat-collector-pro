@@ -464,6 +464,8 @@ class MainAgent:
         # chat_stream 完成事件：供 cancel_and_wait 等待退出
         self._chat_done = asyncio.Event()
         self._chat_done.set()  # 初始：未在 chat
+        # 后台标题生成任务引用集合：防止 Task 被 GC 回收导致"Task was destroyed"警告
+        self._title_tasks: set[asyncio.Task] = set()
 
     # ==================================================================
     # 公开方法
@@ -801,14 +803,63 @@ class MainAgent:
                     created_at=now,
                 )
             )
-            # 首条用户消息：用截断后的文本作为新标题（最长 40 字符）
+            # 首条用户消息：先用截断文本作兜底标题，再后台用 LLM 生成精炼标题
             if not existing_user:
                 stripped = user_text.strip().replace("\n", " ")
                 if stripped:
                     session.title = stripped[:40] + ("…" if len(stripped) > 40 else "")
+                    task = asyncio.create_task(
+                        self._generate_session_title(user_text)
+                    )
+                    self._title_tasks.add(task)
+                    task.add_done_callback(self._title_tasks.discard)
             session.updated_at = now
             await db.commit()
         return True
+
+    async def _generate_session_title(self, first_user_text: str) -> None:
+        """用 LLM 基于首条用户消息生成精炼会话标题（≤20 字）。
+
+        异步后台执行，不阻塞对话主流程。任何失败（LLM 不可用 / 超时 /
+        产出为空）都静默降级，保留 :meth:`_save_user_message` 中设置的
+        截断兜底标题。
+        """
+        text = first_user_text.strip()
+        if not text:
+            return
+        try:
+            result = await self.llm_client.chat(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "你是对话标题生成器。根据用户的第一句话，生成一个"
+                            "简洁的中文会话标题，不超过 20 个字，用于会话列表展示。"
+                            "要求：只输出标题本身，不要引号、标点、编号、emoji 或解释。"
+                        ),
+                    },
+                    {"role": "user", "content": text},
+                ],
+                temperature=0.2,
+            )
+        except Exception as exc:  # noqa: BLE001 - 标题生成失败不影响主流程
+            logger.warning(
+                "LLM 生成会话标题失败 session=%s: %s", self.session_id, exc
+            )
+            return
+        raw_title = (result.get("content") or "").strip()
+        raw_title = raw_title.strip("\"'“”「」")
+        title = re.sub(r"[\r\n]+", " ", raw_title).strip()
+        if not title:
+            return
+        title = title[:20]
+        async with AsyncSessionLocal() as db:
+            session = await db.get(SessionRow, self.session_id)
+            if session is None:
+                return
+            session.title = title
+            session.updated_at = _now()
+            await db.commit()
 
     async def _save_assistant_message(
         self,

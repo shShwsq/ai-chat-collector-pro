@@ -767,7 +767,8 @@ class GraphStore:
 
         Args:
             conversation_markdown: 对话原文 Markdown。
-            platform: 来源平台（deepseek / qwen / doubao / kimi / yuanbao / wenxin / manual / import）。
+            platform: 来源平台（deepseek / qwen / doubao / kimi / yuanbao /
+                wenxin / manual / import）。
             source: 来源标记（plugin / import / manual）。
             occurred_at: 对话发生时间（可空）。
             metadata: 附加元数据。
