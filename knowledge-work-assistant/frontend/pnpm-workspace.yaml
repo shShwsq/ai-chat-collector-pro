@@ -1,0 +1,6 @@
+# pnpm 10+ 不再读 package.json 的 pnpm 字段，改读此文件。
+# electron / esbuild 需跑 postinstall（下载/编译 native 二进制），必须显式批准。
+# package.json 的 pnpm.onlyBuiltDependencies 保留供 CI 的 pnpm 9 读取，两版本兼容。
+onlyBuiltDependencies:
+  - electron
+  - esbuild
