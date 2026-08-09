@@ -225,6 +225,41 @@ jobs:
       # 不带 --win/--mac：按宿主平台构建（Windows→NSIS，macOS→dmg）
       - run: pnpm dist
 
+      # macOS arm64 要求 .app bundle 内所有 Mach-O 可执行文件都有签名（哪怕是 ad-hoc）。
+      # 但 electron-builder 不会递归签名 extraResources 里的可执行文件，而 PyInstaller 打包
+      # 的 backend（backend.spec 里 codesign_identity=None）及其依赖的 .dylib/.so 全部未签名，
+      # 导致整个 .app 的签名索引（CodeResources）与实际文件不一致 → Gatekeeper 在 arm64 上
+      # 直接弹「移到废纸篓」，codesign -vvv 报 "code has no resources but signature indicates
+      # they must be present"。
+      # 修复：electron-builder 完成后，先逐个签名内嵌可执行文件与动态库，再 --deep 签名整个 bundle。
+      - name: Ad-hoc sign all Mach-O binaries (macOS arm64 requirement)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="release/mac-arm64/对话回声.app"
+          test -d "$APP" || { echo "::error::$APP not found"; exit 1; }
+
+          # 1. 先签名所有内嵌可执行文件与动态库（PyInstaller backend + cryptography/pydantic_core/lxml 的 .dylib/.so）
+          #    -perm +111 匹配可执行权限位的文件；扩展名匹配动态库。
+          #    必须在 --deep 之前逐个签名，否则 --deep 会因发现未签名子二进制而生成不一致的 CodeResources。
+          echo "Signing embedded Mach-O binaries..."
+          find "$APP" -type f \( -name '*.dylib' -o -name '*.so' -o -perm +111 \) -print0 |
+            while IFS= read -r -d '' f; do
+              # 跳过明显的非 Mach-O 文件（文本脚本、JSON、证书等），避免 codesign 报错中断流程
+              if file "$f" | grep -q 'Mach-O'; then
+                codesign --force --sign - "$f"
+              fi
+            done
+
+          # 2. --deep 签名整个 .app bundle，生成一致的 CodeResources 索引
+          echo "Signing .app bundle..."
+          codesign --force --deep --sign - "$APP"
+
+          # 3. 验证签名完整性（失败则中止上传，避免发出坏签名的 dmg）
+          echo "Verifying signature..."
+          codesign -vvv --deep --strict "$APP"
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
