@@ -6,8 +6,8 @@ import react from '@vitejs/plugin-react'
 const BACKEND_DIR = fileURLToPath(new URL('../backend', import.meta.url))
 
 // Vite 配置：base 使用相对路径，便于 Electron 通过 file:// 加载打包产物；
-// 开发服务器将 /api 与 /ws 代理至本地 FastAPI 后端（端口 8788，避免和步影 8787 冲突）。
-// 前端 dev server 监听 5174（避免和步影 5173 冲突）。
+// 开发服务器将 /api 与 /ws 代理至本地 FastAPI 后端（端口 8788）。
+// 前端 dev server 监听 5174。
 //
 // 本地鉴权 token 统一来源：读取 backend/.env 的 LOCAL_API_TOKEN，经 define 注入
 // 渲染进程的 import.meta.env.VITE_LOCAL_API_TOKEN（纯浏览器 dev 场景使用；

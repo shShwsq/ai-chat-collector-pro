@@ -8,23 +8,41 @@ electron-builder extraResources 带入安装包，launcher.ts 探测 ``backend.e
 - onedir（非 onefile）：启动快，适合常驻服务，避免每次启动解压临时目录。
 - 入口 run_pyi.py：直接传 app 对象给 uvicorn.run，避免字符串导入在 frozen 环境失败。
 - hiddenimports：app 包 + uvicorn/pydantic/fastapi/starlette 子模块（动态导入）。
-- aiosqlite/greenlet：sqlalchemy 通过 import_dbapi 动态加载，collect_submodules
-  仅加模块名不足以让 PyInstaller 把文件打包进 PYZ；改用 collect_all 把 .py 文件
-  作为 datas 显式打包到 _internal/，runtime 可直接定位。
-  PyInstaller 6.22 的 collect_all 返回 2 元组 (src, dest)，需转 3 元组 (dest, src, typecode)
-  以匹配 COLLECT 的 normalize_toc 期望。
+- aiosqlite / greenlet / cryptography / pydantic_core / lxml：含编译型扩展或动态加载
+  资源，collect_submodules 仅收 .py 模块名，不足以让 PyInstaller 把 .pyd/.dll 与数据
+  文件打包进 PYZ；改用 collect_all 把它们作为 datas/binaries 显式打包到 _internal/，
+  runtime 可直接定位。
+  - aiosqlite / greenlet：sqlalchemy 通过 import_dbapi 动态加载
+  - cryptography：42+ Rust binding（cryptography.hazmat.bindings._rust.*）经 cffi 动态加载
+  - pydantic_core：pydantic v2 的 C 核心 _pydantic_core.cp312-win_amd64.pyd
+  - lxml：python-docx / python-pptx 依赖，C 扩展 + schema 数据文件
+  collect_all 的结果须作为 Analysis 的 datas/binaries 参数传入（让 Analysis 规范化
+  2元组→3元组、展开目录），切勿在 Analysis 之后 a.datas += 绕过规范化。
 - excludes：剔除测试/dev 依赖与无关标准库，减小体积。
 - console=False：windowed 模式，不弹控制台黑窗；launcher 以 stdio pipe 捕获日志。
 """
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
-block_cipher = None
+# 含编译型扩展 / 动态加载资源的包：collect_submodules 只收 .py 模块名，必须再用
+# collect_all 把 .pyd/.dll 与数据文件作为 datas/binaries 显式打包到 _internal/。
+# collect_all 返回的 (datas, binaries, hiddenimports) 必须作为 Analysis 的对应参数传入，
+# 由 Analysis 规范化（2元组补 typecode、展开目录条目）——切勿在 Analysis 之后用
+# a.datas += 追加，那会绕过规范化，导致 COLLECT 的 normalize_toc 报
+# "expected 3, got 2" 或 dist-info 目录 "is not a valid file"。
+_extra_datas: list = []
+_extra_binaries: list = []
+_extra_hidden: list = []
+for _pkg in ["aiosqlite", "greenlet", "cryptography", "pydantic_core", "lxml"]:
+    _d, _b, _h = collect_all(_pkg)
+    _extra_datas += _d
+    _extra_binaries += _b
+    _extra_hidden += _h
 
 a = Analysis(
     ["run_pyi.py"],
     pathex=["."],
-    binaries=[],
-    datas=[],
+    binaries=_extra_binaries,
+    datas=_extra_datas,
     hiddenimports=[
         "app",
         "app.main",
@@ -33,8 +51,10 @@ a = Analysis(
     + collect_submodules("uvicorn")
     + collect_submodules("pydantic")
     + collect_submodules("pydantic_core")
+    + collect_submodules("pydantic_settings")
     + collect_submodules("fastapi")
-    + collect_submodules("starlette"),
+    + collect_submodules("starlette")
+    + _extra_hidden,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -48,15 +68,7 @@ a = Analysis(
     noarchive=False,
 )
 
-# aiosqlite / greenlet：sqlalchemy 动态导入（import_dbapi），必须作为 datas 显式打包。
-# collect_all 在 PyInstaller 6.22 返回 2 元组 (src, dest)，转 3 元组 (dest, src, typecode)。
-for _pkg in ["aiosqlite", "greenlet"]:
-    _datas, _binaries, _hidden = collect_all(_pkg)
-    a.datas += [(_dest, _src, "DATA") for _src, _dest in _datas]
-    a.binaries += [(_dest, _src, "BINARY") for _src, _dest in _binaries]
-    a.hiddenimports += _hidden
-
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+pyz = PYZ(a.pure, a.zipped_data)
 
 exe = EXE(
     pyz,
@@ -67,7 +79,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     console=False,
     disable_windowed_traceback=False,
     target_arch=None,
@@ -81,7 +93,7 @@ coll = COLLECT(
     a.zipfiles,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name="backend",
 )

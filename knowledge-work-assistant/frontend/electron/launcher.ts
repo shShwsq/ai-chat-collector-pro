@@ -10,8 +10,7 @@
  *
  * 开发环境跳过后端启动（后端由开发者手动运行 ``uv run uvicorn``）。
  *
- * 本项目从步影 frontend/electron/launcher.ts 适配拷贝而来，
- * 端口从 8787 改为 8788，移除 ChromaDB 相关环境变量（本项目不依赖向量库）。
+ * 本项目 launcher 由前期项目骨架适配而来，端口 8788，不依赖向量库。
  */
 
 import { spawn, type ChildProcess } from 'child_process'
@@ -20,7 +19,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { app } from 'electron'
 
-/** 后端默认监听端口（与 backend 开发端口一致，避免和步影 8787 冲突）。 */
+/** 后端默认监听端口（与 backend 开发端口一致）。 */
 const DEFAULT_BACKEND_PORT = 8788
 
 /** 健康检查轮询间隔（毫秒）。 */
@@ -247,7 +246,9 @@ export function startBackend(): boolean {
         // 与前端 x-local-api-token 头匹配（prod 随机值 / 显式 env 值均生效）。
         LOCAL_API_TOKEN: getBackendApiToken(),
       },
-      windowsHide: false,
+      // backend.exe 为 windowed（console=False）无窗口；windowsHide=true 规避任何瞬闪，
+      // 且兜底 python 命令时也不会弹出控制台黑窗。
+      windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     backendProcess = proc
