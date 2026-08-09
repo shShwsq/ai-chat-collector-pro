@@ -1,7 +1,7 @@
 {
   "name": "knowledge-work-assistant-frontend",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.0",
   "type": "module",
   "main": "electron/dist/main.js",
   "description": "对话回声桌面端前端 - Electron + React + Vite（双模式 Study/Work 知识图谱桌面应用）",
