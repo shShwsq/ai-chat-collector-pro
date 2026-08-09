@@ -192,6 +192,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       LocalApp_pushByConvId(message.convId).then(sendResponse);
       break;
 
+    case 'LOCAL_APP_PAIR':
+      LocalApp_pair(message.code).then(sendResponse);
+      break;
+
     case 'LOCAL_APP_TEST':
       LocalApp_testConnection().then(sendResponse);
       break;
