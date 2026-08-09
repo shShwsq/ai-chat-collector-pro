@@ -51,6 +51,7 @@
   "build": {
     "appId": "com.echolog.app",
     "productName": "对话回声",
+    "asar": false,
     "directories": {
       "output": "release",
       "buildResources": "build"
