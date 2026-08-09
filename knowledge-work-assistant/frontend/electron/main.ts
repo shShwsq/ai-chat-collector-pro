@@ -1,4 +1,5 @@
 import { app, BrowserWindow, shell, ipcMain } from 'electron'
+import * as fs from 'fs'
 import * as path from 'path'
 
 // 后端进程启动器：生产环境 spawn 后端并健康检查；开发环境跳过（开发者手动启动）
@@ -21,6 +22,11 @@ let mainWindow: BrowserWindow | null = null
  * （自定义标题栏等）可在此调整。
  */
 function createWindow(): void {
+  const preloadPath = path.join(__dirname, 'preload.js')
+  console.log(`[main] __dirname: ${__dirname}`)
+  console.log(`[main] resourcesPath: ${process.resourcesPath}`)
+  console.log(`[main] preload path: ${preloadPath} exists=${fs.existsSync(preloadPath)}`)
+
   mainWindow = new BrowserWindow({
     width: WINDOW_WIDTH,
     height: WINDOW_HEIGHT,
@@ -30,11 +36,20 @@ function createWindow(): void {
     backgroundColor: '#f5f5f7',
     show: false,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
     },
+  })
+
+  // 诊断：监听渲染进程加载失败
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    console.error(`[main] 页面加载失败: url=${validatedURL}, code=${errorCode}, desc=${errorDescription}`)
+  })
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    console.log('[main] 页面加载完成')
   })
 
   mainWindow.once('ready-to-show', () => {
@@ -48,10 +63,15 @@ function createWindow(): void {
   })
 
   if (isDev && process.env.VITE_DEV_SERVER_URL) {
+    console.log(`[main] 开发模式，加载: ${process.env.VITE_DEV_SERVER_URL}`)
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
     mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
+    // __dirname 在打包后为 resources/app/electron/dist（asar:false 时）。
+    // index.html 由 vite 构建到 resources/app/dist，需从 electron/dist 回退两级到 app/ 再进 dist/。
+    const indexPath = path.join(__dirname, '../../dist/index.html')
+    console.log(`[main] 生产模式，加载: ${indexPath} exists=${fs.existsSync(indexPath)}`)
+    mainWindow.loadFile(indexPath)
   }
 }
 

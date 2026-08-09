@@ -1,0 +1,7 @@
+# pnpm 11.5+ 安全策略：依赖的 build scripts（postinstall 等）必须显式批准。
+# 旧的 onlyBuiltDependencies（数组格式）在 pnpm 11.5+ 已被 allowBuilds（map，boolean）取代，
+# pnpm 11.5+ 不再认 onlyBuiltDependencies，会继续 ignored builds 并 exit 1。
+# electron / esbuild 需跑 postinstall（下载/编译 native 二进制），设 true 批准。
+allowBuilds:
+  electron: true
+  esbuild: true

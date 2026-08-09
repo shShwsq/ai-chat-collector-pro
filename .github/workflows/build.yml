@@ -2,7 +2,7 @@
 #
 # 产物：
 #   - echolog-extension-v<版本>.zip   未打包扩展，Chrome「加载已解压」或分发
-#   - echolog-desktop-windows           Electron NSIS 安装包（含 backend 源码）
+#   - echolog-desktop-windows           Electron NSIS 安装包（含 PyInstaller 打包的 backend，零额外依赖）
 #
 # 触发：推送到 main / 推送 v* 标签 / 手动运行。打 v* 标签时会额外发布 GitHub Release。
 name: Build & Package
@@ -35,7 +35,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: web-ai-chat-collector/package-lock.json
 
@@ -155,12 +155,21 @@ jobs:
           if-no-files-found: error
 
   # ──────────────────────────────────────────────────────────────────────────
-  # 2. 桌面应用：pnpm dist → electron-builder 产出 Windows NSIS 安装包
-  #    electron-builder 的 extraResources 会把 ../backend 源码打进安装包
+  # 2. 桌面应用：PyInstaller 打包 backend → pnpm dist → electron-builder 产出
+  #    Windows NSIS 安装包 / macOS dmg。extraResources 把 PyInstaller onedir 产物
+  #    （含 Python 运行时与依赖）带入安装包，目标机器无需安装 Python。
   # ──────────────────────────────────────────────────────────────────────────
   build-app:
-    name: Package desktop app (Windows)
-    runs-on: windows-latest
+    name: Package desktop app (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: echolog-desktop-windows
+          - os: macos-latest
+            artifact: echolog-desktop-macos
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: knowledge-work-assistant/frontend
@@ -169,23 +178,56 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 11
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'pnpm'
           cache-dependency-path: knowledge-work-assistant/frontend/pnpm-lock.yaml
 
+      # ===== 后端 PyInstaller 打包（产出 ../backend/dist/backend，供 extraResources 带入安装包）=====
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install backend dependencies
+        working-directory: knowledge-work-assistant/backend
+        run: uv sync --frozen --no-dev
+
+      - name: Build backend with PyInstaller
+        working-directory: knowledge-work-assistant/backend
+        run: uv run --with pyinstaller pyinstaller backend.spec --noconfirm --clean
+
+      - name: Verify backend binary built
+        working-directory: knowledge-work-assistant/backend
+        shell: bash
+        run: |
+          # Windows: backend.exe；macOS: backend（console=True 产出普通可执行文件，非 .app）
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            test -f dist/backend/backend.exe && echo "backend.exe OK"
+          else
+            test -f dist/backend/backend && echo "backend OK"
+          fi
+
+      # ===== 前端打包（electron-builder，extraResources 指向 ../backend/dist/backend）=====
       - run: pnpm install --frozen-lockfile
 
-      # build:frontend（tsc + vite build）→ build:electron（tsc）→ electron-builder --win
+      # build:frontend（tsc + vite build）→ build:electron（tsc）→ electron-builder
+      # 不带 --win/--mac：按宿主平台构建（Windows→NSIS，macOS→dmg）
       - run: pnpm dist
 
       - uses: actions/upload-artifact@v4
         with:
-          name: echolog-desktop-windows
-          path: knowledge-work-assistant/frontend/release/*
+          name: ${{ matrix.artifact }}
+          # 只上传安装包本身，排除 win-unpacked/、builder-debug.yml 等中间产物
+          path: |
+            knowledge-work-assistant/frontend/release/*.exe
+            knowledge-work-assistant/frontend/release/*.dmg
           if-no-files-found: error
 
   # ──────────────────────────────────────────────────────────────────────────
@@ -209,4 +251,4 @@ jobs:
           files: |
             artifacts/**/*.zip
             artifacts/**/*.exe
-            artifacts/**/*.yml
+            artifacts/**/*.dmg

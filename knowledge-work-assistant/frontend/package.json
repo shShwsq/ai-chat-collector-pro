@@ -1,5 +1,5 @@
 {
-  "name": "knowledge-work-assistant-frontend",
+  "name": "echolog",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -11,7 +11,7 @@
     "build": "tsc && vite build",
     "build:frontend": "tsc && vite build",
     "build:electron": "tsc -p electron/tsconfig.json",
-    "dist": "npm run build:frontend && npm run build:electron && electron-builder --win",
+    "dist": "npm run build:frontend && npm run build:electron && electron-builder",
     "lint": "eslint . --ext .ts,.tsx",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -48,27 +48,32 @@
     "vitest": "^1.6.1",
     "wait-on": "^7.2.0"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "electron",
-      "esbuild"
-    ]
-  },
   "build": {
     "appId": "com.echolog.app",
     "productName": "对话回声",
+    "asar": false,
     "directories": {
       "output": "release",
       "buildResources": "build"
     },
     "files": [
       "dist/**/*",
-      "electron/dist/**/*"
+      "electron/dist/**/*",
+      "electron/package.json"
     ],
     "win": {
       "target": [
         "nsis"
       ]
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64"]
+        }
+      ],
+      "category": "public.app-category.productivity"
     },
     "nsis": {
       "oneClick": false,
@@ -79,13 +84,10 @@
     },
     "extraResources": [
       {
-        "from": "../backend",
+        "from": "../backend/dist/backend",
         "to": "backend",
         "filter": [
-          "**/*",
-          "!__pycache__/**",
-          "!.venv/**",
-          "!data/**"
+          "**/*"
         ]
       }
     ]

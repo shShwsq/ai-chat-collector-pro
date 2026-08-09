@@ -10,8 +10,7 @@
  *
  * 开发环境跳过后端启动（后端由开发者手动运行 ``uv run uvicorn``）。
  *
- * 本项目从步影 frontend/electron/launcher.ts 适配拷贝而来，
- * 端口从 8787 改为 8788，移除 ChromaDB 相关环境变量（本项目不依赖向量库）。
+ * 本项目 launcher 由前期项目骨架适配而来，端口 8788，不依赖向量库。
  */
 
 import { spawn, type ChildProcess } from 'child_process'
@@ -20,7 +19,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { app } from 'electron'
 
-/** 后端默认监听端口（与 backend 开发端口一致，避免和步影 8787 冲突）。 */
+/** 后端默认监听端口（与 backend 开发端口一致）。 */
 const DEFAULT_BACKEND_PORT = 8788
 
 /** 健康检查轮询间隔（毫秒）。 */
@@ -158,13 +157,12 @@ export function getBackendWsUrl(): string {
 /**
  * 定位后端入口（仅生产环境）。
  *
- * 当前实现：尝试两种方式（按优先级）：
- *   1. 打包产物 backend 子目录下的 ``python`` 可执行文件 + ``app`` 包
- *      （PyInstaller onedir 产物，结构 resources/backend/...）
- *   2. 兜底：调用系统 ``python -m uvicorn app.main:app``（要求目标机器已装 Python + 依赖）
- *
- * 由于本项目当前未配置 PyInstaller 打包，生产环境下默认走 uvicorn 方式。
- * 后续若引入 PyInstaller，可在此扩展可执行文件探测逻辑。
+ * 按优先级尝试两种方式：
+ *   1. PyInstaller onedir 产物 resources/backend/backend.exe（Windows）
+ *      或 resources/backend/backend（macOS/Linux）
+ *      （含完整 Python 运行时与依赖，目标机器无需安装 Python）
+ *   2. 兜底：系统 python -m uvicorn app.main:app
+ *      （开发/未打包场景，要求目标机器已装 Python 3.12+ 与依赖）
  */
 interface ResolvedBackend {
   command: string
@@ -173,16 +171,25 @@ interface ResolvedBackend {
 }
 
 function resolveBackend(): ResolvedBackend | null {
-  // 兜底方案：调用系统 python + uvicorn 启动后端
-  // 要求目标机器已安装 Python 3.12+ 与项目依赖（uv sync 安装）
-  // 生产打包时建议改用 PyInstaller 单文件，避免依赖系统 Python
-  const backendDir = path.join(
-    process.resourcesPath,
-    'backend',
-  )
+  const backendDir = path.join(process.resourcesPath, 'backend')
+
+  // 优先：PyInstaller onedir 产物（含 Python 运行时 + 依赖，零额外依赖）
+  // Windows: backend.exe；macOS/Linux: backend（PyInstaller console=True 产出普通可执行文件）
+  const backendExeName = process.platform === 'win32' ? 'backend.exe' : 'backend'
+  const pyiExe = path.join(backendDir, backendExeName)
+  if (fs.existsSync(pyiExe)) {
+    return {
+      command: pyiExe,
+      args: [],
+      cwd: backendDir,
+    }
+  }
+
+  // 兜底：系统 python + uvicorn（开发/未打包场景）
+  // Windows 用 python（python launcher）；macOS/Linux 用 python3（系统自带 / Homebrew）
   const cwd = fs.existsSync(backendDir) ? backendDir : process.cwd()
   return {
-    command: 'python',
+    command: process.platform === 'win32' ? 'python' : 'python3',
     args: ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(DEFAULT_BACKEND_PORT)],
     cwd,
   }
@@ -243,7 +250,9 @@ export function startBackend(): boolean {
         // 与前端 x-local-api-token 头匹配（prod 随机值 / 显式 env 值均生效）。
         LOCAL_API_TOKEN: getBackendApiToken(),
       },
-      windowsHide: false,
+      // backend.exe 为 windowed（console=False）无窗口；windowsHide=true 规避任何瞬闪，
+      // 且兜底 python 命令时也不会弹出控制台黑窗。
+      windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     backendProcess = proc
