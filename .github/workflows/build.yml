@@ -217,6 +217,10 @@ jobs:
       # ===== 前端打包（electron-builder，extraResources 指向 ../backend/dist/backend）=====
       - run: pnpm install --frozen-lockfile
 
+      # 前端测试门禁：vitest 套件（含 api / ws / motion / importers / store 等），
+      # 失败即中止打包，避免带 bug 的产物进入安装包。
+      - run: pnpm test
+
       # build:frontend（tsc + vite build）→ build:electron（tsc）→ electron-builder
       # 不带 --win/--mac：按宿主平台构建（Windows→NSIS，macOS→dmg）
       - run: pnpm dist
