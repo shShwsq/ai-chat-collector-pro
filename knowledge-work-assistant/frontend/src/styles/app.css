@@ -8536,6 +8536,77 @@ html[data-motion-quality='reduced'] .gv-container .gv-svg {
 }
 
 /* ============================================================================
+ * 图谱选择下拉框（ChatHome / ChatConversationView 输入框正上方共享组件）
+ * ============================================================================ */
+.graph-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 8px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.graph-selector__label {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+.graph-selector__select {
+  flex: 1;
+  min-width: 0;
+  max-width: 320px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  outline: none;
+  cursor: pointer;
+  transition: border-color var(--transition-fast);
+}
+
+.graph-selector__select:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.graph-selector__select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+.graph-selector__select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.graph-selector--empty {
+  justify-content: space-between;
+}
+
+.graph-selector__goto {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.graph-selector__goto:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* ============================================================================
  * 底部输入区（长方形输入框 + 左下角+按钮 + 右下角发送）
  * ============================================================================ */
 .chat-input-bar {
