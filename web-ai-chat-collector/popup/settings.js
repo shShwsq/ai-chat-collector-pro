@@ -1480,6 +1480,49 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ---- 本地软件对接 ----
 
+  // 用一次性配对码换取并保存插件凭据
+  async function pairLocalApp() {
+    const code = localAppPairCode.value.trim();
+    if (!/^\d{6}$/.test(code)) {
+      showToast('请输入 6 位数字配对码', true);
+      localAppPairCode.focus();
+      return;
+    }
+    pairLocalAppBtn.disabled = true;
+    const originalText = pairLocalAppBtn.textContent;
+    pairLocalAppBtn.textContent = '配对中...';
+    try {
+      // 先静默保存 baseUrl 等基础设置（与 testLocalApp 一致，避免后端用旧地址）
+      const baseUrl = localAppBaseUrl.value.trim() || 'http://localhost:8788';
+      const intervalVal = parseInt(localAppInterval.value, 10) || 1;
+      await sendMessage({
+        type: 'SAVE_SETTINGS',
+        category: 'localApp',
+        settings: {
+          enabled: localAppEnabled.checked,
+          baseUrl,
+          pushOnSave: localAppPushOnSave.checked,
+          autoPush: localAppAutoPush.checked,
+          intervalMinutes: intervalVal
+        }
+      });
+      formSnapshot = serializeForm();
+
+      const resp = await sendMessage({ type: 'LOCAL_APP_PAIR', code });
+      if (resp && resp.success) {
+        localAppPairCode.value = '';
+        showToast('配对成功，凭据已保存');
+        loadLocalAppStats();
+      } else {
+        showToast(`配对失败: ${resp?.error || '未知错误'}（请确认配对码 5 分钟内有效且本地软件已启动）`, true);
+      }
+    } catch (e) {
+      showToast(`配对异常: ${e.message}`, true);
+    }
+    pairLocalAppBtn.disabled = false;
+    pairLocalAppBtn.textContent = originalText;
+  }
+
   // 测试本地软件连通性（使用当前填写的 baseUrl，未保存也可测）
   async function testLocalApp() {
     testLocalAppBtn.disabled = true;
@@ -1504,7 +1547,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const resp = await sendMessage({ type: 'LOCAL_APP_TEST' });
       if (resp && resp.success) {
-        const platforms = (resp.supported_platforms || []).join(', ');
+        // 后端返回的是原始平台 ID，转成中文友好名称展示
+        // 与后端 SUPPORTED_PLATFORMS 白名单（插件实际采集的 6 家）对齐
+        const PLATFORM_LABELS = {
+          deepseek: 'DeepSeek',
+          qwen: '通义千问',
+          doubao: '豆包',
+          kimi: 'Kimi',
+          yuanbao: '腾讯元宝',
+          wenxin: '百度文心'
+        };
+        const platforms = (resp.supported_platforms || [])
+          .map(id => PLATFORM_LABELS[id] || id)
+          .join('、');
         showToast(`连通性测试成功！耗时 ${resp.latency}ms；版本 ${resp.version}；支持平台: ${platforms}；队列 ${resp.queue_size}`);
       } else {
         showToast(`连通性测试失败: ${resp?.error || '未知错误'}（请确认本地软件已启动）`, true);

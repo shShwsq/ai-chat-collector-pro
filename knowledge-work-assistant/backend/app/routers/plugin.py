@@ -57,19 +57,17 @@ router = APIRouter(prefix="/plugin", tags=["plugin"])
 PLUGIN_API_VERSION = "1.0"
 
 #: 支持的来源平台白名单（``platform`` 字段必须命中其一，否则返回 400）。
-#: ``custom`` 用于插件自定义 / 未列举的平台兜底。
+#: 与插件 web-ai-chat-collector 实际采集的 6 家平台对齐：
+#:   deepseek / qwen / doubao / kimi / yuanbao / wenxin
+#: （插件内部 qianwen 推送时映射为 qwen）
 SUPPORTED_PLATFORMS = frozenset(
     {
-        "chatgpt",
-        "claude",
-        "gemini",
         "deepseek",
         "qwen",
         "doubao",
         "kimi",
-        "fudan",
         "yuanbao",
-        "custom",
+        "wenxin",
     }
 )
 
@@ -536,19 +534,19 @@ async def get_contract(
         ],
         "push_examples": [
             {
-                "platform": "chatgpt",
+                "platform": "qwen",
                 "timestamp": "2025-01-01T12:00:00+08:00",
                 "conversation_markdown": (
                     "## 用户\n什么是知识图谱？\n\n"
                     "## 助手\n知识图谱是一种用图结构组织知识的方式……"
                 ),
                 "metadata": {
-                    "conversation_id": "chat-openai-abc123@2025-01-01T12:00:00+08:00",
-                    "source_conversation_id": "chat-openai-abc123",
+                    "conversation_id": "qwen-chat-abc123@2025-01-01T12:00:00+08:00",
+                    "source_conversation_id": "qwen-chat-abc123",
                     "conversation_revision": "2025-01-01T12:00:00+08:00",
                     "title": "什么是知识图谱",
-                    "url": "https://chat.openai.com/c/abc123",
-                    "model": "gpt-4o-mini",
+                    "url": "https://www.qianwen.com/c/abc123",
+                    "model": "qwen-max",
                 },
             },
             {

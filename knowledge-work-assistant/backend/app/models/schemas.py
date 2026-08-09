@@ -220,8 +220,8 @@ class PluginConversationRequest(BaseModel):
     持久化为 :class:`Observation` 原始记录，待 Agent 抽取知识点（Task 11）。
 
     字段说明：
-    - ``platform``：来源平台标识，如 ``chatgpt`` / ``claude`` / ``gemini`` /
-      ``deepseek`` / ``qwen`` / ``doubao`` / ``kimi`` 等。
+    - ``platform``：来源平台标识，必须命中白名单 ``deepseek`` / ``qwen`` /
+      ``doubao`` / ``kimi`` / ``yuanbao`` / ``wenxin`` 之一。
     - ``timestamp``：对话发生时间，ISO8601 字符串（如
       ``2025-01-01T12:00:00+08:00``）；解析失败时落库 ``occurred_at=None``，
       不阻断接收。

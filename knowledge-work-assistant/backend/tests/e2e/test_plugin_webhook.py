@@ -48,15 +48,15 @@ from app.services.graph_store import graph_store
 
 def _make_payload(
     *,
-    platform: str = "chatgpt",
+    platform: str = "deepseek",
     timestamp: str = "2025-01-01T12:00:00+08:00",
     conversation_markdown: str | None = (
         "## 用户\n什么是知识图谱？\n\n## 助手\n知识图谱是一种用图结构组织知识的方式……"
     ),
-    conversation_id: str | None = "chat-openai-abc123",
+    conversation_id: str | None = "deepseek-chat-abc123",
     title: str | None = "什么是知识图谱",
-    url: str | None = "https://chat.openai.com/c/abc123",
-    model: str | None = "gpt-4o-mini",
+    url: str | None = "https://chat.deepseek.com/c/abc123",
+    model: str | None = "deepseek-chat",
     metadata_override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """构造合法的 ``POST /api/plugin/conversations`` 请求体。
@@ -65,7 +65,7 @@ def _make_payload(
     可用于覆盖整个 metadata 字段（如传入非 string 的 title 做校验测试）。
 
     Args:
-        platform: 来源平台，默认 chatgpt。
+        platform: 来源平台，默认 deepseek。
         timestamp: ISO8601 时间戳。
         conversation_markdown: 对话原文 Markdown；None 表示不传该字段（用于缺失字段测试）。
         conversation_id: 对话唯一 ID（用于幂等去重）；None 表示不写入 metadata。
@@ -161,10 +161,10 @@ class TestPushConversation:
         obs = await graph_store.get_observation(obs_id)
         assert obs is not None, "落库记录应可查"
         assert obs["source"] == "plugin"
-        assert obs["platform"] == "chatgpt"
+        assert obs["platform"] == "deepseek"
         assert "知识图谱" in obs["conversation_markdown"]
         # _dedup_key 应已合并到 metadata
-        assert obs["metadata"].get("_dedup_key") == "chatgpt:conv-success-001"
+        assert obs["metadata"].get("_dedup_key") == "deepseek:conv-success-001"
         # metadata 原字段保留
         assert obs["metadata"].get("title") == "什么是知识图谱"
 
@@ -361,7 +361,7 @@ class TestPluginMeta:
         - HTTP 200
         - ok=True
         - version 为字符串（如 "1.0"）
-        - supported_platforms 含 chatgpt / claude / gemini 等已知平台
+        - supported_platforms 含 deepseek / qwen / doubao / kimi / yuanbao / wenxin 6 家平台
         - queue_size 为非负整数
         """
         resp = await async_client.get("/api/plugin/health")
@@ -370,9 +370,10 @@ class TestPluginMeta:
         assert body["ok"] is True
         assert isinstance(body["version"], str) and body["version"]
         assert isinstance(body["supported_platforms"], list)
-        # 白名单应含至少 chatgpt / claude / gemini
-        for plat in ("chatgpt", "claude", "gemini"):
-            assert plat in body["supported_platforms"], f"白名单应含 {plat}"
+        # 白名单应与插件实际采集的 6 家平台对齐
+        assert set(body["supported_platforms"]) == {
+            "deepseek", "qwen", "doubao", "kimi", "yuanbao", "wenxin"
+        }
         assert isinstance(body["queue_size"], int)
         assert body["queue_size"] >= 0
 
@@ -432,7 +433,7 @@ class TestPluginMeta:
             resp = await async_client.post(
                 "/api/plugin/conversations",
                 json=_make_payload(
-                    platform="chatgpt",
+                    platform="deepseek",
                     conversation_id=f"conv-recent-{i:03d}",
                     title=f"测试对话 {i}",
                     conversation_markdown=f"## 用户\n问题 {i}\n\n## 助手\n回答 {i}",
@@ -464,8 +465,8 @@ class TestPluginMeta:
             assert "dedup_key" in item
             assert "created_at" in item
             assert "processed" in item
-            assert item["platform"] == "chatgpt"
-            assert item["dedup_key"].startswith("chatgpt:conv-recent-")
+            assert item["platform"] == "deepseek"
+            assert item["dedup_key"].startswith("deepseek:conv-recent-")
             assert item["processed"] is False, "新推送的记录应未被处理"
 
         # 额外校验：limit=2 时应只返回 2 条

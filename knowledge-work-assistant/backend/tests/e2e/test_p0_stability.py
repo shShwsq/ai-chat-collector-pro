@@ -15,7 +15,7 @@ from app.services.task_registry import BackgroundTaskRegistry
 
 def _plugin_payload(conversation_id: str) -> dict[str, object]:
     return {
-        "platform": "chatgpt",
+        "platform": "deepseek",
         "timestamp": "2026-07-30T12:00:00+08:00",
         "conversation_markdown": "## 用户\n并发测试\n\n## 助手\n稳定写入",
         "metadata": {"conversation_id": conversation_id, "title": "并发测试"},

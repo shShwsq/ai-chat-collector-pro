@@ -39,7 +39,8 @@ const DEFAULT_LOCAL_APP_SETTINGS = {
 };
 
 // 插件 platform → 后端 SUPPORTED_PLATFORMS 白名单映射
-// 后端：chatgpt / claude / gemini / deepseek / qwen / doubao / kimi / yuanbao / custom
+// 后端白名单（与插件实际采集的 6 家对齐）：
+//   deepseek / qwen / doubao / kimi / yuanbao / wenxin
 const PLATFORM_MAP = {
   deepseek: 'deepseek',
   qianwen: 'qwen',
@@ -47,9 +48,7 @@ const PLATFORM_MAP = {
   doubao: 'doubao',
   kimi: 'kimi',
   yuanbao: 'yuanbao',
-  chatgpt: 'chatgpt',
-  claude: 'claude',
-  gemini: 'gemini'
+  wenxin: 'wenxin'
 };
 
 // ===== 模块状态 =====
