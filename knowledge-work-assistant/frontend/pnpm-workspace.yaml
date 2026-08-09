@@ -1,6 +1,7 @@
-# pnpm 10+ 不再读 package.json 的 pnpm 字段，改读此文件。
-# electron / esbuild 需跑 postinstall（下载/编译 native 二进制），必须显式批准。
-# 本地与 CI 统一使用 pnpm 11，仅此文件作为 onlyBuiltDependencies 的唯一来源。
-onlyBuiltDependencies:
-  - electron
-  - esbuild
+# pnpm 11.5+ 安全策略：依赖的 build scripts（postinstall 等）必须显式批准。
+# 旧的 onlyBuiltDependencies（数组格式）在 pnpm 11.5+ 已被 allowBuilds（map，boolean）取代，
+# pnpm 11.5+ 不再认 onlyBuiltDependencies，会继续 ignored builds 并 exit 1。
+# electron / esbuild 需跑 postinstall（下载/编译 native 二进制），设 true 批准。
+allowBuilds:
+  electron: true
+  esbuild: true
