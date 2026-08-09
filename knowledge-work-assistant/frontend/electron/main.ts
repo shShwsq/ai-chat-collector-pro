@@ -67,7 +67,9 @@ function createWindow(): void {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
     mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
-    const indexPath = path.join(__dirname, '../dist/index.html')
+    // __dirname 在打包后为 resources/app/electron/dist（asar:false 时）。
+    // index.html 由 vite 构建到 resources/app/dist，需从 electron/dist 回退两级到 app/ 再进 dist/。
+    const indexPath = path.join(__dirname, '../../dist/index.html')
     console.log(`[main] 生产模式，加载: ${indexPath} exists=${fs.existsSync(indexPath)}`)
     mainWindow.loadFile(indexPath)
   }
