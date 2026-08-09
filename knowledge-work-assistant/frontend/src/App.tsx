@@ -80,6 +80,8 @@ export default function App() {
 
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [healthError, setHealthError] = useState<string>('')
+  // 手动刷新后端状态时的「刷新中」反馈，避免用户连点
+  const [healthRefreshing, setHealthRefreshing] = useState(false)
   const [importModalOpen, setImportModalOpen] = useState(false)
 
   // 启动时根据 localStorage 标记决定是否显示引导向导
@@ -132,6 +134,14 @@ export default function App() {
       prevHealthyRef.current = false
     }
   }, [])
+
+  // 用户点击「刷新后端状态」按钮：手动触发一次健康检查，并在刷新期间
+  // 显示「刷新中」反馈，避免用户连点造成请求堆积。
+  const refreshHealth = useCallback(() => {
+    if (healthRefreshing) return
+    setHealthRefreshing(true)
+    void checkHealth().finally(() => setHealthRefreshing(false))
+  }, [checkHealth, healthRefreshing])
 
   // 启动时：首次加载当前模式图谱列表 + 健康检查轮询 + LLM 配置
   useEffect(() => {
@@ -269,20 +279,28 @@ export default function App() {
           </span>
         </div>
         <div className="app-header__right">
-          <span
+          <button
+            type="button"
             className={`health-badge${
               isHealthy ? ' health-badge--ok' : ' health-badge--error'
-            }`}
-            role="status"
+            }${healthRefreshing ? ' health-badge--refreshing' : ''}`}
+            onClick={refreshHealth}
+            disabled={healthRefreshing}
             title={
-              isHealthy
-                ? `后端正常（${health!.version}）`
-                : `后端未连接：${healthError}`
+              healthRefreshing
+                ? '正在检查后端状态…'
+                : isHealthy
+                  ? `后端正常（${health!.version}）· 点击刷新`
+                  : `后端未连接：${healthError} · 点击重试`
             }
           >
             <span className="health-badge__dot" />
-            {isHealthy ? `后端 ${health!.version}` : '后端未连接'}
-          </span>
+            {healthRefreshing
+              ? '检查中…'
+              : isHealthy
+                ? `后端 ${health!.version}`
+                : '后端未连接 · 点击重试'}
+          </button>
           <button
             type="button"
             className="app-header__btn"
@@ -305,6 +323,27 @@ export default function App() {
           <ModeSwitch />
         </div>
       </header>
+
+      {/* 后端未连接提示条：刚安装/启动 .exe 时后端可能尚未就绪，
+          这里给出明显提示并附「尝试刷新」入口，避免用户误以为程序坏了。 */}
+      {!isHealthy && (
+        <div className="backend-warning-bar" role="status">
+          <span className="backend-warning-bar__icon" aria-hidden="true">⚠</span>
+          <span className="backend-warning-bar__text">
+            后端服务尚未连接，对话/抽取/流式等功能将不可用。
+            {healthError ? `（${healthError}）` : ''}
+            若刚启动应用，请稍候片刻后尝试刷新。
+          </span>
+          <button
+            type="button"
+            className="backend-warning-bar__btn"
+            onClick={refreshHealth}
+            disabled={healthRefreshing}
+          >
+            {healthRefreshing ? '刷新中…' : '尝试刷新'}
+          </button>
+        </div>
+      )}
 
       {llmNotReady && (
         <div className="llm-warning-bar" role="status">
