@@ -1,6 +1,6 @@
 [project]
 name = "knowledge-work-assistant-backend"
-version = "1.0.0"
+version = "1.0.1"
 description = "对话回声后端 - FastAPI Agent 服务（双模式 Study/Work 知识图谱），由前期项目骨架适配而来"
 requires-python = ">=3.12"
 dependencies = [

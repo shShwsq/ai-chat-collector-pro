@@ -224,7 +224,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: knowledge-work-assistant/frontend/release/*
+          # 只上传安装包本身，排除 win-unpacked/、builder-debug.yml 等中间产物
+          path: |
+            knowledge-work-assistant/frontend/release/*.exe
+            knowledge-work-assistant/frontend/release/*.dmg
           if-no-files-found: error
 
   # ──────────────────────────────────────────────────────────────────────────
@@ -249,4 +252,3 @@ jobs:
             artifacts/**/*.zip
             artifacts/**/*.exe
             artifacts/**/*.dmg
-            artifacts/**/*.yml
